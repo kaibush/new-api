@@ -7,11 +7,13 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	common2 "github.com/QuantumNous/new-api/common"
+	contextkey "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
@@ -23,6 +25,7 @@ import (
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"golang.org/x/net/http/httpguts"
 )
 
 // ApplyUpstreamBodyMetadata restores metadata that net/http cannot infer from
@@ -150,7 +153,7 @@ func shouldSkipPassthroughHeader(name string) bool {
 	return false
 }
 
-func applyHeaderOverridePlaceholders(template string, c *gin.Context, apiKey string) (string, bool, error) {
+func applyHeaderOverridePlaceholders(template string, c *gin.Context, info *common.RelayInfo) (string, bool, error) {
 	trimmed := strings.TrimSpace(template)
 	if strings.HasPrefix(trimmed, clientHeaderPlaceholderPrefix) {
 		afterPrefix := trimmed[len(clientHeaderPlaceholderPrefix):]
@@ -174,9 +177,30 @@ func applyHeaderOverridePlaceholders(template string, c *gin.Context, apiKey str
 		return clientHeaderValue, true, nil
 	}
 
-	if strings.Contains(template, "{api_key}") {
-		template = strings.ReplaceAll(template, "{api_key}", apiKey)
+	usesUsername := strings.Contains(template, "{username}")
+	username := ""
+	if usesUsername || strings.Contains(template, "{user_id}") {
+		// Identity comes from authentication, never from client headers or JSON.
+		// Model discovery and channel tests have no end-user identity to forward.
+		if info.IsChannelTest || info.UserId <= 0 || c == nil {
+			return "", false, nil
+		}
+		if usesUsername {
+			username = common2.GetContextKeyString(c, contextkey.ContextKeyUserName)
+			if username == "" {
+				return "", false, nil
+			}
+			if !httpguts.ValidHeaderFieldValue(username) {
+				return "", false, fmt.Errorf("authenticated username is not a valid header value")
+			}
+		}
 	}
+	// Replace once so a username containing placeholder text cannot expand secrets.
+	template = strings.NewReplacer(
+		"{api_key}", info.ApiKey,
+		"{user_id}", strconv.Itoa(info.UserId),
+		"{username}", username,
+	).Replace(template)
 	if strings.TrimSpace(template) == "" {
 		return "", false, nil
 	}
@@ -186,6 +210,8 @@ func applyHeaderOverridePlaceholders(template string, c *gin.Context, apiKey str
 // processHeaderOverride applies channel header overrides, with placeholder substitution.
 // Supported placeholders:
 //   - {api_key}: resolved to the channel API key
+//   - {user_id}: resolved to the authenticated user ID
+//   - {username}: resolved to the authenticated username
 //   - {client_header:<name>}: resolved to the incoming request header value
 //
 // Header passthrough rules (keys only; values are ignored):
@@ -280,11 +306,13 @@ func processHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]s
 			continue
 		}
 
-		value, include, err := applyHeaderOverridePlaceholders(str, c, info.ApiKey)
+		value, include, err := applyHeaderOverridePlaceholders(str, c, info)
 		if err != nil {
 			return nil, types.NewError(err, types.ErrorCodeChannelHeaderOverrideInvalid)
 		}
 		if !include {
+			// An omitted explicit override must not retain a spoofed passthrough value.
+			delete(headerOverride, key)
 			continue
 		}
 

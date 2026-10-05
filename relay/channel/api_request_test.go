@@ -4,8 +4,10 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -205,6 +207,124 @@ func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.
 	require.Equal(t, "Codex CLI", upstreamReq.Header.Get("Originator"))
 	require.Equal(t, "sess-123", upstreamReq.Header.Get("Session_id"))
 	require.Empty(t, upstreamReq.Header.Get("X-Codex-Beta-Features"))
+}
+
+func TestHeaderOverrideAuthenticatedIdentity(t *testing.T) {
+	requests := make(chan http.Header, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- r.Header.Clone()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(upstream.Close)
+
+	channel := &relaycommon.ChannelMeta{
+		ApiKey: "upstream-channel-secret",
+		HeadersOverride: map[string]any{
+			"*":                 true,
+			"X-NewAPI-User-ID":  "{user_id}",
+			"X-NewAPI-Username": "{username}",
+			"X-NewAPI-Identity": "newapi:{user_id}:{username}",
+			"X-Client-Value":    "{client_header:X-Client-Value}",
+			"Authorization":     "Bearer {api_key}",
+		},
+	}
+	for _, tc := range []struct {
+		name     string
+		userID   int
+		username string
+		wantID   string
+	}{
+		{name: "first user on shared channel", userID: 10, username: "alice", wantID: "10"},
+		{name: "second user on shared channel", userID: 20, username: "bob", wantID: "20"},
+		{name: "Unicode username", userID: 30, username: "测试用户", wantID: "30"},
+		{name: "username cannot expand placeholders", userID: 40, username: "{api_key}{user_id}{username}", wantID: "40"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"user_id":999,"username":"forged"}`))
+			c.Set(string(constant.ContextKeyUserName), tc.username)
+			c.Request.Header.Set("X-NewAPI-User-ID", "999")
+			c.Request.Header.Set("X-NewAPI-Username", "forged")
+			c.Request.Header.Set("X-Client-Value", "{api_key}{username}{user_id}")
+			info := &relaycommon.RelayInfo{UserId: tc.userID, ChannelMeta: channel}
+
+			headers, err := ResolveHeaderOverride(info, c)
+			require.NoError(t, err)
+			req, err := http.NewRequest(http.MethodPost, upstream.URL, nil)
+			require.NoError(t, err)
+			applyHeaderOverrideToRequest(req, headers)
+			resp, err := upstream.Client().Do(req)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = resp.Body.Close() })
+			require.Equal(t, http.StatusNoContent, resp.StatusCode)
+			received := <-requests
+			assert.Equal(t, tc.wantID, received.Get("X-NewAPI-User-ID"))
+			assert.Equal(t, tc.username, received.Get("X-NewAPI-Username"))
+			assert.Equal(t, "newapi:"+tc.wantID+":"+tc.username, received.Get("X-NewAPI-Identity"))
+			assert.Equal(t, "Bearer upstream-channel-secret", received.Get("Authorization"))
+			assert.Equal(t, "{api_key}{username}{user_id}", received.Get("X-Client-Value"))
+		})
+	}
+}
+
+func TestHeaderOverrideMissingIdentityDoesNotForwardSpoofedValues(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		userID      int
+		username    string
+		channelTest bool
+		noContext   bool
+		wantUserID  string
+	}{
+		{name: "no authenticated user", username: "forged"},
+		{name: "no username", userID: 10, wantUserID: "10"},
+		{name: "channel test omits administrator identity", userID: 1, username: "admin", channelTest: true},
+		{name: "model discovery without request context", noContext: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			c.Set(string(constant.ContextKeyUserName), tc.username)
+			c.Request.Header.Set("X-NewAPI-User-ID", "999")
+			c.Request.Header.Set("X-NewAPI-Username", "forged")
+			info := &relaycommon.RelayInfo{
+				UserId:        tc.userID,
+				IsChannelTest: tc.channelTest,
+				ChannelMeta: &relaycommon.ChannelMeta{HeadersOverride: map[string]any{
+					"X-NewAPI-User-ID":  "{user_id}",
+					"X-NewAPI-Username": "{username}",
+					"X-Static":          "kept",
+				}},
+			}
+			if tc.noContext {
+				c = nil
+			} else {
+				info.HeadersOverride["*"] = true
+			}
+			headers, err := ResolveHeaderOverride(info, c)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantUserID, headers["x-newapi-user-id"])
+			assert.NotContains(t, headers, "x-newapi-username")
+			assert.Equal(t, "kept", headers["x-static"])
+		})
+	}
+}
+
+func TestHeaderOverrideRejectsUsernameHeaderInjection(t *testing.T) {
+	for _, username := range []string{"alice\r\nX-Injected: true", "alice\x00"} {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Set(string(constant.ContextKeyUserName), username)
+		info := &relaycommon.RelayInfo{
+			UserId: 10,
+			ChannelMeta: &relaycommon.ChannelMeta{HeadersOverride: map[string]any{
+				"X-NewAPI-Username": "{username}",
+			}},
+		}
+		headers, err := ResolveHeaderOverride(info, c)
+		require.Error(t, err)
+		assert.Nil(t, headers)
+		assert.NotContains(t, err.Error(), username)
+	}
 }
 
 func TestToWebSocketURL(t *testing.T) {

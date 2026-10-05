@@ -2841,7 +2841,15 @@ export function ChannelMutateDrawer({
                 <code className='bg-muted rounded px-1 py-0.5'>
                   {'{client_header:NAME}'}
                 </code>{' '}
-                — {t('Client header value')}
+                — {t('Client header value')},{' '}
+                <code className='bg-muted rounded px-1 py-0.5'>
+                  {'{user_id}'}
+                </code>{' '}
+                — {t('User ID')},{' '}
+                <code className='bg-muted rounded px-1 py-0.5'>
+                  {'{username}'}
+                </code>{' '}
+                — {t('Username')}
               </FormDescription>
               <FormMessage />
             </FormItem>
