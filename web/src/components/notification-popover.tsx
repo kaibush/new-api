@@ -20,6 +20,7 @@ import type { TFunction } from 'i18next'
 import { Bell, Megaphone } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { Dialog } from '@/components/dialog'
 import { RichContent } from '@/components/rich-content'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -60,6 +61,8 @@ interface NotificationPopoverProps {
   onTabChange: (tab: 'notice' | 'announcements') => void
   notice: string
   announcements: AnnouncementItem[]
+  importantAnnouncements: AnnouncementItem[]
+  onDismissImportantAnnouncements: () => void
   loading: boolean
   className?: string
 }
@@ -298,79 +301,102 @@ export function NotificationPopover({
   onTabChange,
   notice,
   announcements,
+  importantAnnouncements,
+  onDismissImportantAnnouncements,
   loading,
   className,
 }: NotificationPopoverProps) {
   const { t } = useTranslation()
   return (
-    <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger
-        render={
-          <Button
-            variant='ghost'
-            size='icon'
-            className={cn('relative size-9', className)}
-            aria-label={t('Notifications')}
-          />
-        }
-      >
-        <Bell className='size-[1.2rem]' />
-        {unreadCount > 0 ? (
-          <Badge
-            variant='destructive'
-            className='absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center px-1 text-[10px] font-semibold tabular-nums'
-          >
-            {unreadCount > 99 ? '99+' : unreadCount}
-          </Badge>
-        ) : null}
-      </PopoverTrigger>
-
-      <PopoverContent
-        align='end'
-        sideOffset={8}
-        className='w-[min(26rem,calc(100vw-1rem))] gap-3 p-3'
-      >
-        <PopoverHeader className='gap-1 px-1'>
-          <PopoverTitle>{t('System Announcements')}</PopoverTitle>
-          <p className='text-muted-foreground text-xs'>
-            {t('Latest platform updates and notices')}
-          </p>
-        </PopoverHeader>
-
-        <Tabs
-          value={activeTab}
-          onValueChange={onTabChange as (value: string) => void}
-        >
-          <TabsList className='grid w-full grid-cols-2'>
-            <TabsTrigger value='notice' className='gap-1.5'>
-              <Bell className='size-3.5' />
-              {t('Notice')}
-            </TabsTrigger>
-            <TabsTrigger value='announcements' className='gap-1.5'>
-              <Megaphone className='size-3.5' />
-              {t('Timeline')}
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value='notice' className='mt-2'>
-            <NoticeContent notice={notice} loading={loading} t={t} />
-          </TabsContent>
-
-          <TabsContent value='announcements' className='mt-2'>
-            <AnnouncementsContent
-              announcements={announcements}
-              loading={loading}
-              t={t}
-            />
-          </TabsContent>
-        </Tabs>
-
-        <div className='flex justify-end'>
-          <Button size='sm' onClick={() => onOpenChange(false)}>
+    <>
+      <Dialog
+        open={importantAnnouncements.length > 0}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) onDismissImportantAnnouncements()
+        }}
+        title={t('System Announcements')}
+        showCloseButton={false}
+        footer={
+          <Button onClick={onDismissImportantAnnouncements}>
             {t('Close')}
           </Button>
-        </div>
-      </PopoverContent>
-    </Popover>
+        }
+      >
+        <AnnouncementsContent
+          announcements={importantAnnouncements}
+          loading={false}
+          t={t}
+        />
+      </Dialog>
+      <Popover open={open} onOpenChange={onOpenChange}>
+        <PopoverTrigger
+          render={
+            <Button
+              variant='ghost'
+              size='icon'
+              className={cn('relative size-9', className)}
+              aria-label={t('Notifications')}
+            />
+          }
+        >
+          <Bell className='size-[1.2rem]' />
+          {unreadCount > 0 ? (
+            <Badge
+              variant='destructive'
+              className='absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center px-1 text-[10px] font-semibold tabular-nums'
+            >
+              {unreadCount > 99 ? '99+' : unreadCount}
+            </Badge>
+          ) : null}
+        </PopoverTrigger>
+
+        <PopoverContent
+          align='end'
+          sideOffset={8}
+          className='w-[min(26rem,calc(100vw-1rem))] gap-3 p-3'
+        >
+          <PopoverHeader className='gap-1 px-1'>
+            <PopoverTitle>{t('System Announcements')}</PopoverTitle>
+            <p className='text-muted-foreground text-xs'>
+              {t('Latest platform updates and notices')}
+            </p>
+          </PopoverHeader>
+
+          <Tabs
+            value={activeTab}
+            onValueChange={onTabChange as (value: string) => void}
+          >
+            <TabsList className='grid w-full grid-cols-2'>
+              <TabsTrigger value='notice' className='gap-1.5'>
+                <Bell className='size-3.5' />
+                {t('Notice')}
+              </TabsTrigger>
+              <TabsTrigger value='announcements' className='gap-1.5'>
+                <Megaphone className='size-3.5' />
+                {t('Timeline')}
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value='notice' className='mt-2'>
+              <NoticeContent notice={notice} loading={loading} t={t} />
+            </TabsContent>
+
+            <TabsContent value='announcements' className='mt-2'>
+              <AnnouncementsContent
+                announcements={announcements}
+                loading={loading}
+                t={t}
+              />
+            </TabsContent>
+          </Tabs>
+
+          <div className='flex justify-end'>
+            <Button size='sm' onClick={() => onOpenChange(false)}>
+              {t('Close')}
+            </Button>
+          </div>
+        </PopoverContent>
+      </Popover>
+    </>
   )
 }

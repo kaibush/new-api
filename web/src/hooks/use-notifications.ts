@@ -39,16 +39,13 @@ function hashString(input: string): string {
 
 /**
  * Generate a unique key for an announcement
- * Prefer backend id, fall back to a content hash so edits register
+ * Include content and severity so edits to an existing announcement register
  */
 function getAnnouncementKey(item: Record<string, unknown>): string {
   if (!item) return ''
 
-  if (item.id !== undefined && item.id !== null) {
-    return `id:${item.id}`
-  }
-
   const fingerprint = JSON.stringify({
+    id: item.id ?? null,
     publishDate: (item?.publishDate as string) || '',
     content: ((item?.content as string) || '').trim(),
     extra: ((item?.extra as string) || '').trim(),
@@ -85,10 +82,7 @@ export function useNotifications() {
   const announcementsEnabled = status?.announcements_enabled ?? false
   const announcements = useMemo<Record<string, unknown>[]>(() => {
     if (!announcementsEnabled) return []
-    return ((status?.announcements || []) as Record<string, unknown>[]).slice(
-      0,
-      20
-    )
+    return (status?.announcements || []) as Record<string, unknown>[]
   }, [announcementsEnabled, status?.announcements])
 
   // Notification store
@@ -96,7 +90,7 @@ export function useNotifications() {
     lastReadNotice,
     markNoticeRead,
     markAnnouncementsRead,
-    isAnnouncementRead,
+    readAnnouncementKeys,
   } = useNotificationStore()
 
   // Extract notice content
@@ -112,7 +106,7 @@ export function useNotifications() {
     const announcementsUnread = announcements.filter(
       (item: Record<string, unknown>) => {
         const key = getAnnouncementKey(item)
-        return !isAnnouncementRead(key)
+        return !readAnnouncementKeys.includes(key)
       }
     ).length
 
@@ -121,7 +115,20 @@ export function useNotifications() {
       announcements: announcementsUnread,
       total: noticeUnread + announcementsUnread,
     }
-  }, [noticeContent, lastReadNotice, announcements, isAnnouncementRead])
+  }, [noticeContent, lastReadNotice, announcements, readAnnouncementKeys])
+
+  const importantAnnouncements = useMemo(() => {
+    if (statusLoading) return []
+    return announcements.filter(
+      (item) =>
+        (item.type === 'warning' || item.type === 'error') &&
+        !readAnnouncementKeys.includes(getAnnouncementKey(item))
+    )
+  }, [announcements, readAnnouncementKeys, statusLoading])
+
+  const dismissImportantAnnouncements = () => {
+    markAnnouncementsRead(importantAnnouncements.map(getAnnouncementKey))
+  }
 
   const markAnnouncementsAsRead = () => {
     if (announcements.length > 0) {
@@ -170,6 +177,8 @@ export function useNotifications() {
     // Data
     notice: noticeContent,
     announcements,
+    importantAnnouncements,
+    dismissImportantAnnouncements,
     loading: noticeLoading || statusLoading,
 
     // Unread counts
