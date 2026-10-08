@@ -25,7 +25,15 @@ import { DateTimePicker } from '@/components/datetime-picker'
 import { Dialog } from '@/components/dialog'
 import { LoadingState } from '@/components/loading-state'
 import { Button } from '@/components/ui/button'
-import { Combobox } from '@/components/ui/combobox'
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  useComboboxAnchor,
+} from '@/components/ui/combobox'
 import type { ComboboxInputOption } from '@/components/ui/combobox-input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -108,6 +116,7 @@ export function ModelsFilter(props: ModelsFilterProps) {
   const isAdmin = (user?.role ?? 0) >= 10
 
   const [open, setOpen] = useState(false)
+  const usernameAnchor = useComboboxAnchor()
   const usersQuery = useQuery({
     queryKey: ['users', 'dashboard-filter', user?.id],
     enabled: open && isAdmin,
@@ -324,17 +333,52 @@ export function ModelsFilter(props: ModelsFilterProps) {
               <div className='grid gap-2'>
                 <Label htmlFor='username'>{t('Username')}</Label>
                 <Combobox
-                  id='username'
-                  placeholder={t('Filter by username')}
-                  options={usersQuery.data ?? []}
-                  allowCustomValue
-                  openOnFocus={false}
-                  emptyText={t('No results found')}
-                  value={filters.username ?? ''}
-                  onValueChange={(value) =>
-                    handleChange('username', value ?? '')
+                  items={usersQuery.data ?? []}
+                  value={
+                    usersQuery.data?.find(
+                      (option) => option.value === filters.username
+                    ) ?? null
                   }
-                />
+                  inputValue={filters.username ?? ''}
+                  onInputValueChange={(value, details) => {
+                    if (details.reason === 'input-change') {
+                      handleChange('username', value)
+                    }
+                  }}
+                  onValueChange={(option) => {
+                    if (option) handleChange('username', option.value)
+                  }}
+                  isItemEqualToValue={(item, value) =>
+                    item.value === value.value
+                  }
+                  filter={(option, query) =>
+                    option.value
+                      .toLowerCase()
+                      .includes(query.trim().toLowerCase())
+                  }
+                >
+                  <div ref={usernameAnchor}>
+                    <ComboboxInput
+                      id='username'
+                      aria-label={t('Username')}
+                      placeholder={t('Filter by username')}
+                      triggerAriaLabel={t('Username')}
+                      className='w-full'
+                    />
+                  </div>
+                  <ComboboxContent anchor={usernameAnchor}>
+                    <ComboboxEmpty>{t('No results found')}</ComboboxEmpty>
+                    <ComboboxList>
+                      {(option: ComboboxInputOption) => (
+                        <ComboboxItem key={option.value} value={option}>
+                          <span className='min-w-0 break-all'>
+                            {option.label}
+                          </span>
+                        </ComboboxItem>
+                      )}
+                    </ComboboxList>
+                  </ComboboxContent>
+                </Combobox>
                 {usersQuery.isLoading && (
                   <div role='status'>
                     <LoadingState inline size='sm' message={t('Loading...')} />

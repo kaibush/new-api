@@ -133,6 +133,20 @@ afterEach(() => {
 })
 
 describe('model analytics user filter', () => {
+  it('opens the user list from the dropdown button while preserving the applied username', async () => {
+    const user = userEvent.setup()
+    render(<Fixture username='alice-dev' />)
+    await user.click(screen.getByRole('button', { name: 'Filter' }))
+    await user.click(screen.getByRole('button', { name: 'Username' }))
+    const input = screen.getByRole('combobox', { name: 'Username' })
+    expect(input).toHaveValue('alice-dev')
+    expect(await screen.findByRole('option', { name: 'bob' })).toBeVisible()
+    await user.click(screen.getByRole('option', { name: 'bob' }))
+    expect(input).toHaveValue('bob')
+    expect(input).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByRole('dialog')).toBeVisible()
+  })
+
   it('loads on opening, matches username keywords locally and applies the selected username', async () => {
     const user = userEvent.setup()
     render(<Fixture />)
@@ -255,6 +269,7 @@ describe('model analytics user filter', () => {
         'Failed to load users'
       )
       await user.type(screen.getByRole('combobox', { name: 'Username' }), 'bob')
+      await user.tab()
       await user.click(screen.getByRole('button', { name: 'Apply Filters' }))
       expect(onApply).toHaveBeenCalledWith({
         ...currentFilters,
