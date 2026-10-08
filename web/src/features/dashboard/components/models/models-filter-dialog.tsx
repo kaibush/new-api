@@ -16,14 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
 import { Filter, RotateCcw, Calendar, Search } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DateTimePicker } from '@/components/datetime-picker'
 import { Dialog } from '@/components/dialog'
+import { LoadingState } from '@/components/loading-state'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { Combobox } from '@/components/ui/combobox'
+import type { ComboboxInputOption } from '@/components/ui/combobox-input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
@@ -46,6 +49,8 @@ import type {
   DashboardChartPreferences,
   DashboardFilters,
 } from '@/features/dashboard/types'
+import { getUsers } from '@/features/users/api'
+import { requireServerSuccess } from '@/lib/server-error-message'
 import { getRollingDateRange, type TimeGranularity } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
@@ -100,9 +105,38 @@ export function ModelsFilter(props: ModelsFilterProps) {
   const { t } = useTranslation()
   // 使用已缓存的用户数据，避免重复调用 API
   const user = useAuthStore((state) => state.auth.user)
-  const isAdmin = user?.role && user.role >= 10
+  const isAdmin = (user?.role ?? 0) >= 10
 
   const [open, setOpen] = useState(false)
+  const usersQuery = useQuery({
+    queryKey: ['users', 'dashboard-filter', user?.id],
+    enabled: open && isAdmin,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const options: ComboboxInputOption[] = []
+      // The users API caps each page at 100; load every page so local keyword
+      // matching also finds users outside the first page.
+      for (let page = 1; ; page++) {
+        const response = requireServerSuccess(
+          await getUsers({
+            p: page,
+            page_size: 100,
+            sort_by: 'id',
+            sort_order: 'asc',
+          })
+        )
+        const data = response.data
+        if (!data?.items.length) return options
+        options.push(
+          ...data.items.map((item) => ({
+            value: item.username,
+            label: item.username,
+          }))
+        )
+        if (page * data.page_size >= data.total) return options
+      }
+    },
+  })
   const [filters, setFilters] = useState<DashboardFilters>(
     () =>
       props.currentFilters ?? buildDefaultDashboardFilters(props.preferences)
@@ -150,8 +184,9 @@ export function ModelsFilter(props: ModelsFilterProps) {
     value: Date | string | undefined
   ) => {
     setFilters((prev) => ({ ...prev, [field]: value }))
-    if (field === 'start_timestamp' || field === 'end_timestamp')
+    if (field === 'start_timestamp' || field === 'end_timestamp') {
       setSelectedRange(null)
+    }
   }
 
   const handleQuickRange = (days: number) => {
@@ -257,12 +292,10 @@ export function ModelsFilter(props: ModelsFilterProps) {
           <div className='grid gap-2'>
             <Label htmlFor='time_granularity'>{t('Time Granularity')}</Label>
             <Select
-              items={[
-                ...TIME_GRANULARITY_OPTIONS.map((option) => ({
-                  value: option.value,
-                  label: t(option.label),
-                })),
-              ]}
+              items={TIME_GRANULARITY_OPTIONS.map((option) => ({
+                value: option.value,
+                label: t(option.label),
+              }))}
               value={filters.time_granularity}
               onValueChange={(value) =>
                 handleChange('time_granularity', value as TimeGranularity)
@@ -290,12 +323,33 @@ export function ModelsFilter(props: ModelsFilterProps) {
 
               <div className='grid gap-2'>
                 <Label htmlFor='username'>{t('Username')}</Label>
-                <Input
+                <Combobox
                   id='username'
                   placeholder={t('Filter by username')}
-                  value={filters.username}
-                  onChange={(e) => handleChange('username', e.target.value)}
+                  options={usersQuery.data ?? []}
+                  allowCustomValue
+                  openOnFocus={false}
+                  emptyText={t('No results found')}
+                  value={filters.username ?? ''}
+                  onValueChange={(value) =>
+                    handleChange('username', value ?? '')
+                  }
                 />
+                {usersQuery.isLoading && (
+                  <div role='status'>
+                    <LoadingState inline size='sm' message={t('Loading...')} />
+                  </div>
+                )}
+                {usersQuery.isError && (
+                  <p role='alert' className='text-destructive text-sm'>
+                    {t('Failed to load users')}
+                  </p>
+                )}
+                {usersQuery.isSuccess && usersQuery.data.length === 0 && (
+                  <p role='status' className='text-muted-foreground text-sm'>
+                    {t('No Users Found')}
+                  </p>
+                )}
               </div>
             </>
           )}
