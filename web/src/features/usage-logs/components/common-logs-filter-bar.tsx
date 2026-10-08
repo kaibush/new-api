@@ -39,6 +39,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { UsernameFilter } from '@/components/username-filter'
 import { getGroups } from '@/features/users/api'
 import { useMediaQuery } from '@/hooks'
 import { getUserGroups } from '@/lib/api'
@@ -445,11 +446,12 @@ export function CommonLogsFilterBar<TData>(
       </LogsFilterField>
       {isAdmin && (
         <LogsFilterField>
-          <LogsFilterInput
+          <UsernameFilter
             placeholder={t('Username')}
             className={sensitiveInputClass}
+            popupClassName={sensitiveInputClass}
             value={filters.username || ''}
-            onChange={(e) => handleChange('username', e.target.value)}
+            onValueChange={(value) => handleChange('username', value)}
             onKeyDown={handleKeyDown}
           />
         </LogsFilterField>
