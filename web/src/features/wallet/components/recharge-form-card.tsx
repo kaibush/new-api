@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Gift, ExternalLink, Loader2, Receipt, WalletCards } from 'lucide-react'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useId } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -113,6 +113,8 @@ export function RechargeFormCard({
   enableWaffoPancakeTopup,
 }: RechargeFormCardProps) {
   const { t } = useTranslation()
+  const amountId = useId()
+  const redemptionId = useId()
   const [localAmount, setLocalAmount] = useState(topupAmount.toString())
 
   useEffect(() => {
@@ -293,14 +295,14 @@ export function RechargeFormCard({
 
               <div className='space-y-2.5 sm:space-y-3'>
                 <Label
-                  htmlFor='topup-amount'
+                  htmlFor={amountId}
                   className='text-muted-foreground text-xs font-medium tracking-wider uppercase'
                 >
                   {t('Custom Amount')}
                 </Label>
                 <div className='grid grid-cols-[minmax(0,1fr)_minmax(110px,0.55fr)] gap-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center'>
                   <Input
-                    id='topup-amount'
+                    id={amountId}
                     type='number'
                     value={localAmount}
                     onChange={(e) => handleAmountChange(e.target.value)}
@@ -521,7 +523,7 @@ export function RechargeFormCard({
               <Gift />
             </IconBadge>
             <Label
-              htmlFor='redemption-code'
+              htmlFor={redemptionId}
               className='text-muted-foreground text-xs font-medium tracking-wider uppercase'
             >
               {t('Have a Code?')}
@@ -529,7 +531,7 @@ export function RechargeFormCard({
           </div>
           <div className='grid grid-cols-[minmax(0,1fr)_auto] gap-2'>
             <Input
-              id='redemption-code'
+              id={redemptionId}
               value={redemptionCode}
               onChange={(e) => onRedemptionCodeChange(e.target.value)}
               placeholder={t('Enter your redemption code')}

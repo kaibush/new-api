@@ -27,9 +27,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { RechargeNavButton } from '@/features/wallet/components/recharge-nav-button'
 import { cn } from '@/lib/utils'
 
-import { type TopNavLink } from '../types'
+import type { TopNavLink } from '../types'
 
 type TopNavProps = React.HTMLAttributes<HTMLElement> & {
   links: TopNavLink[]
@@ -55,7 +56,16 @@ export function TopNav({ className, links, ...props }: TopNavProps) {
   return (
     <>
       {/* 移动端下拉菜单 */}
-      <div className='lg:hidden'>
+      <div className='flex items-center gap-1 lg:hidden'>
+        {normalizedLinks
+          .filter((link) => link.action === 'topup')
+          .map((link) => (
+            <RechargeNavButton
+              key={link.href}
+              disabled={link.disabled}
+              className='text-sm'
+            />
+          ))}
         <DropdownMenu modal={false}>
           <DropdownMenuTrigger
             render={<Button size='icon' variant='outline' className='size-7' />}
@@ -63,8 +73,9 @@ export function TopNav({ className, links, ...props }: TopNavProps) {
             <Menu />
           </DropdownMenuTrigger>
           <DropdownMenuContent side='bottom' align='start'>
-            {normalizedLinks.map(
-              ({ title, href, isActive, disabled, external }) => (
+            {normalizedLinks
+              .filter((link) => !link.action)
+              .map(({ title, href, isActive, disabled, external }) => (
                 <DropdownMenuItem
                   key={`${title}-${href}`}
                   render={
@@ -87,9 +98,8 @@ export function TopNav({ className, links, ...props }: TopNavProps) {
                       </Link>
                     )
                   }
-                ></DropdownMenuItem>
-              )
-            )}
+                />
+              ))}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -102,27 +112,38 @@ export function TopNav({ className, links, ...props }: TopNavProps) {
         )}
         {...props}
       >
-        {normalizedLinks.map(({ title, href, isActive, disabled, external }) =>
-          external ? (
-            <a
-              key={`${title}-${href}`}
-              href={href}
-              target='_blank'
-              rel='noopener noreferrer'
-              className={`hover:text-primary text-sm font-medium transition-colors ${isActive ? '' : 'text-muted-foreground'}`}
-            >
-              {title}
-            </a>
-          ) : (
-            <Link
-              key={`${title}-${href}`}
-              to={href}
-              disabled={disabled}
-              className={`hover:text-primary text-sm font-medium transition-colors ${isActive ? '' : 'text-muted-foreground'}`}
-            >
-              {title}
-            </Link>
-          )
+        {normalizedLinks.map(
+          ({ title, href, isActive, disabled, external, action }) => {
+            if (action === 'topup') {
+              return (
+                <RechargeNavButton
+                  key='topup'
+                  disabled={disabled}
+                  className='text-muted-foreground h-auto p-0 text-sm font-medium'
+                />
+              )
+            }
+            return external ? (
+              <a
+                key={`${title}-${href}`}
+                href={href}
+                target='_blank'
+                rel='noopener noreferrer'
+                className={`hover:text-primary text-sm font-medium transition-colors ${isActive ? '' : 'text-muted-foreground'}`}
+              >
+                {title}
+              </a>
+            ) : (
+              <Link
+                key={`${title}-${href}`}
+                to={href}
+                disabled={disabled}
+                className={`hover:text-primary text-sm font-medium transition-colors ${isActive ? '' : 'text-muted-foreground'}`}
+              >
+                {title}
+              </Link>
+            )
+          }
         )}
       </nav>
     </>

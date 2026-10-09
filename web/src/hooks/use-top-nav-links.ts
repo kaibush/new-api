@@ -27,6 +27,7 @@ export type TopNavLink = {
   title: string
   href: string
   disabled?: boolean
+  action?: 'topup'
   requiresAuth?: boolean
   external?: boolean
 }
@@ -70,6 +71,10 @@ export function useTopNavLinks(): TopNavLink[] {
   // Console -> /dashboard (new console path)
   if (modules?.console !== false) {
     links.push({ title: t('Console'), href: '/dashboard' })
+  }
+
+  if (modules.topup) {
+    links.push({ title: t('Online Top-up'), href: '/wallet', action: 'topup' })
   }
 
   // Pricing

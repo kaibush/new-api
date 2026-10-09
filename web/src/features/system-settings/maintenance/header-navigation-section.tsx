@@ -51,6 +51,7 @@ import {
 const headerNavSchema = z.object({
   home: z.boolean(),
   console: z.boolean(),
+  topup: z.boolean(),
   pricingEnabled: z.boolean(),
   pricingRequireAuth: z.boolean(),
   rankingsEnabled: z.boolean(),
@@ -67,6 +68,7 @@ type HeaderNavigationSectionProps = {
 }
 
 const toFormValues = (config: HeaderNavModulesConfig): HeaderNavFormValues => ({
+  topup: config.topup ?? HEADER_NAV_DEFAULT.topup,
   home:
     config.home === undefined ? HEADER_NAV_DEFAULT.home : Boolean(config.home),
   console:
@@ -119,6 +121,7 @@ export function HeaderNavigationSection({
       ...config,
       home: values.home,
       console: values.console,
+      topup: values.topup,
       docs: values.docs,
       about: values.about,
       pricing: {
@@ -162,6 +165,11 @@ export function HeaderNavigationSection({
       key: 'console',
       title: t('Console'),
       description: t('User dashboard and quota controls.'),
+    },
+    {
+      key: 'topup',
+      title: t('Online Top-up'),
+      description: t('Open the wallet recharge dialog.'),
     },
     {
       key: 'docs',

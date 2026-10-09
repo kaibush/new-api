@@ -28,6 +28,7 @@ import { ThemeSwitch } from '@/components/theme-switch'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { SystemUpdateAction } from '@/features/system-update/system-update-action'
+import { RechargeNavButton } from '@/features/wallet/components/recharge-nav-button'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { useTopNavLinks } from '@/hooks/use-top-nav-links'
@@ -241,6 +242,15 @@ export function PublicHeader(props: PublicHeaderProps) {
             <div className='hidden min-w-0 items-center gap-0.5 lg:flex'>
               {links.map((link) => {
                 const isActive = pathname === link.href
+                if (link.action === 'topup') {
+                  return (
+                    <RechargeNavButton
+                      key='topup'
+                      disabled={link.disabled}
+                      className='text-muted-foreground hover:text-foreground px-3 text-sm font-medium'
+                    />
+                  )
+                }
                 if (link.external) {
                   return (
                     <a
@@ -375,6 +385,16 @@ export function PublicHeader(props: PublicHeaderProps) {
                 isActive ? 'text-foreground' : 'text-muted-foreground',
                 link.disabled && 'pointer-events-none opacity-50'
               )
+              if (link.action === 'topup') {
+                return (
+                  <RechargeNavButton
+                    key='topup'
+                    disabled={link.disabled}
+                    className={linkClassName}
+                    onOpen={() => setMobileOpen(false)}
+                  />
+                )
+              }
               const transitionStyle = {
                 transitionDelay: mobileOpen ? `${100 + i * 50}ms` : '0ms',
               }
