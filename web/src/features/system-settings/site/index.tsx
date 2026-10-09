@@ -25,6 +25,7 @@ import {
 } from './section-registry.tsx'
 
 const defaultSiteSettings: SiteSettings = {
+  HelpCenter: '',
   Notice: '',
   SystemName: 'New API',
   Logo: '',

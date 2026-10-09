@@ -77,6 +77,10 @@ export function useTopNavLinks(): TopNavLink[] {
     links.push({ title: t('Online Top-up'), href: '/wallet', action: 'topup' })
   }
 
+  if (modules.help) {
+    links.push({ title: t('Help Center'), href: '/help-center' })
+  }
+
   // Pricing
   const pricing = modules?.pricing
   if (pricing && typeof pricing === 'object' && pricing.enabled) {

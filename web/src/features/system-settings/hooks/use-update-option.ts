@@ -55,6 +55,9 @@ export function useUpdateOption() {
       requireServerSuccess(await updateSystemOption(request)),
     onSuccess: (data, variables) => {
       if (data.success) {
+        if (variables.key === 'HelpCenter') {
+          queryClient.invalidateQueries({ queryKey: ['help-center'] })
+        }
         // Always refresh system-options
         queryClient.invalidateQueries({ queryKey: ['system-options'] })
 

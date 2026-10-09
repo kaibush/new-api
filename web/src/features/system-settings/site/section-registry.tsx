@@ -28,8 +28,16 @@ import { NoticeSection } from '../maintenance/notice-section'
 import { SidebarModulesSection } from '../maintenance/sidebar-modules-section'
 import type { SiteSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
+import { HelpCenterSection } from './help-center-section'
 
 const SITE_SECTIONS = [
+  {
+    id: 'help-center',
+    titleKey: 'Help Center',
+    build: (settings: SiteSettings) => (
+      <HelpCenterSection defaultValue={settings.HelpCenter} />
+    ),
+  },
   {
     id: 'system-info',
     titleKey: 'System Information',

@@ -51,6 +51,7 @@ import {
 const headerNavSchema = z.object({
   home: z.boolean(),
   console: z.boolean(),
+  help: z.boolean(),
   topup: z.boolean(),
   pricingEnabled: z.boolean(),
   pricingRequireAuth: z.boolean(),
@@ -68,6 +69,7 @@ type HeaderNavigationSectionProps = {
 }
 
 const toFormValues = (config: HeaderNavModulesConfig): HeaderNavFormValues => ({
+  help: config.help ?? HEADER_NAV_DEFAULT.help,
   topup: config.topup ?? HEADER_NAV_DEFAULT.topup,
   home:
     config.home === undefined ? HEADER_NAV_DEFAULT.home : Boolean(config.home),
@@ -121,6 +123,7 @@ export function HeaderNavigationSection({
       ...config,
       home: values.home,
       console: values.console,
+      help: values.help,
       topup: values.topup,
       docs: values.docs,
       about: values.about,
@@ -165,6 +168,11 @@ export function HeaderNavigationSection({
       key: 'console',
       title: t('Console'),
       description: t('User dashboard and quota controls.'),
+    },
+    {
+      key: 'help',
+      title: t('Help Center'),
+      description: t('Client guides and interactive previews.'),
     },
     {
       key: 'topup',
