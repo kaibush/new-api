@@ -378,7 +378,7 @@ export function PublicHeader(props: PublicHeaderProps) {
             {links.map((link, i) => {
               const isActive = pathname === link.href
               const linkClassName = cn(
-                'flex items-center gap-3 py-3 text-base font-medium tracking-tight transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]',
+                'flex h-auto w-full items-center justify-start gap-3 px-0 py-3 text-base font-medium tracking-tight transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] hover:bg-transparent',
                 mobileOpen
                   ? 'translate-y-0 opacity-100'
                   : 'translate-y-4 opacity-0',
