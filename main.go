@@ -327,6 +327,7 @@ func InitResources() error {
 
 	model.CheckSetup()
 
+	model.StartSiteVisitRetention()
 	// Initialize options, should after model.InitDB()
 	if common.IsMasterNode {
 		if err := model.MigrateRetiredFrontendOptions(); err != nil {

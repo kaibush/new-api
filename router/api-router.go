@@ -23,6 +23,8 @@ func SetApiRouter(router *gin.Engine) {
 	apiRouter.Use(middleware.GlobalAPIRateLimit())
 	anonymousRequestBodyLimit := middleware.AnonymousRequestBodyLimit()
 	{
+		apiRouter.POST("/site-visits", anonymousRequestBodyLimit, middleware.TryUserAuth(), controller.RecordSiteVisit)
+		apiRouter.GET("/site-visits", middleware.DisableCache(), middleware.AdminAuth(), controller.GetSiteVisits)
 		apiRouter.GET("/setup", controller.GetSetup)
 		apiRouter.POST("/setup", anonymousRequestBodyLimit, controller.PostSetup)
 		apiRouter.GET("/status", controller.GetStatus)

@@ -896,4 +896,8 @@ export const STATIC_I18N_KEYS = [
   'Verification method',
   'Admin permissions updated',
   'Provider ID',
+  // Analytics device categories returned by the server.
+  'Desktop',
+  'Mobile',
+  'Tablet',
 ] as const
