@@ -63,7 +63,7 @@ export function buildPreviewDocument(content: string): string {
   const policy = document.createElement('meta')
   policy.httpEquiv = 'Content-Security-Policy'
   policy.content =
-    "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'"
+    "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src https: data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'"
   document.head.prepend(policy)
   return `<!doctype html>${document.documentElement.outerHTML}`
 }

@@ -51,6 +51,7 @@ import { SettingsForm } from '../components/settings-form-layout'
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { HelpImageUpload } from './help-image-upload'
 
 export function HelpCenterSection(props: { defaultValue: string }) {
   const { t } = useTranslation()
@@ -91,7 +92,12 @@ export function HelpCenterSection(props: { defaultValue: string }) {
           </p>
           <p className='text-muted-foreground text-sm'>
             {t(
-              'HTML previews run in isolation with inline scripts. Network requests and account access are blocked.'
+              'HTML previews run in isolation. HTTPS images are supported; external scripts and embedded pages are blocked.'
+            )}
+          </p>
+          <p className='text-muted-foreground text-sm'>
+            {t(
+              'Use public HTTPS image URLs in HTML or Markdown. Local file paths are not supported.'
             )}
           </p>
           {Object.keys(form.formState.errors).length > 0 && (
@@ -216,6 +222,35 @@ export function HelpCenterSection(props: { defaultValue: string }) {
                   )}
                 />
               </div>
+              {items[index]?.kind !== 'link' && (
+                <HelpImageUpload
+                  onUploaded={(url) => {
+                    const current = form.getValues(`items.${index}`)
+                    if (current.kind === 'link') return
+                    let content: string
+                    if (current.kind === 'html') {
+                      const safeURL = url
+                        .replaceAll('&', '&amp;')
+                        .replaceAll('"', '&quot;')
+                        .replaceAll('<', '&lt;')
+                        .replaceAll('>', '&gt;')
+                      const image = `<img src="${safeURL}" alt="" style="max-width:100%;height:auto">`
+                      const bodyEnd = current.content
+                        .toLowerCase()
+                        .lastIndexOf('</body>')
+                      const position =
+                        bodyEnd >= 0 ? bodyEnd : current.content.length
+                      content = `${current.content.slice(0, position)}\n${image}\n${current.content.slice(position)}`
+                    } else {
+                      content = `${current.content}\n\n![](<${url.replaceAll('>', '%3E').replaceAll('<', '%3C')}>)\n`
+                    }
+                    form.setValue(`items.${index}.content`, content, {
+                      shouldDirty: true,
+                      shouldValidate: true,
+                    })
+                  }}
+                />
+              )}
               <FormField
                 control={form.control}
                 name={`items.${index}.content`}

@@ -122,3 +122,166 @@ it('blocks invalid titles without submitting and supports adding a new item', as
   expect(put).not.toHaveBeenCalled()
   client.clear()
 })
+
+it.each(['markdown', 'html'])(
+  'uploads an image and inserts its permanent URL into %s content',
+  async (kind) => {
+    const imageURL = 'https://images.example.com/help-center/example.png'
+    const post = vi
+      .spyOn(api, 'post')
+      .mockResolvedValue({ data: { success: true, data: { url: imageURL } } })
+    const original =
+      kind === 'html' ? '<html><body><h1>Guide</h1></body></html>' : '# Guide'
+    const client = new QueryClient()
+    const user = userEvent.setup()
+    render(
+      <QueryClientProvider client={client}>
+        <SettingsPageProvider actionsContainer={null}>
+          <HelpCenterSection
+            defaultValue={JSON.stringify({
+              version: 1,
+              items: [
+                {
+                  id: 'guide',
+                  title: 'Guide',
+                  kind,
+                  content: original,
+                  enabled: true,
+                },
+              ],
+            })}
+          />
+        </SettingsPageProvider>
+      </QueryClientProvider>
+    )
+    await user.upload(
+      screen.getByLabelText('Upload image'),
+      new File(['pixels'], 'image.png', { type: 'image/png' })
+    )
+    const expected =
+      kind === 'html'
+        ? `<html><body><h1>Guide</h1>\n<img src="${imageURL}" alt="" style="max-width:100%;height:auto">\n</body></html>`
+        : `# Guide\n\n![](<${imageURL}>)\n`
+    await waitFor(() =>
+      expect(screen.getByRole('textbox', { name: 'Content' })).toHaveValue(
+        expected
+      )
+    )
+    expect(post.mock.calls[0][0]).toBe('/api/option/help-center/images')
+    expect(post.mock.calls[0][1]).toBeInstanceOf(FormData)
+    client.clear()
+  }
+)
+
+it('preserves content on upload failure and allows retrying the same image', async () => {
+  const post = vi
+    .spyOn(api, 'post')
+    .mockRejectedValueOnce(new Error('Storage unavailable'))
+    .mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: { url: 'https://images.example.com/retry.png' },
+      },
+    })
+  const client = new QueryClient()
+  const user = userEvent.setup()
+  render(
+    <QueryClientProvider client={client}>
+      <SettingsPageProvider actionsContainer={null}>
+        <HelpCenterSection
+          defaultValue={JSON.stringify({
+            version: 1,
+            items: [
+              {
+                id: 'guide',
+                title: 'Guide',
+                kind: 'markdown',
+                content: '# Guide',
+                enabled: true,
+              },
+            ],
+          })}
+        />
+      </SettingsPageProvider>
+    </QueryClientProvider>
+  )
+  const file = new File(['pixels'], 'image.png', { type: 'image/png' })
+  await user.upload(screen.getByLabelText('Upload image'), file)
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'Storage unavailable'
+  )
+  expect(screen.getByRole('textbox', { name: 'Content' })).toHaveValue(
+    '# Guide'
+  )
+  await user.upload(screen.getByLabelText('Upload image'), file)
+  await waitFor(() =>
+    expect(screen.getByRole('textbox', { name: 'Content' })).toHaveValue(
+      '# Guide\n\n![](<https://images.example.com/retry.png>)\n'
+    )
+  )
+  expect(post).toHaveBeenCalledTimes(2)
+  client.clear()
+})
+
+it('keeps an in-flight upload attached to its article after reordering', async () => {
+  let resolveUpload!: (value: unknown) => void
+  vi.spyOn(api, 'post').mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        resolveUpload = resolve
+      })
+  )
+  const client = new QueryClient()
+  const user = userEvent.setup()
+  render(
+    <QueryClientProvider client={client}>
+      <SettingsPageProvider actionsContainer={null}>
+        <HelpCenterSection
+          defaultValue={JSON.stringify({
+            version: 1,
+            items: [
+              {
+                id: 'guide',
+                title: 'Guide',
+                kind: 'markdown',
+                content: '# Guide',
+                enabled: true,
+              },
+              {
+                id: 'other',
+                title: 'Other',
+                kind: 'markdown',
+                content: '# Other',
+                enabled: true,
+              },
+            ],
+          })}
+        />
+      </SettingsPageProvider>
+    </QueryClientProvider>
+  )
+  const guide = within(screen.getByRole('group', { name: 'Guide' }))
+  await user.upload(
+    guide.getByLabelText('Upload image'),
+    new File(['pixels'], 'image.png', { type: 'image/png' })
+  )
+  expect(guide.getByRole('button', { name: 'Uploading...' })).toBeDisabled()
+  await user.click(guide.getByRole('button', { name: 'Move down' }))
+  resolveUpload({
+    data: {
+      success: true,
+      data: { url: 'https://images.example.com/guide.png' },
+    },
+  })
+  await waitFor(() =>
+    expect(guide.getByRole('textbox', { name: 'Content' })).toHaveValue(
+      '# Guide\n\n![](<https://images.example.com/guide.png>)\n'
+    )
+  )
+  expect(
+    within(screen.getByRole('group', { name: 'Other' })).getByRole('textbox', {
+      name: 'Content',
+    })
+  ).toHaveValue('# Other')
+  client.clear()
+})

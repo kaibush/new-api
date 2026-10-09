@@ -16,16 +16,23 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import {
+  CodeBlock,
+  CodeBlockCopyButton,
+} from '@/components/ai-elements/code-block'
 import { RichContent } from '@/components/rich-content'
 import { Button } from '@/components/ui/button'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { cn } from '@/lib/utils'
 
 import { buildPreviewDocument, type HelpItem } from './config'
 
 export function HelpContent(props: { item: HelpItem }) {
   const { t } = useTranslation()
+  const [view, setView] = useState('preview')
   const document = useMemo(
     () =>
       props.item.kind === 'html'
@@ -35,13 +42,56 @@ export function HelpContent(props: { item: HelpItem }) {
   )
   if (props.item.kind === 'html') {
     return (
-      <iframe
-        title={props.item.title}
-        srcDoc={document}
-        sandbox='allow-scripts'
-        referrerPolicy='no-referrer'
-        className='h-80 w-full rounded-xl border bg-white sm:h-[65dvh]'
-      />
+      <div className='min-w-0 space-y-3'>
+        <ToggleGroup
+          value={[view]}
+          onValueChange={(values) => {
+            if (values[0]) setView(values[0])
+          }}
+          variant='outline'
+          size='sm'
+          aria-label={t('View mode')}
+          className='max-w-full'
+        >
+          <ToggleGroupItem value='preview'>{t('Preview')}</ToggleGroupItem>
+          <ToggleGroupItem value='split'>
+            {t('Source and preview')}
+          </ToggleGroupItem>
+        </ToggleGroup>
+        <div
+          className={cn(
+            'grid min-w-0 gap-3',
+            view === 'split' && 'lg:grid-cols-2'
+          )}
+        >
+          <div
+            hidden={view !== 'split'}
+            className='h-80 min-w-0 overflow-auto rounded-xl border sm:h-[65dvh]'
+          >
+            {view === 'split' && (
+              <CodeBlock
+                code={props.item.content}
+                language='html'
+                filename={`${props.item.id}.html`}
+                title={t('HTML source')}
+                showLineNumbers
+                showToolbar
+                enableCollapse={false}
+                className='my-0 rounded-none border-0 shadow-none'
+              >
+                <CodeBlockCopyButton />
+              </CodeBlock>
+            )}
+          </div>
+          <iframe
+            title={props.item.title}
+            srcDoc={document}
+            sandbox='allow-scripts'
+            referrerPolicy='no-referrer'
+            className='h-80 w-full min-w-0 rounded-xl border bg-white sm:h-[65dvh]'
+          />
+        </div>
+      </div>
     )
   }
   if (props.item.kind === 'link') {
