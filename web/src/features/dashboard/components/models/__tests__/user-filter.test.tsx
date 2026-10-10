@@ -23,6 +23,7 @@ import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DEFAULT_DASHBOARD_CHART_PREFERENCES } from '@/features/dashboard/constants'
+import { buildQueryParams } from '@/features/dashboard/lib/filters'
 import type { DashboardFilters } from '@/features/dashboard/types'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
@@ -417,3 +418,36 @@ describe('responsive quick user filtering', () => {
     expect(onApply.mock.lastCall?.[0].time_granularity).toBe('day')
   })
 })
+
+it.each(['pointer', 'keyboard'] as const)(
+  'returns to all users when the searched selected user is unchecked with %s',
+  async (method) => {
+    const user = userEvent.setup()
+    render(<QuickFixture />)
+    const input = screen.getByRole('combobox', { name: 'Username' })
+    await user.click(input)
+    await user.click(await screen.findByRole('option', { name: 'bob' }))
+    await user.click(input)
+    await user.type(input, 'bo')
+    const selected = screen.getByRole('option', { name: 'bob' })
+    expect(selected).toHaveAttribute('aria-selected', 'true')
+    if (method === 'pointer') await user.click(selected)
+    else await user.keyboard('{ArrowDown}{Enter}')
+    expect(input).toHaveValue('')
+    const filters = onApply.mock.lastCall?.[0] as DashboardFilters
+    expect(filters).toEqual({ ...currentFilters, username: undefined })
+    expect(
+      buildQueryParams({ start_timestamp: 100, end_timestamp: 200 }, filters)
+    ).toEqual({
+      start_timestamp: 100,
+      end_timestamp: 200,
+      default_time: 'hour',
+    })
+    await user.click(input)
+    expect(screen.getByRole('option', { name: 'bob' })).toHaveAttribute(
+      'aria-selected',
+      'false'
+    )
+    expect(screen.getByRole('option', { name: 'alice-dev' })).toBeVisible()
+  }
+)

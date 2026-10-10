@@ -110,8 +110,14 @@ export function UsernameFilter(props: UsernameFilterProps) {
           }
         }}
         onValueChange={(option) => {
-          if (option) props.onValueChange(option.value)
-          else if (props.selectionOnly) props.onValueChange('')
+          if (
+            props.selectionOnly &&
+            (!option || option.value === props.value)
+          ) {
+            props.onValueChange('')
+          } else if (option) {
+            props.onValueChange(option.value)
+          }
           setSearch(null)
         }}
         isItemEqualToValue={(item, value) => item.value === value.value}
