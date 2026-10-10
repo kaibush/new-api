@@ -16,20 +16,25 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { Table } from '@tanstack/react-table'
-
-import { DataTableBulkActions as BulkActionsToolbar } from '@/components/data-table'
-
-import type { User } from '../types'
-
-interface DataTableBulkActionsProps {
-  table: Table<User>
-}
-
-export function DataTableBulkActions({ table }: DataTableBulkActionsProps) {
-  return (
-    <BulkActionsToolbar table={table} entityName='user'>
-      {null}
-    </BulkActionsToolbar>
-  )
+export function getIframeSandbox(
+  src: string | undefined,
+  parentOrigin: string
+): string {
+  const permissions =
+    'allow-scripts allow-forms allow-popups allow-presentation allow-downloads'
+  if (!src) return permissions
+  try {
+    const target = new URL(src, parentOrigin)
+    // External applications need their own storage. Host and inline content
+    // must keep an opaque origin so scripts cannot remove their sandbox.
+    if (
+      (target.protocol === 'https:' || target.protocol === 'http:') &&
+      target.origin !== parentOrigin
+    ) {
+      return `${permissions} allow-same-origin`
+    }
+  } catch {
+    // Invalid URLs receive the same restricted permissions as inline content.
+  }
+  return permissions
 }

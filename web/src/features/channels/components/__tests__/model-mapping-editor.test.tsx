@@ -196,9 +196,11 @@ test('a draft request with only the upstream name focuses the request field, and
     ).toHaveLength(2)
   )
   expect(screen.getByDisplayValue('up-1')).toBeVisible()
-  expect(
-    screen.getAllByRole('combobox', { name: 'Request Model Name' })[1]
-  ).toHaveFocus()
+  await waitFor(() =>
+    expect(
+      screen.getAllByRole('combobox', { name: 'Request Model Name' })[1]
+    ).toHaveFocus()
+  )
 
   view.rerender(
     <ModelMappingEditor

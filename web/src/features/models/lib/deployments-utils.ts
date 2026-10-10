@@ -22,11 +22,7 @@ export function normalizeDeploymentStatus(status: unknown) {
 
 export function formatRemainingMinutes(mins: unknown) {
   const n =
-    typeof mins === 'string'
-      ? Number(mins)
-      : typeof mins === 'number'
-        ? mins
-        : NaN
+    typeof mins === 'string' || typeof mins === 'number' ? Number(mins) : NaN
   if (!Number.isFinite(n)) return null
 
   const total = Math.max(0, Math.round(n))
