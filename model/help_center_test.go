@@ -32,6 +32,7 @@ func TestHelpCenterValidationAndPublicContent(t *testing.T) {
 		`{"version":1,"items":null}`,
 		`{"version":1,"items":[{"id":"one","title":"One","kind":"link","content":"javascript:alert(1)"}]}`,
 		`{"version":1,"items":[{"id":"one","title":"One","kind":"unknown"}]}`,
+		`{"version":1,"items":[{"id":"one","title":"One","kind":"html","htmlViewMode":"unknown"}]}`,
 		`{"version":1,"items":[{"id":"one","title":"One","kind":"html"},{"id":"one","title":"Two","kind":"html"}]}`,
 	} {
 		_, err := helpcenter.Parse(raw)
@@ -59,6 +60,45 @@ func TestHelpCenterValidationAndPublicContent(t *testing.T) {
 	require.Len(t, result.Data.Items, 1)
 	assert.Equal(t, "clients", result.Data.Items[0].ID)
 	assert.NotContains(t, response.Body.String(), "requestAnimationFrame")
+}
+
+func TestHelpCenterHTMLViewModes(t *testing.T) {
+	common.OptionMapRWMutex.Lock()
+	previous := common.OptionMap
+	common.OptionMap = make(map[string]string)
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap = previous
+		common.OptionMapRWMutex.Unlock()
+	})
+	router := gin.New()
+	router.GET("/api/help-center", controller.GetHelpCenter)
+	for _, mode := range []string{"", "preview", "split", "both"} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			config := helpcenter.Config{Version: 1, Items: []helpcenter.Item{{
+				ID: "bird", Title: "Bird", Kind: "html", Content: "<h1>Bird</h1>", Enabled: true, HTMLViewMode: mode,
+			}}}
+			encoded, err := common.Marshal(config)
+			require.NoError(t, err)
+			parsed, err := helpcenter.Parse(string(encoded))
+			require.NoError(t, err)
+			assert.Equal(t, config, parsed)
+			common.OptionMapRWMutex.Lock()
+			common.OptionMap[helpcenter.OptionKey] = string(encoded)
+			common.OptionMapRWMutex.Unlock()
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/help-center", nil))
+			require.Equal(t, http.StatusOK, response.Code)
+			var result struct {
+				Success bool              `json:"success"`
+				Data    helpcenter.Config `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+			require.True(t, result.Success)
+			assert.Equal(t, config, result.Data)
+		})
+	}
 }
 
 func TestHelpCenterDatabaseRoundTrip(t *testing.T) {
@@ -117,6 +157,27 @@ func TestHelpCenterDatabaseRoundTrip(t *testing.T) {
 			}
 			require.Error(t, model.UpdateOption(helpcenter.OptionKey, `{"version":2,"items":[]}`))
 			assert.Equal(t, helpcenter.DefaultJSON, common.OptionMap[helpcenter.OptionKey])
+			config, err := helpcenter.Parse(helpcenter.DefaultJSON)
+			require.NoError(t, err)
+			for _, mode := range []string{"preview", "split", "both"} {
+				config.Items[1].HTMLViewMode = mode
+				encoded, err := common.Marshal(config)
+				require.NoError(t, err)
+				for range 2 {
+					require.NoError(t, model.UpdateOption(helpcenter.OptionKey, string(encoded)))
+					var saved model.Option
+					require.NoError(t, db.Where(&model.Option{Key: helpcenter.OptionKey}).First(&saved).Error)
+					parsed, err := helpcenter.Parse(saved.Value)
+					require.NoError(t, err)
+					assert.Equal(t, config, parsed)
+					assert.Equal(t, saved.Value, common.OptionMap[helpcenter.OptionKey])
+				}
+				require.Error(t, model.UpdateOption(helpcenter.OptionKey, `{"version":1,"items":[{"id":"bird","title":"Bird","kind":"html","htmlViewMode":"unknown"}]}`))
+				var unchanged model.Option
+				require.NoError(t, db.Where(&model.Option{Key: helpcenter.OptionKey}).First(&unchanged).Error)
+				assert.Equal(t, string(encoded), unchanged.Value)
+				assert.Equal(t, string(encoded), common.OptionMap[helpcenter.OptionKey])
+			}
 			require.NoError(t, model.UpdateOption(helpcenter.OptionKey, `{"version":1,"items":[]}`))
 			options, err := model.AllOption()
 			require.NoError(t, err)

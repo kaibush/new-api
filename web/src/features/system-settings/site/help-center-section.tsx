@@ -27,6 +27,7 @@ import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -58,6 +59,11 @@ export function HelpCenterSection(props: { defaultValue: string }) {
   const update = useUpdateOption()
   const [preview, setPreview] = useState<number | null>(null)
   const [deleting, setDeleting] = useState<number | null>(null)
+  const htmlViewModes = [
+    { value: 'preview', label: t('Preview only') },
+    { value: 'split', label: t('Source comparison only') },
+    { value: 'both', label: t('Both views') },
+  ]
   const defaults = useMemo<HelpCenterConfig>(() => {
     if (!props.defaultValue) return { version: 1, items: [] }
     return helpCenterSchema.parse(JSON.parse(props.defaultValue))
@@ -222,6 +228,38 @@ export function HelpCenterSection(props: { defaultValue: string }) {
                   )}
                 />
               </div>
+              {items[index]?.kind === 'html' && (
+                <FormField
+                  control={form.control}
+                  name={`items.${index}.htmlViewMode`}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('HTML display mode')}</FormLabel>
+                      <Select
+                        items={htmlViewModes}
+                        value={field.value ?? 'both'}
+                        onValueChange={field.onChange}
+                      >
+                        <FormControl>
+                          <SelectTrigger className='w-full sm:w-72'>
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {htmlViewModes.map((mode) => (
+                            <SelectItem key={mode.value} value={mode.value}>
+                              {mode.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>
+                        {t('Choose which HTML views visitors can use.')}
+                      </FormDescription>
+                    </FormItem>
+                  )}
+                />
+              )}
               {items[index]?.kind !== 'link' && (
                 <HelpImageUpload
                   onUploaded={(url) => {

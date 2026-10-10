@@ -59,6 +59,7 @@ it('saves reordered and hidden help content through the existing settings API', 
                 id: 'bird',
                 title: 'Bird',
                 kind: 'html',
+                htmlViewMode: 'split',
                 content: '<svg></svg>',
                 enabled: true,
               },
@@ -87,6 +88,7 @@ it('saves reordered and hidden help content through the existing settings API', 
       id: 'bird',
       title: 'Bird',
       kind: 'html',
+      htmlViewMode: 'split',
       content: '<svg></svg>',
       enabled: true,
     },
@@ -98,6 +100,119 @@ it('saves reordered and hidden help content through the existing settings API', 
       enabled: false,
     },
   ])
+  client.clear()
+})
+
+it.each([
+  ['preview', 'Preview only'],
+  ['split', 'Source comparison only'],
+  ['both', 'Both views'],
+])(
+  'saves the %s HTML display mode and uses it in the settings preview',
+  async (mode, label) => {
+    const put = vi
+      .spyOn(api, 'put')
+      .mockResolvedValue({ data: { success: true } })
+    const actions = document.createElement('div')
+    actions.dataset.helpActions = 'true'
+    document.body.append(actions)
+    const client = new QueryClient()
+    const user = userEvent.setup()
+    render(
+      <QueryClientProvider client={client}>
+        <SettingsPageProvider actionsContainer={actions}>
+          <HelpCenterSection
+            defaultValue={JSON.stringify({
+              version: 1,
+              items: [
+                {
+                  id: 'bird',
+                  title: 'Bird',
+                  kind: 'html',
+                  content: '<h1>Bird</h1>',
+                  enabled: true,
+                },
+              ],
+            })}
+          />
+        </SettingsPageProvider>
+      </QueryClientProvider>
+    )
+    const selector = screen.getByRole('combobox', { name: 'HTML display mode' })
+    expect(selector).toHaveTextContent('Both views')
+    await user.click(selector)
+    await user.click(screen.getByRole('option', { name: label }))
+    expect(selector).toHaveTextContent(label)
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => expect(put).toHaveBeenCalled())
+    const request = put.mock.calls[0][1] as { key: string; value: string }
+    expect(request.key).toBe('HelpCenter')
+    expect(JSON.parse(request.value).items[0].htmlViewMode).toBe(mode)
+    await user.click(screen.getByRole('button', { name: 'Preview' }))
+    const preview = within(screen.getByRole('dialog', { name: 'Preview' }))
+    expect(preview.getByTitle('Bird')).toBeVisible()
+    if (mode === 'both') {
+      expect(preview.getByRole('group', { name: 'View mode' })).toBeVisible()
+    } else {
+      expect(
+        preview.queryByRole('group', { name: 'View mode' })
+      ).not.toBeInTheDocument()
+    }
+    if (mode === 'split') {
+      expect(
+        preview.getByRole('textbox', { name: 'HTML source' })
+      ).toBeVisible()
+    } else {
+      expect(
+        preview.queryByRole('textbox', { name: 'HTML source' })
+      ).not.toBeInTheDocument()
+    }
+    client.clear()
+  }
+)
+
+it('offers display settings only for HTML and keeps the choice when changing content types', async () => {
+  const client = new QueryClient()
+  const user = userEvent.setup()
+  render(
+    <QueryClientProvider client={client}>
+      <SettingsPageProvider actionsContainer={null}>
+        <HelpCenterSection
+          defaultValue={JSON.stringify({
+            version: 1,
+            items: [
+              {
+                id: 'guide',
+                title: 'Guide',
+                kind: 'markdown',
+                content: '# Guide',
+                enabled: true,
+              },
+            ],
+          })}
+        />
+      </SettingsPageProvider>
+    </QueryClientProvider>
+  )
+  expect(
+    screen.queryByRole('combobox', { name: 'HTML display mode' })
+  ).not.toBeInTheDocument()
+  await user.click(screen.getByRole('combobox', { name: 'Content type' }))
+  await user.click(screen.getByRole('option', { name: 'HTML preview' }))
+  const selector = screen.getByRole('combobox', { name: 'HTML display mode' })
+  selector.focus()
+  await user.keyboard('{Enter}{Home}{Enter}')
+  expect(selector).toHaveTextContent('Preview only')
+  await user.click(screen.getByRole('combobox', { name: 'Content type' }))
+  await user.click(screen.getByRole('option', { name: 'External link' }))
+  expect(
+    screen.queryByRole('combobox', { name: 'HTML display mode' })
+  ).not.toBeInTheDocument()
+  await user.click(screen.getByRole('combobox', { name: 'Content type' }))
+  await user.click(screen.getByRole('option', { name: 'HTML preview' }))
+  expect(
+    screen.getByRole('combobox', { name: 'HTML display mode' })
+  ).toHaveTextContent('Preview only')
   client.clear()
 })
 

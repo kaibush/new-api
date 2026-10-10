@@ -24,6 +24,8 @@ type Item struct {
 	Kind    string `json:"kind"`
 	Content string `json:"content"`
 	Enabled bool   `json:"enabled"`
+	// Omitted in existing configurations, which allow both HTML views.
+	HTMLViewMode string `json:"htmlViewMode,omitempty"`
 }
 
 type Config struct {
@@ -49,6 +51,11 @@ func Parse(raw string) (Config, error) {
 			return config, fmt.Errorf("help center item IDs must be unique letters, digits, underscores or hyphens (1–64 characters)")
 		}
 		seen[item.ID] = true
+		switch item.HTMLViewMode {
+		case "", "preview", "split", "both":
+		default:
+			return config, fmt.Errorf("unsupported help center HTML view mode: %s", item.HTMLViewMode)
+		}
 		if strings.TrimSpace(item.Title) == "" || len([]rune(item.Title)) > 120 {
 			return config, fmt.Errorf("help center item titles must contain 1–120 characters")
 		}

@@ -25,51 +25,135 @@ import { parseHeaderNavModules } from '@/lib/nav-modules'
 import { buildPreviewDocument, helpCenterSchema } from '../config'
 import { HelpContent } from '../help-content'
 
-it('switches between preview and read-only source without restarting the preview', async () => {
+it.each([undefined, 'both'] as const)(
+  'switches between preview and read-only source without restarting the preview when mode is %s',
+  async (htmlViewMode) => {
+    const user = userEvent.setup()
+    const source = '<h1>Pelican</h1>\n<script>window.animation = true</script>'
+    render(
+      <HelpContent
+        item={{
+          id: 'bird',
+          title: 'Pelican',
+          kind: 'html',
+          content: source,
+          enabled: true,
+          htmlViewMode,
+        }}
+      />
+    )
+    const frame = screen.getByTitle('Pelican')
+    expect(screen.getByRole('button', { name: 'Preview' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(
+      screen.queryByRole('textbox', { name: 'HTML source' })
+    ).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Source and preview' }))
+    const sourceView = screen.getByRole('textbox', { name: 'HTML source' })
+    expect(sourceView).toHaveAttribute('aria-readonly', 'true')
+    expect(sourceView.textContent).toContain('<h1>Pelican</h1>')
+    expect(
+      screen.getByRole('button', { name: 'Source and preview' })
+    ).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTitle('Pelican')).toBe(frame)
+    expect(frame).toHaveAttribute('sandbox', 'allow-scripts')
+    // Source scrolls separately; narrow screens stack the panes.
+    expect(sourceView.closest('.h-80')).toHaveClass('min-w-0', 'overflow-auto')
+    expect(frame.parentElement).toHaveClass('grid', 'lg:grid-cols-2')
+
+    const previewButton = screen.getByRole('button', { name: 'Preview' })
+    previewButton.focus()
+    await user.keyboard('{Enter}')
+    expect(previewButton).toHaveAttribute('aria-pressed', 'true')
+    expect(
+      screen.queryByRole('textbox', { name: 'HTML source' })
+    ).not.toBeInTheDocument()
+    expect(screen.getByTitle('Pelican')).toBe(frame)
+    expect(frame.parentElement).not.toHaveClass('lg:grid-cols-2')
+  }
+)
+
+it.each(['preview', 'split'] as const)(
+  'shows only the configured %s view without a visitor toggle',
+  (htmlViewMode) => {
+    render(
+      <HelpContent
+        item={{
+          id: 'bird',
+          title: 'Pelican',
+          kind: 'html',
+          content: '<h1>Pelican</h1>',
+          enabled: true,
+          htmlViewMode,
+        }}
+      />
+    )
+    expect(
+      screen.queryByRole('group', { name: 'View mode' })
+    ).not.toBeInTheDocument()
+    const frame = screen.getByTitle('Pelican')
+    expect(frame).toBeVisible()
+    expect(frame).toHaveAttribute('sandbox', 'allow-scripts')
+    const source = screen.queryByRole('textbox', { name: 'HTML source' })
+    if (htmlViewMode === 'split') {
+      expect(source).toHaveAttribute('aria-readonly', 'true')
+      expect(source?.textContent).toContain('<h1>Pelican</h1>')
+      expect(frame.parentElement).toHaveClass('lg:grid-cols-2')
+    } else {
+      expect(source).not.toBeInTheDocument()
+      expect(frame.parentElement).not.toHaveClass('lg:grid-cols-2')
+    }
+  }
+)
+
+it('applies updated display settings even after a visitor selects source comparison', async () => {
   const user = userEvent.setup()
-  const source = '<h1>Pelican</h1>\n<script>window.animation = true</script>'
-  render(
-    <HelpContent
-      item={{
-        id: 'bird',
-        title: 'Pelican',
-        kind: 'html',
-        content: source,
-        enabled: true,
-      }}
-    />
-  )
+  const item = {
+    id: 'bird',
+    title: 'Pelican',
+    kind: 'html' as const,
+    content: '<h1>Pelican</h1>',
+    enabled: true,
+  }
+  const { rerender } = render(<HelpContent item={item} />)
   const frame = screen.getByTitle('Pelican')
-  expect(screen.getByRole('button', { name: 'Preview' })).toHaveAttribute(
-    'aria-pressed',
-    'true'
-  )
-  expect(
-    screen.queryByRole('textbox', { name: 'HTML source' })
-  ).not.toBeInTheDocument()
-
   await user.click(screen.getByRole('button', { name: 'Source and preview' }))
-  const sourceView = screen.getByRole('textbox', { name: 'HTML source' })
-  expect(sourceView).toHaveAttribute('aria-readonly', 'true')
-  expect(sourceView.textContent).toContain('<h1>Pelican</h1>')
-  expect(
-    screen.getByRole('button', { name: 'Source and preview' })
-  ).toHaveAttribute('aria-pressed', 'true')
-  expect(screen.getByTitle('Pelican')).toBe(frame)
-  expect(frame).toHaveAttribute('sandbox', 'allow-scripts')
-  // Source scrolls separately; narrow screens stack the panes.
-  expect(sourceView.closest('.h-80')).toHaveClass('min-w-0', 'overflow-auto')
-  expect(frame.parentElement).toHaveClass('grid', 'lg:grid-cols-2')
-
-  const previewButton = screen.getByRole('button', { name: 'Preview' })
-  previewButton.focus()
-  await user.keyboard('{Enter}')
-  expect(previewButton).toHaveAttribute('aria-pressed', 'true')
+  rerender(<HelpContent item={{ ...item, htmlViewMode: 'preview' }} />)
   expect(
     screen.queryByRole('textbox', { name: 'HTML source' })
   ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('group', { name: 'View mode' })
+  ).not.toBeInTheDocument()
+  rerender(<HelpContent item={{ ...item, htmlViewMode: 'split' }} />)
+  expect(screen.getByRole('textbox', { name: 'HTML source' })).toBeVisible()
   expect(screen.getByTitle('Pelican')).toBe(frame)
-  expect(frame.parentElement).not.toHaveClass('lg:grid-cols-2')
+})
+
+it('preserves supported HTML display settings and rejects unknown modes', () => {
+  const item = {
+    id: 'bird',
+    title: 'Pelican',
+    kind: 'html',
+    content: '<h1>Pelican</h1>',
+    enabled: true,
+  }
+  for (const htmlViewMode of ['preview', 'split', 'both']) {
+    const config = helpCenterSchema.parse({
+      version: 1,
+      items: [{ ...item, htmlViewMode }],
+    })
+    expect(config.items[0].htmlViewMode).toBe(htmlViewMode)
+  }
+  expect(
+    helpCenterSchema.safeParse({
+      version: 1,
+      items: [{ ...item, htmlViewMode: 'unknown' }],
+    }).success
+  ).toBe(false)
 })
 
 it('preserves animation scripts inside a sandbox without same-origin access', () => {

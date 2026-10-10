@@ -25,6 +25,7 @@ export const helpItemSchema = z
     kind: z.enum(['markdown', 'html', 'link']),
     content: z.string(),
     enabled: z.boolean(),
+    htmlViewMode: z.enum(['preview', 'split', 'both']).optional(),
   })
   .refine((item) => {
     if (item.kind !== 'link') return true

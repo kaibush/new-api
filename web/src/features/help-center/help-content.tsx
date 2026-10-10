@@ -33,6 +33,8 @@ import { buildPreviewDocument, type HelpItem } from './config'
 export function HelpContent(props: { item: HelpItem }) {
   const { t } = useTranslation()
   const [view, setView] = useState('preview')
+  const mode = props.item.htmlViewMode ?? 'both'
+  const activeView = mode === 'both' ? view : mode
   const document = useMemo(
     () =>
       props.item.kind === 'html'
@@ -43,32 +45,34 @@ export function HelpContent(props: { item: HelpItem }) {
   if (props.item.kind === 'html') {
     return (
       <div className='min-w-0 space-y-3'>
-        <ToggleGroup
-          value={[view]}
-          onValueChange={(values) => {
-            if (values[0]) setView(values[0])
-          }}
-          variant='outline'
-          size='sm'
-          aria-label={t('View mode')}
-          className='max-w-full'
-        >
-          <ToggleGroupItem value='preview'>{t('Preview')}</ToggleGroupItem>
-          <ToggleGroupItem value='split'>
-            {t('Source and preview')}
-          </ToggleGroupItem>
-        </ToggleGroup>
+        {mode === 'both' && (
+          <ToggleGroup
+            value={[view]}
+            onValueChange={(values) => {
+              if (values[0]) setView(values[0])
+            }}
+            variant='outline'
+            size='sm'
+            aria-label={t('View mode')}
+            className='max-w-full'
+          >
+            <ToggleGroupItem value='preview'>{t('Preview')}</ToggleGroupItem>
+            <ToggleGroupItem value='split'>
+              {t('Source and preview')}
+            </ToggleGroupItem>
+          </ToggleGroup>
+        )}
         <div
           className={cn(
             'grid min-w-0 gap-3',
-            view === 'split' && 'lg:grid-cols-2'
+            activeView === 'split' && 'lg:grid-cols-2'
           )}
         >
           <div
-            hidden={view !== 'split'}
+            hidden={activeView !== 'split'}
             className='h-80 min-w-0 overflow-auto rounded-xl border sm:h-[65dvh]'
           >
-            {view === 'split' && (
+            {activeView === 'split' && (
               <CodeBlock
                 code={props.item.content}
                 language='html'
