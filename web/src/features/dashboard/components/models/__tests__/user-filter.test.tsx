@@ -337,3 +337,83 @@ describe('visible model analytics filters', () => {
     )
   })
 })
+
+describe('responsive quick user filtering', () => {
+  it('searches locally without applying partial usernames, then applies a keyboard selection', async () => {
+    const user = userEvent.setup()
+    render(<QuickFixture />)
+    const input = screen.getByRole('combobox', { name: 'Username' })
+    await user.click(input)
+    await screen.findByRole('option', { name: 'bob' })
+    await user.type(input, 'ob')
+    expect(onApply).not.toHaveBeenCalled()
+    expect(api.get).toHaveBeenCalledTimes(1)
+    await user.keyboard('{ArrowDown}{Enter}')
+    expect(onApply).toHaveBeenLastCalledWith({
+      ...currentFilters,
+      username: 'bob',
+    })
+    expect(input).toHaveValue('bob')
+  })
+
+  it('restores the applied username when search is dismissed and clears it with one tap', async () => {
+    const user = userEvent.setup()
+    render(<QuickFixture />)
+    const input = screen.getByRole('combobox', { name: 'Username' })
+    await user.click(input)
+    await user.click(await screen.findByRole('option', { name: 'bob' }))
+    onApply.mockClear()
+    await user.click(input)
+    await user.type(input, 'alice')
+    await user.keyboard('{Escape}')
+    expect(input).toHaveValue('bob')
+    expect(onApply).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Clear' }))
+    expect(onApply).toHaveBeenLastCalledWith({
+      ...currentFilters,
+      username: undefined,
+    })
+    expect(input).toHaveValue('')
+  })
+
+  it('keeps long usernames selectable with mobile touch targets and bounded scrolling', async () => {
+    const longName =
+      'user-with-a-very-long-username-that-must-stay-inside-the-phone-screen'
+    users = [{ id: 2, username: longName, display_name: '' }]
+    const user = userEvent.setup()
+    render(<QuickFixture />)
+    const input = screen.getByRole('combobox', { name: 'Username' })
+    expect(input).toHaveAttribute('autocapitalize', 'none')
+    expect(input).toHaveAttribute('autocorrect', 'off')
+    expect(input).toHaveAttribute('spellcheck', 'false')
+    expect(input.closest('[data-slot=input-group]')).toHaveClass(
+      'h-12',
+      'md:h-8'
+    )
+    expect(screen.getByRole('tablist', { name: 'Quick Range' })).toHaveClass(
+      'grid-cols-2',
+      'md:flex'
+    )
+    await user.click(input)
+    const option = await screen.findByRole('option', { name: longName })
+    expect(option).toHaveClass('min-h-11')
+    expect(screen.getByText(longName)).toHaveClass('break-all')
+    expect(screen.getByRole('listbox')).toHaveClass(
+      'overflow-y-auto',
+      'overscroll-contain'
+    )
+    await user.click(option)
+    expect(input).toHaveValue(longName)
+  })
+
+  it('shows lookup failures while leaving the time range usable', async () => {
+    failure = 'network'
+    const user = userEvent.setup()
+    render(<QuickFixture />)
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Failed to load users'
+    )
+    await user.click(screen.getByRole('tab', { name: '7 Days' }))
+    expect(onApply.mock.lastCall?.[0].time_granularity).toBe('day')
+  })
+})

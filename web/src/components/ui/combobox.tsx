@@ -237,11 +237,13 @@ function ComboboxInput({
   showTrigger = true,
   showClear = false,
   triggerAriaLabel,
+  clearAriaLabel,
   ...props
 }: ComboboxPrimitive.Input.Props & {
   showTrigger?: boolean
   showClear?: boolean
   triggerAriaLabel?: string
+  clearAriaLabel?: string
 }) {
   return (
     <InputGroup className={cn('w-auto', className)}>
@@ -254,13 +256,16 @@ function ComboboxInput({
           <InputGroupButton
             size='icon-xs'
             variant='ghost'
+            nativeButton
             render={<ComboboxTrigger aria-label={triggerAriaLabel} />}
             data-slot='input-group-button'
             className='group-has-data-[slot=combobox-clear]/input-group:hidden data-pressed:bg-transparent'
             disabled={disabled}
           />
         )}
-        {showClear && <ComboboxClear disabled={disabled} />}
+        {showClear && (
+          <ComboboxClear disabled={disabled} aria-label={clearAriaLabel} />
+        )}
       </InputGroupAddon>
       {children}
     </InputGroup>

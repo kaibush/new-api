@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import type { KeyboardEventHandler } from 'react'
+import { useState, type KeyboardEventHandler } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { LoadingState } from '@/components/loading-state'
@@ -37,6 +37,7 @@ import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
 interface UsernameFilterProps {
+  selectionOnly?: boolean
   value?: string
   onValueChange: (value: string) => void
   enabled?: boolean
@@ -51,6 +52,7 @@ export function UsernameFilter(props: UsernameFilterProps) {
   const { t } = useTranslation()
   const user = useAuthStore((state) => state.auth.user)
   const usernameAnchor = useComboboxAnchor()
+  const [search, setSearch] = useState<string | null>(null)
   const usersQuery = useQuery({
     queryKey: ['users', 'filter-options', user?.id],
     enabled: props.enabled !== false && (user?.role ?? 0) >= 10,
@@ -86,25 +88,45 @@ export function UsernameFilter(props: UsernameFilterProps) {
         items={usersQuery.data ?? []}
         value={
           usersQuery.data?.find((option) => option.value === props.value) ??
-          null
+          (props.value ? { value: props.value, label: props.value } : null)
         }
-        inputValue={props.value ?? ''}
+        inputValue={
+          props.selectionOnly
+            ? (search ?? props.value ?? '')
+            : (props.value ?? '')
+        }
+        onOpenChange={(open, details) => {
+          if (
+            props.selectionOnly &&
+            (!open || details.reason !== 'input-change')
+          ) {
+            setSearch(open ? '' : null)
+          }
+        }}
         onInputValueChange={(value, details) => {
           if (details.reason === 'input-change') {
-            props.onValueChange(value)
+            if (props.selectionOnly) setSearch(value)
+            else props.onValueChange(value)
           }
         }}
         onValueChange={(option) => {
           if (option) props.onValueChange(option.value)
+          else if (props.selectionOnly) props.onValueChange('')
+          setSearch(null)
         }}
         isItemEqualToValue={(item, value) => item.value === value.value}
         filter={(option, query) =>
           option.value.toLowerCase().includes(query.trim().toLowerCase())
         }
       >
-        <div ref={usernameAnchor}>
+        <div ref={usernameAnchor} className='min-w-0'>
           <ComboboxInput
             id={props.id}
+            autoCapitalize='none'
+            autoCorrect='off'
+            spellCheck={false}
+            showClear={props.selectionOnly}
+            clearAriaLabel={t('Clear')}
             aria-label={t('Username')}
             placeholder={props.placeholder ?? t('Filter by username')}
             triggerAriaLabel={t('Username')}
@@ -119,7 +141,12 @@ export function UsernameFilter(props: UsernameFilterProps) {
               }
               props.onKeyDown?.(event)
             }}
-            className={cn('w-full', props.className)}
+            className={cn(
+              'w-full',
+              props.selectionOnly &&
+                'h-12 md:h-8 [&_input]:h-full [&_input]:text-base md:[&_input]:text-sm [&_button]:size-11 md:[&_button]:size-6 [&_[data-slot=input-group-addon]]:p-0',
+              props.className
+            )}
           />
         </div>
         <ComboboxContent
@@ -129,7 +156,13 @@ export function UsernameFilter(props: UsernameFilterProps) {
           <ComboboxEmpty>{t('No results found')}</ComboboxEmpty>
           <ComboboxList>
             {(option: ComboboxInputOption) => (
-              <ComboboxItem key={option.value} value={option}>
+              <ComboboxItem
+                key={option.value}
+                value={option}
+                className={
+                  props.selectionOnly ? 'min-h-11 md:min-h-8' : undefined
+                }
+              >
                 <span className='min-w-0 break-all'>{option.label}</span>
               </ComboboxItem>
             )}
