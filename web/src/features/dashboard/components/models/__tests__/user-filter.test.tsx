@@ -291,11 +291,8 @@ describe('model analytics user filter', () => {
   })
 })
 
-function QuickFixture(props: { username?: string }) {
-  const [filters, setFilters] = useState<DashboardFilters>({
-    ...currentFilters,
-    username: props.username,
-  })
+function QuickFixture() {
+  const [filters, setFilters] = useState<DashboardFilters>(currentFilters)
   return (
     <QueryClientProvider client={client}>
       <ModelsQuickFilter
@@ -310,19 +307,22 @@ function QuickFixture(props: { username?: string }) {
 }
 
 describe('visible model analytics filters', () => {
-  it('keeps user filtering in the dialog without rendering or loading a duplicate selector', () => {
+  it('selects a user without opening a filter dialog or typing a username', async () => {
+    const user = userEvent.setup()
     render(<QuickFixture />)
-    expect(
-      screen.queryByRole('combobox', { name: 'Username' })
-    ).not.toBeInTheDocument()
-    expect(
-      screen.queryByRole('button', { name: 'Username' })
-    ).not.toBeInTheDocument()
-    expect(api.get).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Username' }))
+    await user.click(await screen.findByRole('option', { name: 'bob' }))
+    expect(onApply).toHaveBeenLastCalledWith({
+      ...currentFilters,
+      username: 'bob',
+    })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
   it('changes the quick range while preserving the selected username', async () => {
     const user = userEvent.setup()
-    render(<QuickFixture username='bob' />)
+    render(<QuickFixture />)
+    await user.click(screen.getByRole('button', { name: 'Username' }))
+    await user.click(await screen.findByRole('option', { name: 'bob' }))
     await user.click(screen.getByRole('tab', { name: '7 Days' }))
     const filters = onApply.mock.lastCall?.[0] as DashboardFilters
     expect(filters.username).toBe('bob')

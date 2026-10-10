@@ -310,6 +310,7 @@ export function ModelsQuickFilter(props: {
   onFiltersChange: (filters: DashboardFilters) => void
 }) {
   const { t } = useTranslation()
+  const user = useAuthStore((state) => state.auth.user)
   const selectedRange = detectQuickRangeDays(props.filters)
   return (
     <div className='flex flex-wrap items-center gap-2'>
@@ -334,6 +335,19 @@ export function ModelsQuickFilter(props: {
           ))}
         </TabsList>
       </Tabs>
+      {(user?.role ?? 0) >= 10 && (
+        <div className='w-full sm:w-64'>
+          <UsernameFilter
+            value={props.filters.username}
+            onValueChange={(username) =>
+              props.onFiltersChange({
+                ...props.filters,
+                username: username || undefined,
+              })
+            }
+          />
+        </div>
+      )}
     </div>
   )
 }
