@@ -36,7 +36,10 @@ import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { ModelsChartPreferences } from './components/models/models-chart-preferences'
-import { ModelsFilter } from './components/models/models-filter-dialog'
+import {
+  ModelsFilter,
+  ModelsQuickFilter,
+} from './components/models/models-filter-dialog'
 import { OverviewDashboard } from './components/overview/overview-dashboard'
 import { DEFAULT_TIME_GRANULARITY } from './constants'
 import {
@@ -348,6 +351,10 @@ export function Dashboard() {
           </div>
           {activeSection === 'models' && (
             <>
+              <ModelsQuickFilter
+                filters={modelFilters}
+                onFiltersChange={handleFilterChange}
+              />
               <FadeIn>
                 <Suspense fallback={<LogStatCardsFallback />}>
                   <LazyLogStatCards

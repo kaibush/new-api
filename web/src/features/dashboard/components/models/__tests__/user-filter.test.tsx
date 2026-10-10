@@ -27,7 +27,7 @@ import type { DashboardFilters } from '@/features/dashboard/types'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { ModelsFilter } from '../models-filter-dialog'
+import { ModelsFilter, ModelsQuickFilter } from '../models-filter-dialog'
 
 const currentFilters: DashboardFilters = {
   start_timestamp: new Date('2026-10-07T09:57:00Z'),
@@ -288,5 +288,52 @@ describe('model analytics user filter', () => {
       screen.queryByRole('combobox', { name: 'Username' })
     ).not.toBeInTheDocument()
     expect(api.get).not.toHaveBeenCalled()
+  })
+})
+
+function QuickFixture() {
+  const [filters, setFilters] = useState<DashboardFilters>(currentFilters)
+  return (
+    <QueryClientProvider client={client}>
+      <ModelsQuickFilter
+        filters={filters}
+        onFiltersChange={(next) => {
+          setFilters(next)
+          onApply(next)
+        }}
+      />
+    </QueryClientProvider>
+  )
+}
+
+describe('visible model analytics filters', () => {
+  it('selects a user without opening a filter dialog or typing a username', async () => {
+    const user = userEvent.setup()
+    render(<QuickFixture />)
+    await user.click(screen.getByRole('button', { name: 'Username' }))
+    await user.click(await screen.findByRole('option', { name: 'bob' }))
+    expect(onApply).toHaveBeenLastCalledWith({
+      ...currentFilters,
+      username: 'bob',
+    })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+  it('changes the quick range while preserving the selected username', async () => {
+    const user = userEvent.setup()
+    render(<QuickFixture />)
+    await user.click(screen.getByRole('button', { name: 'Username' }))
+    await user.click(await screen.findByRole('option', { name: 'bob' }))
+    await user.click(screen.getByRole('tab', { name: '7 Days' }))
+    const filters = onApply.mock.lastCall?.[0] as DashboardFilters
+    expect(filters.username).toBe('bob')
+    expect(filters.time_granularity).toBe('day')
+    expect(
+      Number(filters.end_timestamp?.getTime()) -
+        Number(filters.start_timestamp?.getTime())
+    ).toBe(7 * 86400000)
+    expect(screen.getByRole('tab', { name: '7 Days' })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
   })
 })

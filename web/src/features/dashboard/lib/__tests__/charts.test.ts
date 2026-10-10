@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { describe, expect, test } from 'vitest'
 
 import type { QuotaDataItem } from '@/features/dashboard/types'
+import { toIntlLocale } from '@/i18n/languages'
 import type { TimeGranularity } from '@/lib/time'
 
 import { processChartData, processUserChartData } from '../charts'
@@ -128,11 +129,11 @@ describe.each(cases)('dashboard $granularity chart chronology', (scenario) => {
     const data = unorderedUsage(scenario.start, scenario.interval)
     const original = structuredClone(data)
     const result = processUserChartData(data, scenario.granularity)
-    const values: Array<{ Time: string; rawQuota: number }> =
+    const values: Array<{ Time: string; rawValue: number }> =
       result.spec_user_trend.data[0].values
 
     expect(values.map((row) => row.Time)).toEqual(scenario.labels)
-    expect(values.map((row) => row.rawQuota / 500000)).toEqual([
+    expect(values.map((row) => row.rawValue / 500000)).toEqual([
       11, 2, 3, 4, 5, 6, 7, 8,
     ])
     expect(data).toEqual(original)
@@ -153,4 +154,73 @@ describe.each(cases)('dashboard $granularity chart chronology', (scenario) => {
       ).toEqual([0, 0, 0, 0, 0, 0, 8])
     }
   })
+})
+
+describe('user token analytics', () => {
+  test('ranks by tokens independently of spending and aggregates the selected users over time', () => {
+    const data = [
+      {
+        username: 'alice',
+        created_at: 1767225600,
+        quota: 900000,
+        token_used: 10,
+      },
+      { username: 'bob', created_at: 1767225600, quota: 0, token_used: 1200 },
+      { username: 'bob', created_at: 1767312000, quota: 0, token_used: 300 },
+    ]
+    const result = processUserChartData(
+      data,
+      'day',
+      undefined,
+      1,
+      'tokens',
+      'en'
+    )
+    expect(result.spec_user_rank.data[0].values).toEqual([
+      { User: 'bob', rawValue: 1500, Usage: 1500 },
+    ])
+    expect(result.spec_user_rank.title.subtext).toBe('Total: 1,500')
+    expect(
+      result.spec_user_trend.data[0].values.map(
+        (row: { rawValue: number }) => row.rawValue
+      )
+    ).toEqual([1200, 300])
+    expect(
+      processUserChartData(data).spec_user_rank.data[0].values[0].User
+    ).toBe('alice')
+  })
+  test('keeps missing token usage at zero and displays an empty state for no records', () => {
+    const result = processUserChartData(
+      [{ username: 'alice', created_at: 1767225600, quota: 900000 }],
+      'day',
+      undefined,
+      10,
+      'tokens'
+    )
+    expect(result.spec_user_rank.data[0].values[0].rawValue).toBe(0)
+    const empty = processUserChartData([], 'day', undefined, 10, 'tokens')
+    expect(empty.spec_user_rank.title.subtext).toBe('No data available')
+    expect(empty.spec_user_trend.data[0].values).toEqual([])
+  })
+})
+
+test.each([
+  ['zhCN', '1,500'],
+  ['zhTW', '1,500'],
+  ['en', '1,500'],
+  ['fr', '1\u202f500'],
+  ['ru', '1\u00a0500'],
+  ['ja', '1,500'],
+  ['vi', '1.500'],
+  ['invalid_locale', '1,500'],
+])('formats token totals for interface language %s', (language, expected) => {
+  const result = processUserChartData(
+    [{ username: 'bob', created_at: 1767225600, token_used: 1500 }],
+    'day',
+    undefined,
+    10,
+    'tokens',
+    toIntlLocale(language)
+  )
+  expect(result.spec_user_rank.title.subtext).toBe(`Total: ${expected}`)
 })

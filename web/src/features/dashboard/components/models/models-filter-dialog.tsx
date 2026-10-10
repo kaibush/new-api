@@ -33,6 +33,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { UsernameFilter } from '@/components/username-filter'
 import {
   TIME_GRANULARITY_OPTIONS,
@@ -301,5 +302,52 @@ export function ModelsFilter(props: ModelsFilterProps) {
         </div>
       </ScrollArea>
     </Dialog>
+  )
+}
+
+export function ModelsQuickFilter(props: {
+  filters: DashboardFilters
+  onFiltersChange: (filters: DashboardFilters) => void
+}) {
+  const { t } = useTranslation()
+  const user = useAuthStore((state) => state.auth.user)
+  const selectedRange = detectQuickRangeDays(props.filters)
+  return (
+    <div className='flex flex-wrap items-center gap-2'>
+      <Tabs
+        value={String(selectedRange ?? '')}
+        onValueChange={(value) => {
+          const days = Number(value)
+          const { start, end } = getRollingDateRange(days)
+          props.onFiltersChange({
+            ...props.filters,
+            start_timestamp: start,
+            end_timestamp: end,
+            time_granularity: granularityForRangeDays(days),
+          })
+        }}
+      >
+        <TabsList aria-label={t('Quick Range')}>
+          {TIME_RANGE_PRESETS.map((range) => (
+            <TabsTrigger key={range.days} value={String(range.days)}>
+              {t(range.label)}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+      {(user?.role ?? 0) >= 10 && (
+        <div className='w-full sm:w-64'>
+          <UsernameFilter
+            value={props.filters.username}
+            onValueChange={(username) =>
+              props.onFiltersChange({
+                ...props.filters,
+                username: username || undefined,
+              })
+            }
+          />
+        </div>
+      )}
+    </div>
   )
 }

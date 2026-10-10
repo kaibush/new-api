@@ -204,7 +204,10 @@ export interface DashboardChartPreferences {
 
 // User analytics selections are held by the dashboard parent so they survive
 // switching between dashboard sub-sections, matching the model/flow filters.
+export type UserUsageMetric = 'quota' | 'tokens'
+
 export interface UserChartsFilters {
+  metric?: UserUsageMetric
   timeGranularity: TimeGranularity
   selectedRange: number
   topUserLimit: number

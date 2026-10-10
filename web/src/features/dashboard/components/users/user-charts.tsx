@@ -39,7 +39,9 @@ import {
 import type {
   ProcessedUserChartData,
   UserChartsFilters,
+  UserUsageMetric,
 } from '@/features/dashboard/types'
+import { toIntlLocale } from '@/i18n/languages'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { getRollingDateRange, type TimeGranularity } from '@/lib/time'
 import { VCHART_OPTION } from '@/lib/vchart'
@@ -73,7 +75,9 @@ interface UserChartsProps {
 }
 
 export function UserCharts(props: UserChartsProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const metric = props.filters.metric ?? 'quota'
   const { resolvedTheme } = useTheme()
   const [themeReady, setThemeReady] = useState(false)
   const themeManagerRef = useRef<
@@ -151,13 +155,29 @@ export function UserCharts(props: UserChartsProps) {
         isLoading ? [] : (userData ?? []),
         timeGranularity,
         t,
-        topUserLimit
+        topUserLimit,
+        metric,
+        locale
       ),
-    [userData, isLoading, timeGranularity, t, topUserLimit]
+    [userData, isLoading, timeGranularity, t, topUserLimit, metric, locale]
   )
 
   return (
     <div className='space-y-3'>
+      <Tabs
+        value={metric}
+        onValueChange={(value) =>
+          onFiltersChange({
+            ...props.filters,
+            metric: value as UserUsageMetric,
+          })
+        }
+      >
+        <TabsList aria-label={t('Usage Metric')}>
+          <TabsTrigger value='quota'>{t('Consumption Amount')}</TabsTrigger>
+          <TabsTrigger value='tokens'>{t('Token Usage')}</TabsTrigger>
+        </TabsList>
+      </Tabs>
       <div className='flex items-center gap-1.5 overflow-x-auto pb-1 sm:gap-2'>
         <Tabs
           value={String(selectedRange)}
@@ -236,7 +256,15 @@ export function UserCharts(props: UserChartsProps) {
                 <IconBadge tone='info' size='sm'>
                   <Users />
                 </IconBadge>
-                <div className='text-sm font-semibold'>{t(chart.labelKey)}</div>
+                <div className='text-sm font-semibold'>
+                  {metric === 'tokens'
+                    ? t(
+                        chart.value === 'rank'
+                          ? 'User Token Ranking'
+                          : 'User Token Trend'
+                      )
+                    : t(chart.labelKey)}
+                </div>
               </div>
 
               <div className='h-[300px] p-1.5 sm:h-96 sm:p-2'>
@@ -246,7 +274,7 @@ export function UserCharts(props: UserChartsProps) {
                   themeReady &&
                   spec && (
                     <VChart
-                      key={`user-${chart.value}-${topUserLimit}-${resolvedTheme}`}
+                      key={`user-${metric}-${chart.value}-${topUserLimit}-${resolvedTheme}`}
                       spec={{
                         ...spec,
                         theme: resolvedTheme === 'dark' ? 'dark' : 'light',
