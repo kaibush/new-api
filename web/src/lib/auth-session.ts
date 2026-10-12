@@ -22,6 +22,7 @@ import { t } from 'i18next'
 
 import { publishAuthSessionEvent } from '@/lib/auth-session-sync'
 import { hasSessionHint } from '@/lib/session-hint'
+import { syncVisoraUser } from '@/lib/visora'
 import {
   useAuthStore,
   type AuthBootstrapState,
@@ -154,6 +155,11 @@ export function applyAuthBundle(
   const previousSID = useAuthStore.getState().auth.session?.sid
   authEpoch += 1
   useAuthStore.getState().auth.setBundle(bundle)
+  syncVisoraUser({
+    id: bundle.user.id,
+    name: bundle.user.display_name || bundle.user.username,
+    email: bundle.user.email,
+  })
   if (synchronizeTabs && previousSID !== bundle.session.sid) {
     publishAuthSessionEvent('authenticated', bundle.session.sid)
   }
@@ -191,6 +197,7 @@ export function clearAuthentication(
   const sid = useAuthStore.getState().auth.session?.sid
   authEpoch += 1
   useAuthStore.getState().auth.reset(bootstrapState)
+  if (bootstrapState === 'complete') syncVisoraUser(null)
   if (synchronizeTabs && sid) {
     publishAuthSessionEvent('signed_out', sid)
   }
@@ -401,6 +408,7 @@ export async function bootstrapAuthentication(): Promise<RefreshOutcome> {
   if (!currentValidAuthBundle() && !hasSessionHint()) {
     const auth = useAuthStore.getState().auth
     if (!auth.user && !auth.session) {
+      syncVisoraUser(null)
       return { kind: 'anonymous' }
     }
   }

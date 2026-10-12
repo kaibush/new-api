@@ -10,6 +10,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig(({ envMode }) => {
   const env = loadEnv({ mode: envMode, prefixes: ['VITE_'] })
+  const visoraBase = env.rawPublicVars.VITE_VISORA_URL?.trim().replace(
+    /\/$/,
+    ''
+  )
+  const visoraSiteId = env.rawPublicVars.VITE_VISORA_SITE_ID?.trim()
   const serverUrl =
     process.env.VITE_REACT_APP_SERVER_URL ||
     env.rawPublicVars.VITE_REACT_APP_SERVER_URL ||
@@ -65,6 +70,23 @@ export default defineConfig(({ envMode }) => {
     html: {
       template: './index.html',
       favicon: './public/favicon.ico',
+      ...(visoraBase && visoraSiteId
+        ? {
+            tags: [
+              {
+                tag: 'script',
+                head: true,
+                publicPath: false,
+                attrs: {
+                  defer: true,
+                  src: `${visoraBase}/tracker.js`,
+                  'data-site': visoraSiteId,
+                  'data-wait-for-user': 'true',
+                },
+              },
+            ],
+          }
+        : {}),
     },
     server: {
       host: '0.0.0.0',
