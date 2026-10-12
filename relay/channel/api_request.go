@@ -178,11 +178,19 @@ func applyHeaderOverridePlaceholders(template string, c *gin.Context, info *comm
 	}
 
 	usesUsername := strings.Contains(template, "{username}")
+	usesUserID := strings.Contains(template, "{user_id}")
+	usesTokenID := strings.Contains(template, "{token_id}")
 	username := ""
-	if usesUsername || strings.Contains(template, "{user_id}") {
+	if usesUsername || usesUserID || usesTokenID {
 		// Identity comes from authentication, never from client headers or JSON.
 		// Model discovery and channel tests have no end-user identity to forward.
-		if info.IsChannelTest || info.UserId <= 0 || c == nil {
+		if info.IsChannelTest || c == nil {
+			return "", false, nil
+		}
+		if (usesUsername || usesUserID) && info.UserId <= 0 {
+			return "", false, nil
+		}
+		if usesTokenID && info.TokenId <= 0 {
 			return "", false, nil
 		}
 		if usesUsername {
@@ -200,6 +208,7 @@ func applyHeaderOverridePlaceholders(template string, c *gin.Context, info *comm
 		"{api_key}", info.ApiKey,
 		"{user_id}", strconv.Itoa(info.UserId),
 		"{username}", username,
+		"{token_id}", strconv.Itoa(info.TokenId),
 	).Replace(template)
 	if strings.TrimSpace(template) == "" {
 		return "", false, nil
@@ -212,6 +221,7 @@ func applyHeaderOverridePlaceholders(template string, c *gin.Context, info *comm
 //   - {api_key}: resolved to the channel API key
 //   - {user_id}: resolved to the authenticated user ID
 //   - {username}: resolved to the authenticated username
+//   - {token_id}: resolved to the authenticated API token ID
 //   - {client_header:<name>}: resolved to the incoming request header value
 //
 // Header passthrough rules (keys only; values are ignored):

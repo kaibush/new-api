@@ -2849,7 +2849,11 @@ export function ChannelMutateDrawer({
                 <code className='bg-muted rounded px-1 py-0.5'>
                   {'{username}'}
                 </code>{' '}
-                — {t('Username')}
+                — {t('Username')},{' '}
+                <code className='bg-muted rounded px-1 py-0.5'>
+                  {'{token_id}'}
+                </code>{' '}
+                — {t('Token ID')}
               </FormDescription>
               <FormMessage />
             </FormItem>

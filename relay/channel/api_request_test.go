@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -223,7 +224,8 @@ func TestHeaderOverrideAuthenticatedIdentity(t *testing.T) {
 			"*":                 true,
 			"X-NewAPI-User-ID":  "{user_id}",
 			"X-NewAPI-Username": "{username}",
-			"X-NewAPI-Identity": "newapi:{user_id}:{username}",
+			"X-NewAPI-Token-ID": "{token_id}",
+			"X-NewAPI-Identity": "newapi:{user_id}:{token_id}:{username}",
 			"X-Client-Value":    "{client_header:X-Client-Value}",
 			"Authorization":     "Bearer {api_key}",
 		},
@@ -231,22 +233,24 @@ func TestHeaderOverrideAuthenticatedIdentity(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		userID   int
+		tokenID  int
 		username string
 		wantID   string
 	}{
-		{name: "first user on shared channel", userID: 10, username: "alice", wantID: "10"},
-		{name: "second user on shared channel", userID: 20, username: "bob", wantID: "20"},
-		{name: "Unicode username", userID: 30, username: "测试用户", wantID: "30"},
-		{name: "username cannot expand placeholders", userID: 40, username: "{api_key}{user_id}{username}", wantID: "40"},
+		{name: "first user on shared channel", userID: 10, tokenID: 110, username: "alice", wantID: "10"},
+		{name: "second user on shared channel", userID: 20, tokenID: 220, username: "bob", wantID: "20"},
+		{name: "Unicode username", userID: 30, tokenID: 330, username: "测试用户", wantID: "30"},
+		{name: "username cannot expand placeholders", userID: 40, tokenID: 440, username: "{api_key}{user_id}{token_id}{username}", wantID: "40"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
-			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"user_id":999,"username":"forged"}`))
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"user_id":999,"username":"forged","token_id":999}`))
 			c.Set(string(constant.ContextKeyUserName), tc.username)
 			c.Request.Header.Set("X-NewAPI-User-ID", "999")
 			c.Request.Header.Set("X-NewAPI-Username", "forged")
-			c.Request.Header.Set("X-Client-Value", "{api_key}{username}{user_id}")
-			info := &relaycommon.RelayInfo{UserId: tc.userID, ChannelMeta: channel}
+			c.Request.Header.Set("X-NewAPI-Token-ID", "999")
+			c.Request.Header.Set("X-Client-Value", "{api_key}{username}{user_id}{token_id}")
+			info := &relaycommon.RelayInfo{UserId: tc.userID, TokenId: tc.tokenID, ChannelMeta: channel}
 
 			headers, err := ResolveHeaderOverride(info, c)
 			require.NoError(t, err)
@@ -260,9 +264,10 @@ func TestHeaderOverrideAuthenticatedIdentity(t *testing.T) {
 			received := <-requests
 			assert.Equal(t, tc.wantID, received.Get("X-NewAPI-User-ID"))
 			assert.Equal(t, tc.username, received.Get("X-NewAPI-Username"))
-			assert.Equal(t, "newapi:"+tc.wantID+":"+tc.username, received.Get("X-NewAPI-Identity"))
+			assert.Equal(t, strconv.Itoa(tc.tokenID), received.Get("X-NewAPI-Token-ID"))
+			assert.Equal(t, "newapi:"+tc.wantID+":"+strconv.Itoa(tc.tokenID)+":"+tc.username, received.Get("X-NewAPI-Identity"))
 			assert.Equal(t, "Bearer upstream-channel-secret", received.Get("Authorization"))
-			assert.Equal(t, "{api_key}{username}{user_id}", received.Get("X-Client-Value"))
+			assert.Equal(t, "{api_key}{username}{user_id}{token_id}", received.Get("X-Client-Value"))
 		})
 	}
 }
@@ -271,15 +276,18 @@ func TestHeaderOverrideMissingIdentityDoesNotForwardSpoofedValues(t *testing.T) 
 	for _, tc := range []struct {
 		name        string
 		userID      int
+		tokenID     int
 		username    string
 		channelTest bool
 		noContext   bool
 		wantUserID  string
+		wantTokenID string
 	}{
 		{name: "no authenticated user", username: "forged"},
-		{name: "no username", userID: 10, wantUserID: "10"},
-		{name: "channel test omits administrator identity", userID: 1, username: "admin", channelTest: true},
-		{name: "model discovery without request context", noContext: true},
+		{name: "no username", userID: 10, tokenID: 15, wantUserID: "10", wantTokenID: "15"},
+		{name: "authenticated user without token", userID: 10, wantUserID: "10"},
+		{name: "channel test omits administrator identity", userID: 1, tokenID: 2, username: "admin", channelTest: true},
+		{name: "model discovery without request context", tokenID: 3, noContext: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -287,12 +295,15 @@ func TestHeaderOverrideMissingIdentityDoesNotForwardSpoofedValues(t *testing.T) 
 			c.Set(string(constant.ContextKeyUserName), tc.username)
 			c.Request.Header.Set("X-NewAPI-User-ID", "999")
 			c.Request.Header.Set("X-NewAPI-Username", "forged")
+			c.Request.Header.Set("X-NewAPI-Token-ID", "999")
 			info := &relaycommon.RelayInfo{
 				UserId:        tc.userID,
+				TokenId:       tc.tokenID,
 				IsChannelTest: tc.channelTest,
 				ChannelMeta: &relaycommon.ChannelMeta{HeadersOverride: map[string]any{
 					"X-NewAPI-User-ID":  "{user_id}",
 					"X-NewAPI-Username": "{username}",
+					"X-NewAPI-Token-ID": "{token_id}",
 					"X-Static":          "kept",
 				}},
 			}
@@ -304,6 +315,7 @@ func TestHeaderOverrideMissingIdentityDoesNotForwardSpoofedValues(t *testing.T) 
 			headers, err := ResolveHeaderOverride(info, c)
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantUserID, headers["x-newapi-user-id"])
+			assert.Equal(t, tc.wantTokenID, headers["x-newapi-token-id"])
 			assert.NotContains(t, headers, "x-newapi-username")
 			assert.Equal(t, "kept", headers["x-static"])
 		})
