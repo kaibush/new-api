@@ -37,6 +37,34 @@ function hashString(input: string): string {
   return hash.toString(36)
 }
 
+const recentReadAnnouncementContextLimit = 3
+
+function isPopupAnnouncement(item: Record<string, unknown>): boolean {
+  return (
+    typeof item.type === 'string' && item.type !== '' && item.type !== 'default'
+  )
+}
+
+function compareAnnouncementTimeline(
+  left: Record<string, unknown>,
+  right: Record<string, unknown>
+): number {
+  const leftTime = Date.parse(
+    typeof left.publishDate === 'string' ? left.publishDate : ''
+  )
+  const rightTime = Date.parse(
+    typeof right.publishDate === 'string' ? right.publishDate : ''
+  )
+  if (
+    !Number.isNaN(leftTime) &&
+    !Number.isNaN(rightTime) &&
+    leftTime !== rightTime
+  ) {
+    return rightTime - leftTime
+  }
+  return 0
+}
+
 /**
  * Generate a unique key for an announcement
  * Include content and severity so edits to an existing announcement register
@@ -119,10 +147,22 @@ export function useNotifications() {
 
   const importantAnnouncements = useMemo(() => {
     if (statusLoading) return []
-    return announcements.filter(
-      (item) =>
-        (item.type === 'warning' || item.type === 'error') &&
-        !readAnnouncementKeys.includes(getAnnouncementKey(item))
+
+    const popupAnnouncements = announcements
+      .filter(isPopupAnnouncement)
+      .sort(compareAnnouncementTimeline)
+    const unreadAnnouncements = popupAnnouncements.filter(
+      (item) => !readAnnouncementKeys.includes(getAnnouncementKey(item))
+    )
+    if (unreadAnnouncements.length === 0) return []
+
+    const unreadKeys = new Set(unreadAnnouncements.map(getAnnouncementKey))
+    const readContext = popupAnnouncements
+      .filter((item) => !unreadKeys.has(getAnnouncementKey(item)))
+      .slice(0, recentReadAnnouncementContextLimit)
+
+    return [...unreadAnnouncements, ...readContext].sort(
+      compareAnnouncementTimeline
     )
   }, [announcements, readAnnouncementKeys, statusLoading])
 

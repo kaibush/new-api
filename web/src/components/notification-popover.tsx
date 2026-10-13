@@ -216,14 +216,49 @@ function NoticeContent({
 /**
  * Announcements tab content
  */
+function AnnouncementEntry({
+  item,
+  t,
+}: {
+  item: AnnouncementItem
+  t: TFunction
+}) {
+  const publishDate = item.publishDate ? new Date(item.publishDate) : null
+  const relativeTime = publishDate ? getRelativeTime(publishDate, t) : ''
+  const absoluteTime = publishDate ? formatDateTimeObject(publishDate) : ''
+
+  return (
+    <>
+      <div className='text-sm'>
+        <RichContent breaks content={item.content || ''} />
+      </div>
+
+      {item.extra ? (
+        <div className='text-muted-foreground text-xs'>
+          <RichContent breaks content={item.extra} />
+        </div>
+      ) : null}
+
+      {absoluteTime ? (
+        <div className='text-muted-foreground text-xs'>
+          {relativeTime ? `${relativeTime} • ` : null}
+          {absoluteTime}
+        </div>
+      ) : null}
+    </>
+  )
+}
+
 function AnnouncementsContent({
   announcements,
   loading,
   t,
+  layout = 'list',
 }: {
   announcements: AnnouncementItem[]
   loading: boolean
   t: TFunction
+  layout?: 'list' | 'timeline'
 }) {
   if (loading) {
     return (
@@ -241,50 +276,55 @@ function AnnouncementsContent({
     )
   }
 
+  if (layout === 'timeline') {
+    return (
+      <div
+        data-slot='announcement-timeline'
+        className='max-h-[min(52vh,28rem)] overflow-y-auto pr-1'
+      >
+        <ol className='m-0 flex list-none flex-col p-0'>
+          {announcements.map((item, idx) => (
+            <li
+              key={getAnnouncementRenderKey(item)}
+              className='flex items-stretch gap-3'
+            >
+              <div className='flex w-4 shrink-0 flex-col items-center'>
+                <AnnouncementDot type={item.type} />
+                {idx < announcements.length - 1 ? (
+                  <span aria-hidden className='bg-border mt-1 w-px flex-1' />
+                ) : null}
+              </div>
+              <div
+                className={cn(
+                  'flex min-w-0 flex-1 flex-col gap-2',
+                  idx < announcements.length - 1 ? 'pb-5' : 'pb-1'
+                )}
+              >
+                <AnnouncementEntry item={item} t={t} />
+              </div>
+            </li>
+          ))}
+        </ol>
+      </div>
+    )
+  }
+
   return (
     <ScrollArea className='h-[min(52vh,28rem)] pr-3'>
       <div className='flex flex-col'>
-        {announcements.map((item, idx) => {
-          const announcementKey = getAnnouncementRenderKey(item)
-          const publishDate = item.publishDate
-            ? new Date(item.publishDate)
-            : null
-          const relativeTime = publishDate
-            ? getRelativeTime(publishDate, t)
-            : ''
-          const absoluteTime = publishDate
-            ? formatDateTimeObject(publishDate)
-            : ''
-
-          return (
-            <div key={announcementKey}>
-              <div className='py-3'>
-                <div className='flex items-start gap-3'>
-                  <AnnouncementDot type={item.type} />
-                  <div className='flex min-w-0 flex-1 flex-col gap-2'>
-                    <div className='text-sm'>
-                      <RichContent breaks content={item.content || ''} />
-                    </div>
-
-                    {item.extra ? (
-                      <div className='text-muted-foreground text-xs'>
-                        <RichContent breaks content={item.extra} />
-                      </div>
-                    ) : null}
-
-                    {absoluteTime ? (
-                      <div className='text-muted-foreground text-xs'>
-                        {relativeTime ? `${relativeTime} • ` : null}
-                        {absoluteTime}
-                      </div>
-                    ) : null}
-                  </div>
+        {announcements.map((item, idx) => (
+          <div key={getAnnouncementRenderKey(item)}>
+            <div className='py-3'>
+              <div className='flex items-start gap-3'>
+                <AnnouncementDot type={item.type} />
+                <div className='flex min-w-0 flex-1 flex-col gap-2'>
+                  <AnnouncementEntry item={item} t={t} />
                 </div>
               </div>
-              {idx < announcements.length - 1 ? <Separator /> : null}
             </div>
-          )
-        })}
+            {idx < announcements.length - 1 ? <Separator /> : null}
+          </div>
+        ))}
       </div>
     </ScrollArea>
   )
@@ -325,6 +365,7 @@ export function NotificationPopover({
         <AnnouncementsContent
           announcements={importantAnnouncements}
           loading={false}
+          layout='timeline'
           t={t}
         />
       </Dialog>
