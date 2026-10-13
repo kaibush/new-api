@@ -391,10 +391,6 @@ describe('responsive quick user filtering', () => {
       'h-12',
       'md:h-8'
     )
-    expect(screen.getByRole('tablist', { name: 'Quick Range' })).toHaveClass(
-      'grid-cols-2',
-      'md:flex'
-    )
     await user.click(input)
     const option = await screen.findByRole('option', { name: longName })
     expect(option).toHaveClass('min-h-11')
@@ -405,6 +401,33 @@ describe('responsive quick user filtering', () => {
     )
     await user.click(option)
     expect(input).toHaveValue(longName)
+  })
+
+  it('keeps desktop day presets on one line and aligns them with the username field', () => {
+    render(<QuickFixture />)
+    const tablist = screen.getByRole('tablist', { name: 'Quick Range' })
+    expect(tablist).not.toHaveClass('grid-cols-2')
+    expect(tablist.parentElement).toHaveClass('shrink-0')
+    expect(tablist.parentElement?.parentElement).toHaveClass(
+      'md:flex-row',
+      'md:items-center'
+    )
+    const presets = screen.getAllByRole('tab')
+    expect(presets.map((tab) => tab.textContent)).toEqual([
+      '1 Day',
+      '7 Days',
+      '14 Days',
+      '29 Days',
+    ])
+    for (const preset of presets) {
+      expect(preset).toHaveClass('px-2.5', 'text-xs', 'whitespace-nowrap')
+      expect(preset).not.toHaveClass('whitespace-normal')
+    }
+    expect(
+      screen
+        .getByRole('combobox', { name: 'Username' })
+        .closest('[data-slot=input-group]')
+    ).toHaveClass('h-12', 'md:h-8')
   })
 
   it('shows lookup failures while leaving the time range usable', async () => {

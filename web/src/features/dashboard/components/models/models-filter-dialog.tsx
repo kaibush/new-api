@@ -313,9 +313,9 @@ export function ModelsQuickFilter(props: {
   const user = useAuthStore((state) => state.auth.user)
   const selectedRange = detectQuickRangeDays(props.filters)
   return (
-    <div className='flex min-w-0 flex-col gap-3 md:flex-row md:flex-wrap md:items-end'>
+    <div className='flex min-w-0 flex-col gap-2 md:flex-row md:flex-wrap md:items-center'>
       <Tabs
-        className='min-w-0 md:w-auto'
+        className='shrink-0'
         value={String(selectedRange ?? '')}
         onValueChange={(value) => {
           const days = Number(value)
@@ -328,15 +328,12 @@ export function ModelsQuickFilter(props: {
           })
         }}
       >
-        <TabsList
-          aria-label={t('Quick Range')}
-          className='grid w-full grid-cols-2 group-data-horizontal/tabs:h-auto md:flex md:w-auto'
-        >
+        <TabsList aria-label={t('Quick Range')}>
           {TIME_RANGE_PRESETS.map((range) => (
             <TabsTrigger
               key={range.days}
               value={String(range.days)}
-              className='min-h-11 whitespace-normal md:min-h-8'
+              className='px-2.5 text-xs'
             >
               {t(range.label)}
             </TabsTrigger>
@@ -344,7 +341,7 @@ export function ModelsQuickFilter(props: {
         </TabsList>
       </Tabs>
       {(user?.role ?? 0) >= 10 && (
-        <div className='w-full min-w-0 md:w-64'>
+        <div className='w-full min-w-0 md:w-64 md:shrink-0'>
           <UsernameFilter
             selectionOnly
             value={props.filters.username}
