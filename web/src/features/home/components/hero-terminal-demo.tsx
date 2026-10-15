@@ -274,8 +274,8 @@ export function HeroTerminalDemo(props: HeroTerminalDemoProps) {
           </code>
         </div>
 
-        {/* Body — fixed rows so neither block shifts when switching demos */}
-        <div className='grid h-[400px] grid-rows-[235px_minmax(0,1fr)] font-mono text-[12.5px] leading-[1.55]'>
+        {/* Keep desktop rows stable; let wrapped mobile requests grow naturally */}
+        <div className='grid grid-rows-[auto_auto] font-mono text-[12.5px] leading-[1.55] sm:h-[400px] sm:grid-rows-[235px_minmax(0,1fr)]'>
           {/* Request */}
           <RequestBlock demo={demo} transitioning={transitioning} />
 
@@ -286,7 +286,7 @@ export function HeroTerminalDemo(props: HeroTerminalDemoProps) {
         {/* Footer metrics */}
         <div
           className={cn(
-            'flex items-center justify-between border-t px-5 py-2.5',
+            'flex flex-wrap items-center justify-between gap-2 border-t px-5 py-2.5',
             'border-border/40 bg-muted/30 dark:border-white/[0.05] dark:bg-white/[0.02]'
           )}
         >

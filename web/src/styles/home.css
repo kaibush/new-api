@@ -1,0 +1,122 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+.mofish-home {
+  background: var(--background);
+}
+.mofish-headline {
+  color: #478de5;
+  text-decoration: underline;
+  text-decoration-color: #f6c85f;
+  text-decoration-thickness: 5px;
+  text-underline-offset: 12px;
+}
+.mofish-pond {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 520 / 240;
+  margin: 20px 0 18px;
+  isolation: isolate;
+}
+.mofish-waves {
+  stroke: var(--border);
+}
+.mofish-fish {
+  cursor: pointer;
+  position: absolute;
+  height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 40%;
+  background: transparent;
+}
+.mofish-fish:hover,
+.mofish-fish:active {
+  background: transparent;
+}
+.mofish-fish svg {
+  width: 100%;
+  height: auto;
+  pointer-events: none;
+}
+.mofish-fish-green {
+  left: 7%;
+  top: 30%;
+  width: 43%;
+  color: #168268;
+}
+.mofish-fish-blue {
+  right: 9%;
+  top: 51%;
+  width: 30%;
+  color: #478de5;
+}
+.mofish-fish-pink {
+  left: 46%;
+  top: 5%;
+  width: 21%;
+  color: #bc4278;
+}
+.mofish-swimmer {
+  display: block;
+  width: 100%;
+  pointer-events: none;
+  transition: transform 700ms ease-out;
+}
+.mofish-fish-blue .mofish-swimmer {
+  transform: scaleX(-1) rotate(-8deg);
+}
+.mofish-fish-pink .mofish-swimmer {
+  transform: rotate(-22deg);
+}
+.mofish-fish[data-swimming='true'] .mofish-swimmer {
+  animation: mofish-swim 2.4s ease-in-out infinite;
+}
+.mofish-fish-blue[data-swimming='true'] .mofish-swimmer {
+  animation-name: mofish-swim-left;
+}
+@keyframes mofish-swim {
+  0%,
+  100% {
+    transform: translate(0, 0) rotate(-5deg);
+  }
+  35% {
+    transform: translate(24px, -14px) rotate(-12deg);
+  }
+  70% {
+    transform: translate(-10px, 7px) rotate(5deg);
+  }
+}
+@keyframes mofish-swim-left {
+  0%,
+  100% {
+    transform: translate(0, 0) scaleX(-1) rotate(-8deg);
+  }
+  35% {
+    transform: translate(-24px, -12px) scaleX(-1) rotate(5deg);
+  }
+  70% {
+    transform: translate(10px, 6px) scaleX(-1) rotate(-15deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mofish-fish[data-swimming] .mofish-swimmer {
+    animation: none;
+    transition: none;
+  }
+}
