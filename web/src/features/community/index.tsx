@@ -15,6 +15,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { toIntlLocale } from '@/i18n/languages'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatNumber } from '@/lib/format'
+import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
@@ -125,7 +126,12 @@ export function CommunityChat() {
         >
           {messages.length === 0 && <EmptyState title={t('No messages yet')} />}
           {messages.map((message) => (
-            <article key={message.id} className='flex gap-3'>
+            <article
+              key={message.id}
+              className={cn('flex items-start gap-3', {
+                'flex-row-reverse': message.user_id === user?.id,
+              })}
+            >
               <Avatar className='size-9 shrink-0'>
                 <AvatarImage
                   src={message.avatar || undefined}
@@ -135,9 +141,23 @@ export function CommunityChat() {
                   {getUserAvatarFallback(message.name)}
                 </AvatarFallback>
               </Avatar>
-              <div className='min-w-0 flex-1'>
-                <div className='flex items-center gap-2'>
-                  <span className='font-medium'>{message.name}</span>
+              <div
+                className={cn('flex min-w-0 max-w-[80%] flex-col gap-1', {
+                  'items-end': message.user_id === user?.id,
+                  'items-start': message.user_id !== user?.id,
+                })}
+              >
+                <div
+                  className={cn(
+                    'flex max-w-full flex-wrap items-center gap-2',
+                    {
+                      'justify-end': message.user_id === user?.id,
+                    }
+                  )}
+                >
+                  <span className='min-w-0 font-medium break-words'>
+                    {message.name}
+                  </span>
                   <time
                     className='text-muted-foreground text-xs'
                     dateTime={new Date(message.created_at * 1000).toISOString()}
@@ -152,13 +172,14 @@ export function CommunityChat() {
                 ) : (
                   <>
                     {message.text && (
-                      <p className='break-words whitespace-pre-wrap'>
+                      <p className='max-w-full text-left break-words whitespace-pre-wrap'>
                         {message.text}
                       </p>
                     )}
                     {(message.kind === 'image' ||
                       message.kind === 'sticker') && (
                       <a
+                        className='max-w-full'
                         href={message.url}
                         target='_blank'
                         rel='noopener noreferrer'
@@ -169,7 +190,7 @@ export function CommunityChat() {
                           loading='lazy'
                           className={
                             message.kind === 'sticker'
-                              ? 'max-h-40 max-w-40 rounded-md object-contain'
+                              ? 'max-h-40 max-w-[min(10rem,100%)] rounded-md object-contain'
                               : 'max-h-80 max-w-full rounded-md object-contain'
                           }
                         />

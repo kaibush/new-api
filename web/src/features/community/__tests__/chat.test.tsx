@@ -462,3 +462,75 @@ test('cancelling credential verification preserves edited keys and never request
   expect(screen.getByLabelText('WeChat AppSecret')).toHaveValue('new-secret')
   expect(api.post).not.toHaveBeenCalled()
 })
+
+test('aligns own messages on the right and other users on the left by user ID', async () => {
+  show(<CommunityChat />)
+  await waitFor(() => expect(FakeSocket.instances).toHaveLength(1))
+  act(() => {
+    FakeSocket.instances[0].onmessage?.({
+      data: JSON.stringify({
+        type: 'history',
+        messages: [
+          ...(['image', 'sticker', 'file'] as const).map((kind, index) => ({
+            id: index + 4,
+            user_id: 1,
+            name: 'Alice',
+            kind,
+            filename: `My ${kind}`,
+            url: 'https://example.com/attachment',
+            size: 12,
+            created_at: 1700000000,
+          })),
+          {
+            id: 1,
+            user_id: 1,
+            name: 'Alice',
+            text: 'My message',
+            kind: 'text',
+            created_at: 1700000000,
+          },
+          {
+            id: 2,
+            user_id: 2,
+            name: 'Alice',
+            text: 'Other message',
+            kind: 'text',
+            created_at: 1700000000,
+          },
+          {
+            id: 3,
+            user_id: 1,
+            name: 'Alice',
+            deleted: true,
+            kind: 'text',
+            created_at: 1700000000,
+          },
+        ],
+      }),
+    })
+  })
+  expect(screen.getByText('My message').closest('article')).toHaveClass(
+    'flex-row-reverse'
+  )
+  expect(screen.getByText('Other message').closest('article')).not.toHaveClass(
+    'flex-row-reverse'
+  )
+  for (const kind of ['image', 'sticker']) {
+    expect(screen.getByAltText(`My ${kind}`).closest('article')).toHaveClass(
+      'flex-row-reverse'
+    )
+  }
+  expect(
+    screen.getByRole('link', { name: /My file/ }).closest('article')
+  ).toHaveClass('flex-row-reverse')
+  expect(screen.getByText('My message').parentElement).toHaveClass(
+    'items-end',
+    'min-w-0'
+  )
+  expect(screen.getByText('Other message').parentElement).toHaveClass(
+    'items-start'
+  )
+  expect(screen.getByText('Message deleted').closest('article')).toHaveClass(
+    'flex-row-reverse'
+  )
+})
