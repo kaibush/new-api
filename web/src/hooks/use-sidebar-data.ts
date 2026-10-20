@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
 import {
   Activity,
   Box,
@@ -40,7 +41,9 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import type { SidebarData } from '@/components/layout/types'
+import { getChatStatus } from '@/features/community/api'
 import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 /**
  * Root navigation groups for the application sidebar.
@@ -50,6 +53,13 @@ import { ROLE } from '@/lib/roles'
  */
 export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
+  const userID = useAuthStore((s) => s.auth.user?.id)
+  const community = useQuery({
+    queryKey: ['community-status'],
+    queryFn: getChatStatus,
+    enabled: Boolean(userID),
+    refetchInterval: 30000,
+  })
 
   return {
     navGroups: [
@@ -57,6 +67,15 @@ export function useSidebarData(): SidebarData {
         id: 'chat',
         title: t('Chat'),
         items: [
+          ...(community.data?.enabled
+            ? [
+                {
+                  title: t('Community chat'),
+                  url: '/community' as const,
+                  icon: Users,
+                },
+              ]
+            : []),
           {
             title: t('Playground'),
             url: '/playground',

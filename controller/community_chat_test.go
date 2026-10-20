@@ -1,0 +1,288 @@
+package controller
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha1"
+	"encoding/hex"
+	"image"
+	"image/color"
+	"image/gif"
+	"image/png"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"slices"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/middleware"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestCommunityChatHistoryAndAuthorization(t *testing.T) {
+	user, _ := setupSecurityEnrollmentTest(t)
+	migrations := []any{&model.CommunityConfig{}, &model.CommunityMessage{}, &model.CommunityProfile{}}
+	require.NoError(t, model.DB.AutoMigrate(migrations...))
+	config, err := model.GetCommunityConfig()
+	require.NoError(t, err)
+	assert.False(t, config.Enabled)
+	config.Enabled = true
+	config.AppSecret = "private-secret"
+	config.CallbackToken = "private-token"
+	require.NoError(t, model.SaveCommunityConfig(config))
+	var storedConfig model.CommunityConfig
+	require.NoError(t, model.DB.First(&storedConfig, 1).Error)
+	assert.NotEqual(t, config.AppSecret, storedConfig.AppSecret)
+	assert.NotEqual(t, config.CallbackToken, storedConfig.CallbackToken)
+	require.NoError(t, model.DB.Create(&model.CommunityProfile{UserID: user.Id, Avatar: "https://cdn.example/avatar.png"}).Error)
+	for i := range 55 {
+		msg := model.CommunityMessage{Kind: "text", Text: strings.Repeat("x", i+1)}
+		require.NoError(t, model.CreateCommunityMessage(user.Id, &msg))
+	}
+	// Repeat migration after populated data: no table/index recreation or lost defaults.
+	require.NoError(t, model.DB.AutoMigrate(migrations...))
+	rows, err := model.RecentCommunityMessages()
+	require.NoError(t, err)
+	require.Len(t, rows, 50)
+	assert.Equal(t, 6, len(rows[0].Text))
+	assert.Equal(t, 55, len(rows[49].Text))
+	assert.Equal(t, user.Username, rows[0].Name)
+	assert.Equal(t, "https://cdn.example/avatar.png", rows[0].Avatar)
+	saved, err := model.GetCommunityConfig()
+	require.NoError(t, err)
+	assert.Equal(t, "private-secret", saved.AppSecret)
+	bundle, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "chat-test")
+	require.NoError(t, err)
+	router := gin.New()
+	router.GET("/api/community/ws", CommunityWebSocket)
+	router.POST("/api/community/messages", middleware.UserAuth(), CommunityAccess, SendCommunityMessage)
+	router.GET("/api/option/community", middleware.RootAuth(), GetCommunitySettings)
+	server := httptest.NewServer(router)
+	defer server.Close()
+	for _, tc := range []struct {
+		token, path string
+		want        int
+	}{{"", "/api/community/messages", 401}, {bundle.AccessToken, "/api/option/community", 403}} {
+		method := "POST"
+		if tc.path == "/api/option/community" {
+			method = "GET"
+		}
+		req := httptest.NewRequest(method, tc.path, strings.NewReader(`{"text":"hello"}`))
+		req.Header.Set("Authorization", "Bearer "+tc.token)
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+		assert.Equal(t, tc.want, rr.Code)
+	}
+	endpoint := "ws" + strings.TrimPrefix(server.URL, "http") + "/api/community/ws"
+	_, resp, err := websocket.DefaultDialer.Dial(endpoint, http.Header{"Origin": {"https://evil.example"}})
+	require.Error(t, err)
+	require.NotNil(t, resp)
+	assert.Equal(t, 403, resp.StatusCode)
+	resp.Body.Close()
+	conn, _, err := websocket.DefaultDialer.Dial(endpoint, http.Header{"Origin": {server.URL}})
+	require.NoError(t, err)
+	defer conn.Close()
+	payload, err := common.Marshal(map[string]string{"token": bundle.AccessToken})
+	require.NoError(t, err)
+	require.NoError(t, conn.WriteMessage(websocket.TextMessage, payload))
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(10*time.Second)))
+	_, data, err := conn.ReadMessage()
+	require.NoError(t, err)
+	var history struct {
+		Messages []model.CommunityMessage `json:"messages"`
+	}
+	require.NoError(t, common.Unmarshal(data, &history))
+	require.Len(t, history.Messages, 50)
+	// Sender identity is server-owned and newly posted messages reach connected clients.
+	post := httptest.NewRequest("POST", "/api/community/messages", strings.NewReader(`{"text":"new message","user_id":99999,"name":"spoofed"}`))
+	post.Header.Set("Authorization", "Bearer "+bundle.AccessToken)
+	posted := httptest.NewRecorder()
+	router.ServeHTTP(posted, post)
+	require.Equal(t, 200, posted.Code, posted.Body.String())
+	assert.NotContains(t, posted.Body.String(), "spoofed")
+	_, data, err = conn.ReadMessage()
+	require.NoError(t, err)
+	require.NoError(t, common.Unmarshal(data, &history))
+	assert.Equal(t, "new message", history.Messages[len(history.Messages)-1].Text)
+	assert.Equal(t, user.Id, history.Messages[len(history.Messages)-1].UserID)
+	// Revoking the real login session must terminate a connected client.
+	_, err = model.RevokeUserSession(user.Id, bundle.Session.SID, "test")
+	require.NoError(t, err)
+	_, _, err = conn.ReadMessage()
+	require.Error(t, err)
+	var closeError *websocket.CloseError
+	require.ErrorAs(t, err, &closeError)
+	config.Enabled = false
+	require.NoError(t, model.SaveCommunityConfig(config))
+	other, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "chat-test")
+	require.NoError(t, err)
+	req := httptest.NewRequest("POST", "/api/community/messages", strings.NewReader(`{"text":"hello"}`))
+	req.Header.Set("Authorization", "Bearer "+other.AccessToken)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	assert.Equal(t, 403, rr.Code)
+
+	// Test-account setup remains possible while notifications are off.
+	callback := gin.New()
+	callback.GET("/callback", CommunityWeChatVerify)
+	stamp := strconv.FormatInt(time.Now().Unix(), 10)
+	parts := []string{config.CallbackToken, stamp, "nonce"}
+	slices.Sort(parts)
+	hash := sha1.Sum([]byte(strings.Join(parts, "")))
+	query := url.Values{"timestamp": {stamp}, "nonce": {"nonce"}, "echostr": {"verified"}, "signature": {hex.EncodeToString(hash[:])}}
+	callbackResponse := httptest.NewRecorder()
+	callback.ServeHTTP(callbackResponse, httptest.NewRequest("GET", "/callback?"+query.Encode(), nil))
+	assert.Equal(t, 200, callbackResponse.Code)
+	assert.Equal(t, "verified", callbackResponse.Body.String())
+	query.Set("signature", "invalid")
+	callbackResponse = httptest.NewRecorder()
+	callback.ServeHTTP(callbackResponse, httptest.NewRequest("GET", "/callback?"+query.Encode(), nil))
+	assert.Equal(t, 403, callbackResponse.Code)
+
+	// Public configuration never serializes credentials.
+	data, err = common.Marshal(config)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "private-secret")
+	assert.NotContains(t, string(data), "private-token")
+}
+
+func TestCommunityUploadSanitization(t *testing.T) {
+	var original bytes.Buffer
+	require.NoError(t, png.Encode(&original, image.NewRGBA(image.Rect(0, 0, 2, 2))))
+	data, mime, ext, err := sanitizeCommunityUpload(append(original.Bytes(), []byte("<script>bad</script>")...), ".png", true)
+	require.NoError(t, err)
+	assert.Equal(t, "image/png", mime)
+	assert.Equal(t, ".png", ext)
+	assert.NotContains(t, string(data), "script")
+	for _, tc := range []struct {
+		name, ext string
+		data      []byte
+		visual    bool
+	}{
+		{"mismatched extension", ".jpg", original.Bytes(), true},
+		{"active SVG", ".svg", []byte(`<svg onload="bad()"/>`), true},
+		{"HTML download", ".html", []byte("<html>bad</html>"), false},
+		{"executable renamed PDF", ".pdf", []byte("MZbad"), false},
+		{"oversized", ".txt", bytes.Repeat([]byte("x"), (10<<20)+1), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, _, err := sanitizeCommunityUpload(tc.data, tc.ext, tc.visual)
+			assert.Error(t, err)
+		})
+	}
+	_, mime, _, err = sanitizeCommunityUpload([]byte("hello"), ".txt", false)
+	require.NoError(t, err)
+	assert.Equal(t, "application/octet-stream", mime)
+	frames := &gif.GIF{Image: []*image.Paletted{image.NewPaletted(image.Rect(0, 0, 2, 2), color.Palette{color.Black, color.White}), image.NewPaletted(image.Rect(0, 0, 2, 2), color.Palette{color.Black, color.White})}, Delay: []int{5, 5}}
+	var animated bytes.Buffer
+	require.NoError(t, gif.EncodeAll(&animated, frames))
+	data, _, _, err = sanitizeCommunityUpload(animated.Bytes(), ".gif", true)
+	require.NoError(t, err)
+	decoded, err := gif.DecodeAll(bytes.NewReader(data))
+	require.NoError(t, err)
+	assert.Len(t, decoded.Image, 2)
+	assert.False(t, CommunityGIFBudget([]byte("GIF89a")))
+}
+
+type communityRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f communityRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestCommunityWeChatPayloadAndFailure(t *testing.T) {
+	previous := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = previous })
+	sends := 0
+	http.DefaultTransport = communityRoundTripper(func(r *http.Request) (*http.Response, error) {
+		assert.Equal(t, "api.weixin.qq.com", r.URL.Host)
+		body := `{"access_token":"test-only-access-token","expires_in":7200}`
+		if strings.HasSuffix(r.URL.Path, "/send") {
+			sends++
+			var request struct {
+				ToUser string                       `json:"touser"`
+				Data   map[string]map[string]string `json:"data"`
+			}
+			require.NoError(t, common.DecodeJson(r.Body, &request))
+			assert.Equal(t, "receiver", request.ToUser)
+			assert.Equal(t, "Alice", request.Data["sender"]["value"])
+			assert.Equal(t, "@helper hello", request.Data["content"]["value"])
+			body = `{"errcode":0,"msgid":123}`
+			if sends == 2 {
+				body = `{"errcode":40003,"errmsg":"secret-error-detail"}`
+			}
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})
+	config := model.CommunityConfig{BotEnabled: true, AppID: "test-chat-app", AppSecret: "secret", TemplateID: "template", Receiver: "receiver"}
+	message := model.CommunityMessage{Name: "Alice", Text: "@helper hello", CreatedAt: 1700000000}
+	require.NoError(t, service.SendCommunityWeChat(context.Background(), config, message))
+	err := service.SendCommunityWeChat(context.Background(), config, message)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "40003")
+	assert.NotContains(t, err.Error(), "secret-error-detail")
+	assert.True(t, service.CommunityMentionsBot("hi @helper hello", "helper"))
+	assert.False(t, service.CommunityMentionsBot("email@helper hello", "helper"))
+	assert.False(t, service.CommunityMentionsBot("@helper123", "helper"))
+	config.BotEnabled = false
+	assert.Error(t, service.SendCommunityWeChat(context.Background(), config, message))
+	assert.Equal(t, 2, sends)
+}
+
+func TestCommunityAttachmentStorageAndOwnership(t *testing.T) {
+	user, _ := setupSecurityEnrollmentTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.CommunityConfig{}, &model.CommunityMessage{}, &model.CommunityProfile{}))
+	require.NoError(t, model.SaveCommunityConfig(model.CommunityConfig{Enabled: true, BotName: "helper"}))
+	uploaded := false
+	storage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "PUT", r.Method)
+		assert.True(t, strings.HasPrefix(r.URL.Path, "/chat-bucket/community/"))
+		assert.NotEmpty(t, r.Header.Get("Authorization"))
+		assert.Equal(t, "image/png", r.Header.Get("Content-Type"))
+		data, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		_, err = png.Decode(bytes.NewReader(data))
+		assert.NoError(t, err)
+		uploaded = true
+		w.WriteHeader(200)
+	}))
+	defer storage.Close()
+	for name, value := range map[string]string{"HELP_CENTER_IMAGE_S3_ENDPOINT": storage.URL, "HELP_CENTER_IMAGE_S3_BUCKET": "chat-bucket", "HELP_CENTER_IMAGE_S3_ACCESS_KEY": "fake-access", "HELP_CENTER_IMAGE_S3_SECRET_KEY": "fake-secret", "HELP_CENTER_IMAGE_PUBLIC_URL": "https://cdn.example"} {
+		t.Setenv(name, value)
+	}
+	bundle, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "upload-test")
+	require.NoError(t, err)
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("kind", "sticker"))
+	file, err := writer.CreateFormFile("file", "hello.png")
+	require.NoError(t, err)
+	require.NoError(t, png.Encode(file, image.NewRGBA(image.Rect(0, 0, 2, 2))))
+	require.NoError(t, writer.Close())
+	router := gin.New()
+	router.POST("/api/community/attachments", middleware.UserAuth(), CommunityAccess, UploadCommunityAttachment)
+	request := httptest.NewRequest("POST", "/api/community/attachments", &body)
+	request.Header.Set("Authorization", "Bearer "+bundle.AccessToken)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	require.Equal(t, 200, response.Code, response.Body.String())
+	assert.True(t, uploaded)
+	var result struct {
+		Data model.CommunityMessage `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+	assert.Equal(t, user.Id, result.Data.UserID)
+	assert.Equal(t, "sticker", result.Data.Kind)
+	assert.True(t, strings.HasPrefix(result.Data.URL, "https://cdn.example/community/"))
+	assert.NotContains(t, response.Body.String(), "fake-secret")
+}

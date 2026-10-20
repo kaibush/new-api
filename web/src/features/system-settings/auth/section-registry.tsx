@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { CommunitySettings } from '@/features/community/settings'
+
 import type { AuthSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
 import { BasicAuthSection } from './basic-auth-section'
@@ -26,6 +28,11 @@ import { PasskeySection } from './passkey-section'
 import { RegistrationInvitationsSection } from './registration-invitations-section'
 
 const AUTH_SECTIONS = [
+  {
+    id: 'community',
+    titleKey: 'Community chat',
+    build: () => <CommunitySettings />,
+  },
   {
     id: 'basic-auth',
     titleKey: 'Basic Authentication',

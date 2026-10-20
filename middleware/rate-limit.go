@@ -268,3 +268,11 @@ func SearchRateLimit() func(c *gin.Context) {
 	}
 	return userRateLimitFactory(common.SearchRateLimitNum, common.SearchRateLimitDuration, "SR")
 }
+
+// CommunityRateLimit is always enabled for untrusted public chat content.
+func CommunityRateLimit(upload bool) func(c *gin.Context) {
+	if upload {
+		return userRateLimitFactory(6, 60, "community-upload")
+	}
+	return userRateLimitFactory(30, 60, "community-message")
+}

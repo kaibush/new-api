@@ -57,12 +57,18 @@ func (store ImageStore) PutImage(ctx context.Context, data []byte, format string
 		return "", errors.New("Unsupported image format")
 	}
 	key := "help-center/" + uuid.NewString() + "." + format
+	return store.PutObject(ctx, key, data, mime, "inline")
+}
+
+// PutObject stores a server-generated key using the shared help-center bucket.
+func (store ImageStore) PutObject(ctx context.Context, key string, data []byte, mime, disposition string) (string, error) {
 	endpoint := strings.TrimRight(store.Endpoint, "/") + "/" + store.Bucket + "/" + key
 	request, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(data))
 	if err != nil {
 		return "", errors.New("Invalid image storage request")
 	}
 	request.Header.Set("Content-Type", mime)
+	request.Header.Set("Content-Disposition", disposition)
 	request.Header.Set("Cache-Control", "public, max-age=31536000, immutable")
 	hash := fmt.Sprintf("%x", sha256.Sum256(data))
 	request.Header.Set("X-Amz-Content-Sha256", hash)
