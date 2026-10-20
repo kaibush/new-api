@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { SystemBehaviorSection } from '../general/system-behavior-section'
 import { EmailSettingsSection } from '../integrations/email-settings-section'
+import { GrokIQSection } from '../integrations/grok-iq-section'
 import { MonitoringSettingsSection } from '../integrations/monitoring-settings-section'
 import { WorkerSettingsSection } from '../integrations/worker-settings-section'
 import { LogSettingsSection } from '../maintenance/log-settings-section'
@@ -76,6 +77,13 @@ const OPERATIONS_SECTIONS = [
           SMTPForceAuthLogin: settings.SMTPForceAuthLogin,
         }}
       />
+    ),
+  },
+  {
+    id: 'grok-iq',
+    titleKey: 'GrokIQ',
+    build: (settings: OperationsSettings) => (
+      <GrokIQSection baseURL={settings.GrokIQBaseURL} />
     ),
   },
   {

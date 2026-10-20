@@ -80,6 +80,11 @@ export function SidebarModulesCard() {
       description: t('Data management and log viewing'),
       modules: [
         {
+          key: 'channel_status',
+          title: t('Channel status'),
+          description: t('Channel availability'),
+        },
+        {
           key: 'detail',
           title: t('Dashboard'),
           description: t('System data statistics'),

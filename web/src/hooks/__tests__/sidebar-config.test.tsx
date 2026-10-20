@@ -180,3 +180,24 @@ describe('audit log sidebar entry', () => {
     expect(titles).toContain('Audit Logs')
   })
 })
+
+describe('channel status sidebar visibility', () => {
+  it('shows the new page for legacy configurations by default', () => {
+    const { result } = sidebarFor({ console: { enabled: true, detail: true } })
+    expect(
+      result.current
+        .flatMap((group) => group.items)
+        .some((item) => 'url' in item && item.url === '/channel-status')
+    ).toBe(true)
+  })
+  it('hides the page when the administrator disables the module', () => {
+    const { result } = sidebarFor({
+      console: { enabled: true, channel_status: false },
+    })
+    expect(
+      result.current
+        .flatMap((group) => group.items)
+        .some((item) => 'url' in item && item.url === '/channel-status')
+    ).toBe(false)
+  })
+})

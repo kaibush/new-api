@@ -360,6 +360,7 @@ export type BillingSettings = {
 }
 
 export type OperationsSettings = {
+  GrokIQBaseURL: string
   DefaultCollapseSidebar: boolean
   DemoSiteEnabled: boolean
   SelfUseModeEnabled: boolean

@@ -49,6 +49,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"PUT /api/option/community":              accessTokenSessionRule,
 	"POST /api/option/community/wechat/test": accessTokenSessionRule,
 	// router/api-router.go: top level
+	"GET /api/channel-status":             accessTokenSessionRule,
 	"GET /api/models":                     accessTokenScopeRule("profile:read"),
 	"GET /api/status/test":                accessTokenScopeRule("log:read"),
 	"GET /api/pricing":                    accessTokenAnyRule,

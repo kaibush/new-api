@@ -98,6 +98,10 @@ export function SidebarModulesSection({
       },
     },
     console: {
+      channel_status: {
+        title: t('Channel status'),
+        description: t('Channel availability'),
+      },
       detail: {
         title: t('Dashboard'),
         description: t('Aggregated usage metrics and trend charts.'),

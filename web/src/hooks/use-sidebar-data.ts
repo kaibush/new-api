@@ -103,6 +103,11 @@ export function useSidebarData(): SidebarData {
             icon: LayoutDashboard,
           },
           {
+            title: t('Channel status'),
+            url: '/channel-status',
+            icon: Activity,
+          },
+          {
             title: t('API Keys'),
             url: '/keys',
             icon: Key,
