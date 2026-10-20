@@ -24,6 +24,7 @@ import { SettingsSection } from '@/features/system-settings/components/settings-
 import { getChatSettings, saveChatSettings, testChatWeChat } from './api'
 
 const schema = z.object({
+  name: z.string().trim().max(80),
   enabled: z.boolean(),
   bot_enabled: z.boolean(),
   bot_name: z
@@ -48,6 +49,7 @@ export function CommunitySettings() {
   const form = useForm<z.infer<typeof schema>>({
     resolver: zodResolver(schema),
     defaultValues: {
+      name: '',
       enabled: false,
       bot_enabled: false,
       bot_name: '助手',
@@ -60,7 +62,12 @@ export function CommunitySettings() {
   })
   useEffect(() => {
     if (settings.data) {
-      form.reset({ ...settings.data.data, app_secret: '', callback_token: '' })
+      form.reset({
+        ...settings.data.data,
+        name: settings.data.data.name || '',
+        app_secret: '',
+        callback_token: '',
+      })
     }
   }, [settings.data, form])
   const save = useMutation({
@@ -86,6 +93,23 @@ export function CommunitySettings() {
         onSubmit={form.handleSubmit((values) => save.mutate(values))}
       >
         <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor='community-name'>
+              {t('Chat display name')}
+            </FieldLabel>
+            <Input
+              id='community-name'
+              maxLength={80}
+              placeholder={t('Community chat')}
+              {...form.register('name')}
+              aria-invalid={Boolean(form.formState.errors.name)}
+            />
+            <FieldDescription>
+              {t(
+                'Shown in the sidebar and chat header. Leave blank to use the default name.'
+              )}
+            </FieldDescription>
+          </Field>
           <Field>
             <FieldLabel htmlFor='community-enabled'>
               {t('Enable community chat')}

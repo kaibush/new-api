@@ -14,7 +14,9 @@ export type ChatMessage = {
   created_at: number
   deleted: boolean
 }
+export type ChatMember = { user_id: number; name: string; avatar: string }
 export type ChatStatus = {
+  name: string
   enabled: boolean
   bot_enabled: boolean
   bot_name: string

@@ -17,6 +17,7 @@ import (
 // CommunityConfig is separate from generic options so credentials never appear in option exports.
 type CommunityConfig struct {
 	ID            int    `json:"-" gorm:"primaryKey"`
+	Name          string `json:"name" gorm:"type:varchar(80)"`
 	Enabled       bool   `json:"enabled"`
 	BotEnabled    bool   `json:"bot_enabled"`
 	BotName       string `json:"bot_name" gorm:"type:varchar(32)"`
@@ -124,4 +125,38 @@ func communitySecretAEAD() (cipher.AEAD, error) {
 		return nil, err
 	}
 	return cipher.NewGCMWithRandomNonce(block)
+}
+
+// CommunityMember exposes only the public identity of a connected chat user.
+type CommunityMember struct {
+	UserID int    `json:"user_id"`
+	Name   string `json:"name"`
+	Avatar string `json:"avatar"`
+}
+
+func GetCommunityMembers(ids []int) ([]CommunityMember, error) {
+	members := make([]CommunityMember, 0, len(ids))
+	if len(ids) == 0 {
+		return members, nil
+	}
+	var users []User
+	if err := DB.Select("id", "username", "display_name").Where("id IN ? AND status = ?", ids, common.UserStatusEnabled).Order("id").Find(&users).Error; err != nil {
+		return nil, err
+	}
+	var profiles []CommunityProfile
+	if err := DB.Where("user_id IN ?", ids).Find(&profiles).Error; err != nil {
+		return nil, err
+	}
+	avatars := make(map[int]string, len(profiles))
+	for _, profile := range profiles {
+		avatars[profile.UserID] = profile.Avatar
+	}
+	for _, user := range users {
+		name := user.DisplayName
+		if name == "" {
+			name = user.Username
+		}
+		members = append(members, CommunityMember{UserID: user.Id, Name: name, Avatar: avatars[user.Id]})
+	}
+	return members, nil
 }

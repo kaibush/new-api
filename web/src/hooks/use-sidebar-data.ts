@@ -70,7 +70,7 @@ export function useSidebarData(): SidebarData {
           ...(community.data?.enabled
             ? [
                 {
-                  title: t('Community chat'),
+                  title: community.data.name || t('Community chat'),
                   url: '/community' as const,
                   icon: Users,
                 },

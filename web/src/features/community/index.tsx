@@ -24,6 +24,8 @@ import {
   uploadChatFile,
   type ChatMessage,
 } from './api'
+import { EmojiPicker } from './emoji-picker'
+import { OnlineUsers } from './online-users'
 import { useChat } from './use-chat'
 
 export function CommunityChat() {
@@ -35,7 +37,7 @@ export function CommunityChat() {
     queryFn: getChatStatus,
     refetchInterval: 15000,
   })
-  const { messages, connected } = useChat(status.data?.enabled === true)
+  const { messages, connected, users } = useChat(status.data?.enabled === true)
   const [text, setText] = useState('')
   const [uploadKind, setUploadKind] = useState('image')
   const [remove, setRemove] = useState<ChatMessage | null>(null)
@@ -85,12 +87,15 @@ export function CommunityChat() {
     <Main>
       <div className='mx-auto flex h-full min-h-0 w-full max-w-5xl flex-1 flex-col gap-3 p-3 sm:p-5'>
         <header className='flex flex-wrap items-center justify-between gap-2 border-b pb-3'>
-          <div>
-            <h1 className='text-xl font-semibold'>{t('Community chat')}</h1>
+          <div className='min-w-0 flex-1 basis-40'>
+            <h1 className='text-xl font-semibold break-words'>
+              {status.data.name || t('Community chat')}
+            </h1>
             <p className='text-muted-foreground text-sm' role='status'>
               {connected ? t('Connected') : t('Reconnecting')}
             </p>
           </div>
+          <OnlineUsers users={users} connected={connected} />
           <Button
             variant='outline'
             disabled={busy}
@@ -249,15 +254,14 @@ export function CommunityChat() {
             >
               {t('File')}
             </Button>
-            <Button
-              type='button'
-              variant='ghost'
-              aria-label={t('Insert emoji')}
-              disabled={busy}
-              onClick={() => setText((value) => `${value}😊`)}
-            >
-              😊
-            </Button>
+            <EmojiPicker
+              disabled={busy || text.length >= 2000}
+              onSelect={(emoji) =>
+                setText((value) =>
+                  value.length + emoji.length <= 2000 ? value + emoji : value
+                )
+              }
+            />
             <Button
               type='submit'
               disabled={busy || !connected || !text.trim()}

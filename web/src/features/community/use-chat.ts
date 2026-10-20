@@ -2,15 +2,17 @@ import { useEffect, useState } from 'react'
 
 import { useAuthStore } from '@/stores/auth-store'
 
-import type { ChatMessage } from './api'
+import type { ChatMessage, ChatMember } from './api'
 
 export function useChat(enabled: boolean) {
   const token = useAuthStore((s) => s.auth.accessToken)
+  const [users, setUsers] = useState<ChatMember[]>([])
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [connected, setConnected] = useState(false)
   useEffect(() => {
     if (!enabled || !token) {
       setMessages([])
+      setUsers([])
       setConnected(false)
       return
     }
@@ -31,6 +33,9 @@ export function useChat(enabled: boolean) {
             setMessages(data.messages)
             setConnected(true)
           }
+          if (data.type === 'presence' && Array.isArray(data.users)) {
+            setUsers(data.users)
+          }
         } catch {
           socket?.close()
         }
@@ -38,6 +43,7 @@ export function useChat(enabled: boolean) {
       socket.onclose = () => {
         if (disposed) return
         setConnected(false)
+        setUsers([])
         if (!disposed) retry = setTimeout(connect, 3000)
       }
       socket.onerror = () => socket?.close()
@@ -50,5 +56,5 @@ export function useChat(enabled: boolean) {
       setConnected(false)
     }
   }, [enabled, token])
-  return { messages, connected }
+  return { messages, connected, users }
 }

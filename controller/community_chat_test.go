@@ -37,6 +37,7 @@ func TestCommunityChatHistoryAndAuthorization(t *testing.T) {
 	config, err := model.GetCommunityConfig()
 	require.NoError(t, err)
 	assert.False(t, config.Enabled)
+	config.Name = "开发者大厅"
 	config.Enabled = true
 	config.AppSecret = "private-secret"
 	config.CallbackToken = "private-token"
@@ -62,6 +63,7 @@ func TestCommunityChatHistoryAndAuthorization(t *testing.T) {
 	saved, err := model.GetCommunityConfig()
 	require.NoError(t, err)
 	assert.Equal(t, "private-secret", saved.AppSecret)
+	assert.Equal(t, "开发者大厅", saved.Name)
 	bundle, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "chat-test")
 	require.NoError(t, err)
 	router := gin.New()
@@ -104,6 +106,16 @@ func TestCommunityChatHistoryAndAuthorization(t *testing.T) {
 	}
 	require.NoError(t, common.Unmarshal(data, &history))
 	require.Len(t, history.Messages, 50)
+	_, data, err = conn.ReadMessage()
+	require.NoError(t, err)
+	var presence struct {
+		Users []model.CommunityMember `json:"users"`
+	}
+	require.NoError(t, common.Unmarshal(data, &presence))
+	require.Len(t, presence.Users, 1)
+	assert.Equal(t, user.Id, presence.Users[0].UserID)
+	assert.Equal(t, user.Username, presence.Users[0].Name)
+	assert.Equal(t, "https://cdn.example/avatar.png", presence.Users[0].Avatar)
 	// Sender identity is server-owned and newly posted messages reach connected clients.
 	post := httptest.NewRequest("POST", "/api/community/messages", strings.NewReader(`{"text":"new message","user_id":99999,"name":"spoofed"}`))
 	post.Header.Set("Authorization", "Bearer "+bundle.AccessToken)
@@ -285,4 +297,89 @@ func TestCommunityAttachmentStorageAndOwnership(t *testing.T) {
 	assert.Equal(t, "sticker", result.Data.Kind)
 	assert.True(t, strings.HasPrefix(result.Data.URL, "https://cdn.example/community/"))
 	assert.NotContains(t, response.Body.String(), "fake-secret")
+}
+
+func TestCommunityPresenceDeduplicatesAndRemovesDisconnectedUsers(t *testing.T) {
+	user, _ := setupSecurityEnrollmentTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.CommunityConfig{}, &model.CommunityMessage{}, &model.CommunityProfile{}))
+	require.NoError(t, model.SaveCommunityConfig(model.CommunityConfig{Enabled: true, BotName: "helper"}))
+	other := model.User{Username: "chat-other", AffCode: "chatother", DisplayName: "Other user", Status: common.UserStatusEnabled}
+	require.NoError(t, model.DB.Create(&other).Error)
+	router := gin.New()
+	router.GET("/ws", CommunityWebSocket)
+	server := httptest.NewServer(router)
+	defer server.Close()
+	connect := func(id int) *websocket.Conn {
+		bundle, err := service.CreateLoginSession(id, "password", "127.0.0.1", "presence-test")
+		require.NoError(t, err)
+		conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/ws", http.Header{"Origin": {server.URL}})
+		require.NoError(t, err)
+		t.Cleanup(func() { conn.Close() })
+		data, err := common.Marshal(map[string]string{"token": bundle.AccessToken})
+		require.NoError(t, err)
+		require.NoError(t, conn.WriteMessage(websocket.TextMessage, data))
+		return conn
+	}
+	readPresence := func(conn *websocket.Conn, count int) []model.CommunityMember {
+		require.NoError(t, conn.SetReadDeadline(time.Now().Add(10*time.Second)))
+		for {
+			_, data, err := conn.ReadMessage()
+			require.NoError(t, err)
+			var frame struct {
+				Type  string                  `json:"type"`
+				Users []model.CommunityMember `json:"users"`
+			}
+			require.NoError(t, common.Unmarshal(data, &frame))
+			if frame.Type == "presence" && len(frame.Users) == count {
+				return frame.Users
+			}
+		}
+	}
+	first := connect(user.Id)
+	readPresence(first, 1)
+	duplicate := connect(user.Id)
+	readPresence(duplicate, 1)
+	second := connect(other.Id)
+	users := readPresence(second, 2)
+	assert.Equal(t, "Other user", users[1].Name)
+	assert.NotContains(t, users[1].Name, "chat-other")
+	readPresence(first, 2)
+	require.NoError(t, duplicate.Close())
+	require.NoError(t, second.Close())
+	users = readPresence(first, 1)
+	assert.Equal(t, user.Id, users[0].UserID)
+}
+
+func TestCommunitySettingsNameValidation(t *testing.T) {
+	setupSecurityEnrollmentTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.CommunityConfig{}))
+	router := gin.New()
+	router.PUT("/settings", UpdateCommunitySettings)
+	router.GET("/status", GetCommunityStatus)
+	for _, tc := range []struct {
+		name   string
+		status int
+	}{
+		{" 开发者大厅 ", 200}, {strings.Repeat("名", 80), 200}, {strings.Repeat("名", 81), 400}, {"invalid\nname", 400}, {"", 200},
+	} {
+		body, err := common.Marshal(map[string]any{"name": tc.name, "bot_name": "helper"})
+		require.NoError(t, err)
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, httptest.NewRequest("PUT", "/settings", bytes.NewReader(body)))
+		require.Equal(t, tc.status, rr.Code, rr.Body.String())
+		if tc.status == 200 {
+			config, err := model.GetCommunityConfig()
+			require.NoError(t, err)
+			assert.Equal(t, strings.TrimSpace(tc.name), config.Name)
+			rr = httptest.NewRecorder()
+			router.ServeHTTP(rr, httptest.NewRequest("GET", "/status", nil))
+			var response struct {
+				Data struct {
+					Name string `json:"name"`
+				} `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(rr.Body.Bytes(), &response))
+			assert.Equal(t, config.Name, response.Data.Name)
+		}
+	}
 }

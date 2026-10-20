@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
@@ -63,7 +64,7 @@ func GetCommunityStatus(c *gin.Context) {
 		communityError(c, 500, "Could not load community settings")
 		return
 	}
-	c.JSON(200, gin.H{"success": true, "data": gin.H{"enabled": config.Enabled, "bot_enabled": config.BotEnabled, "bot_name": config.BotName}})
+	c.JSON(200, gin.H{"success": true, "data": gin.H{"enabled": config.Enabled, "name": config.Name, "bot_enabled": config.BotEnabled, "bot_name": config.BotName}})
 }
 
 func GetCommunitySettings(c *gin.Context) {
@@ -88,6 +89,11 @@ func UpdateCommunitySettings(c *gin.Context) {
 		return
 	}
 	config := req.CommunityConfig
+	config.Name = strings.TrimSpace(config.Name)
+	if utf8.RuneCountInString(config.Name) > 80 || strings.ContainsFunc(config.Name, unicode.IsControl) {
+		communityError(c, 400, "Invalid community settings")
+		return
+	}
 	validID := regexp.MustCompile(`^[A-Za-z0-9_-]{0,128}$`)
 	if utf8.RuneCountInString(config.BotName) < 1 || utf8.RuneCountInString(config.BotName) > 24 || strings.ContainsAny(config.BotName, "@ \t\n\r") || !validID.MatchString(config.AppID) || !validID.MatchString(config.TemplateID) || !validID.MatchString(config.Receiver) || !validID.MatchString(req.Token) || !validID.MatchString(req.Secret) {
 		communityError(c, 400, "Invalid community settings")
@@ -299,6 +305,7 @@ func CommunityWebSocket(c *gin.Context) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	var previous []byte
+	var previousPresence []byte
 	for {
 		// Revalidate on every history refresh; disabling chat, logout and bans close live sockets.
 		config, e := model.GetCommunityConfig()
@@ -322,6 +329,27 @@ func CommunityWebSocket(c *gin.Context) {
 				return
 			}
 			previous = data
+		}
+		communityConnections.Lock()
+		ids := make([]int, 0, len(communityConnections.users))
+		for id := range communityConnections.users {
+			ids = append(ids, id)
+		}
+		communityConnections.Unlock()
+		members, e := model.GetCommunityMembers(ids)
+		if e != nil {
+			return
+		}
+		presence, e := common.Marshal(gin.H{"type": "presence", "users": members})
+		if e != nil {
+			return
+		}
+		if !bytes.Equal(previousPresence, presence) {
+			_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			if conn.WriteMessage(websocket.TextMessage, presence) != nil {
+				return
+			}
+			previousPresence = presence
 		}
 		if conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)) != nil {
 			return

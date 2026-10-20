@@ -39,6 +39,11 @@ This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI pro
 
 ## Rules
 
+### Local Resource Limits
+
+- This machine has limited CPU and memory. Run frontend and backend builds strictly one at a time; never overlap them, including builds started in background processes, containers, or other sessions.
+- Run resource-intensive checks sequentially as well. Before starting one, check for an existing build; use low concurrency (for example, `GOMAXPROCS=2 go build -p 1` and single-worker frontend tests). Prefer the existing GitHub Actions workflow for release image builds.
+
 ### Common Code Quality
 
 - New code should stay direct and readable. Prefer early returns, clear branches, and well-named local variables to deep nesting or layered control flow.
