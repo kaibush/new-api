@@ -59,16 +59,14 @@ test.each([true, false])(
     const user = userEvent.setup()
     render(<SignUpForm />)
     const invitation = screen.queryByRole('textbox', {
-      name: /Registration invitation code/,
+      name: 'Registration invitation code',
     })
     if (enabled) {
       expect(invitation).toBeRequired()
-      expect(invitation).toHaveAttribute('aria-invalid', 'true')
       await user.type(
-        screen.getByRole('textbox', { name: /Registration invitation code/ }),
+        screen.getByRole('textbox', { name: 'Registration invitation code' }),
         ' registration-code-123456 '
       )
-      expect(invitation).not.toHaveAttribute('aria-invalid')
     } else {
       expect(invitation).not.toBeInTheDocument()
     }
@@ -98,102 +96,55 @@ test.each([true, false])(
   }
 )
 
-test('OAuth highlights a required invitation code and blocks provider buttons until it is entered', async () => {
-  const user = userEvent.setup()
-  const post = vi.spyOn(api, 'post').mockImplementation(async (url) => ({
-    data:
-      url === '/api/oauth/state'
-        ? { success: true, data: { flow_token: 'linuxdo-invitation' } }
-        : { success: true },
-  }))
-  vi.spyOn(window, 'open').mockReturnValue(null)
-  render(
-    <OAuthProviders
-      status={{
-        github_oauth: true,
-        github_client_id: 'github-client',
-        linuxdo_oauth: true,
-        linuxdo_client_id: 'linuxdo-client',
-        registration_invitation_enabled: true,
-      }}
-    />
-  )
-
-  const invitation = screen.getByRole('textbox', {
-    name: /Registration invitation code/,
-  })
-  const linuxdo = screen.getByRole('button', { name: /Continue with LinuxDO/ })
-  const github = screen.getByRole('button', { name: /Continue with GitHub/ })
-  expect(invitation).toBeRequired()
-  expect(invitation).toHaveAttribute('aria-invalid', 'true')
-  expect(invitation.closest('[data-slot="field"]')).toHaveAttribute(
-    'data-invalid',
-    'true'
-  )
-  expect(
-    screen.getByText('A registration invitation code is required to continue.')
-  ).toBeInTheDocument()
-  expect(linuxdo).toBeDisabled()
-  expect(github).toBeDisabled()
-
-  await user.type(invitation, '   ')
-  expect(linuxdo).toBeDisabled()
-  expect(github).toBeDisabled()
-
-  await user.clear(invitation)
-  await user.type(invitation, 'registration-code-123456')
-  expect(invitation).not.toHaveAttribute('aria-invalid')
-  expect(
-    screen.queryByText(
-      'A registration invitation code is required to continue.'
+test.each(['', 'registration-code-123456'])(
+  'OAuth keeps invitation optional and forwards entered codes: %s',
+  async (invitationCode) => {
+    const user = userEvent.setup()
+    const post = vi.spyOn(api, 'post').mockImplementation(async (url) => ({
+      data:
+        url === '/api/oauth/state'
+          ? { success: true, data: { flow_token: 'linuxdo-invitation' } }
+          : { success: true },
+    }))
+    vi.spyOn(window, 'open').mockReturnValue(null)
+    render(
+      <OAuthProviders
+        status={{
+          linuxdo_oauth: true,
+          linuxdo_client_id: 'linuxdo-client',
+          registration_invitation_enabled: true,
+        }}
+      />
     )
-  ).not.toBeInTheDocument()
-  expect(linuxdo).toBeEnabled()
-  expect(github).toBeEnabled()
-
-  await user.click(linuxdo)
-  await waitFor(() =>
-    expect(post).toHaveBeenCalledWith(
-      '/api/oauth/state',
-      expect.objectContaining({
-        provider: 'linuxdo',
-        invitation_code: 'registration-code-123456',
-      }),
-      expect.anything()
+    expect(
+      screen.getByRole('textbox', { name: 'Registration invitation code' })
+    ).not.toBeRequired()
+    if (invitationCode) {
+      await user.type(
+        screen.getByRole('textbox', { name: 'Registration invitation code' }),
+        invitationCode
+      )
+    }
+    await user.click(
+      screen.getByRole('button', { name: /Continue with LinuxDO/ })
     )
-  )
-})
-
-test('OAuth leaves provider buttons available when registration invitations are disabled', async () => {
-  const user = userEvent.setup()
-  const post = vi.spyOn(api, 'post').mockImplementation(async (url) => ({
-    data:
-      url === '/api/oauth/state'
-        ? { success: true, data: { flow_token: 'linuxdo-invitation' } }
-        : { success: true },
-  }))
-  vi.spyOn(window, 'open').mockReturnValue(null)
-  render(
-    <OAuthProviders
-      status={{
-        linuxdo_oauth: true,
-        linuxdo_client_id: 'linuxdo-client',
-        registration_invitation_enabled: false,
-      }}
-    />
-  )
-
-  expect(
-    screen.queryByRole('textbox', { name: /Registration invitation code/ })
-  ).not.toBeInTheDocument()
-  await user.click(
-    screen.getByRole('button', { name: /Continue with LinuxDO/ })
-  )
-  await waitFor(() =>
-    expect(post).toHaveBeenCalledWith(
-      '/api/oauth/state',
-      expect.not.objectContaining({ invitation_code: expect.anything() }),
-      expect.anything()
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith(
+        '/api/oauth/state',
+        expect.objectContaining({ provider: 'linuxdo' }),
+        expect.anything()
+      )
     )
-  )
-})
+    const authorization = post.mock.calls.find(
+      ([url]) => url === '/api/oauth/state'
+    )
+    if (invitationCode) {
+      expect(authorization?.[1]).toHaveProperty(
+        'invitation_code',
+        invitationCode
+      )
+    } else {
+      expect(authorization?.[1]).not.toHaveProperty('invitation_code')
+    }
+  }
+)

@@ -37,7 +37,7 @@ type OAuthProvidersProps = {
   status: SystemStatus | null
   disabled?: boolean
   className?: string
-  onWeChatLogin?: (invitationCode?: string) => void
+  onWeChatLogin?: () => void
   isWeChatLoading?: boolean
   redirectTo?: string
   invitationCode?: string
@@ -62,16 +62,6 @@ export function OAuthProviders({
 }: OAuthProvidersProps) {
   const { t } = useTranslation()
   const [loginInvitationCode, setLoginInvitationCode] = useState('')
-  const registrationInvitationEnabled = Boolean(
-    status?.registration_invitation_enabled ??
-    status?.data?.registration_invitation_enabled
-  )
-  const managesInvitationInput = invitationCode === undefined
-  const effectiveInvitationCode = invitationCode ?? loginInvitationCode
-  const invitationMissing =
-    registrationInvitationEnabled &&
-    managesInvitationInput &&
-    effectiveInvitationCode.trim() === ''
   const {
     isLoading,
     githubButtonText,
@@ -82,7 +72,7 @@ export function OAuthProviders({
     handleLinuxDOLogin,
     handleTelegramLogin,
     handleCustomOAuthLogin,
-  } = useOAuthLogin(status, redirectTo, effectiveInvitationCode)
+  } = useOAuthLogin(status, redirectTo, invitationCode ?? loginInvitationCode)
 
   const providerButtons: ProviderButton[] = []
 
@@ -90,7 +80,7 @@ export function OAuthProviders({
     providerButtons.push({
       key: 'wechat',
       label: t('Continue with WeChat'),
-      onClick: () => onWeChatLogin?.(effectiveInvitationCode),
+      onClick: onWeChatLogin,
       icon: <IconWeChat className='h-4 w-4' />,
       disabled: isWeChatLoading,
     })
@@ -171,14 +161,15 @@ export function OAuthProviders({
         </div>
       </div>
 
-      {registrationInvitationEnabled && managesInvitationInput && (
-        <RegistrationInvitationInput
-          value={loginInvitationCode}
-          onChange={setLoginInvitationCode}
-          required
-          disabled={disabled || isLoading}
-        />
-      )}
+      {(status?.registration_invitation_enabled ??
+        status?.data?.registration_invitation_enabled) &&
+        invitationCode === undefined && (
+          <RegistrationInvitationInput
+            value={loginInvitationCode}
+            onChange={setLoginInvitationCode}
+            disabled={disabled || isLoading}
+          />
+        )}
 
       <div className='flex flex-col gap-2'>
         {providerButtons.map(
@@ -187,9 +178,7 @@ export function OAuthProviders({
               key={key}
               variant='outline'
               type='button'
-              disabled={
-                disabled || isLoading || extraDisabled || invitationMissing
-              }
+              disabled={disabled || isLoading || extraDisabled}
               onClick={onClick}
               className='h-11 w-full justify-center gap-2 rounded-lg'
             >

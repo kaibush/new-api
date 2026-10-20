@@ -42,6 +42,7 @@ import { Label } from '@/components/ui/label'
 import { login, wechatLoginByCode } from '@/features/auth/api'
 import { LegalConsent } from '@/features/auth/components/legal-consent'
 import { OAuthProviders } from '@/features/auth/components/oauth-providers'
+import { RegistrationInvitationInput } from '@/features/auth/components/registration-invitation-input'
 import { loginFormSchema } from '@/features/auth/constants'
 import { useAuthRedirect } from '@/features/auth/hooks/use-auth-redirect'
 import { useTurnstile } from '@/features/auth/hooks/use-turnstile'
@@ -85,10 +86,6 @@ export function UserAuthForm({
   const loginFailedMessage = t('Login failed')
 
   const { status } = useStatus()
-  const invitationRequired = Boolean(
-    status?.registration_invitation_enabled ??
-    status?.data?.registration_invitation_enabled
-  )
   const passkeyLoginEnabled = Boolean(
     status?.passkey_login ?? status?.data?.passkey_login
   )
@@ -202,14 +199,12 @@ export function UserAuthForm({
     }
   }
 
-  const handleOpenWeChatDialog = (code?: string) => {
+  const handleOpenWeChatDialog = () => {
     if (requiresLegalConsent && !agreedToLegal) {
       toast.error(legalConsentErrorMessage)
       return
     }
-    if (invitationRequired && !code?.trim()) return
 
-    setWeChatInvitationCode(code ?? '')
     setIsWeChatDialogOpen(true)
   }
 
@@ -465,7 +460,6 @@ export function UserAuthForm({
                 disabled={
                   isWeChatSubmitting ||
                   !wechatCode.trim() ||
-                  (invitationRequired && !wechatInvitationCode.trim()) ||
                   (requiresLegalConsent && !agreedToLegal)
                 }
                 className='gap-2'
@@ -501,6 +495,14 @@ export function UserAuthForm({
               autoComplete='one-time-code'
             />
           </div>
+          {(status?.registration_invitation_enabled ??
+            status?.data?.registration_invitation_enabled) && (
+            <RegistrationInvitationInput
+              value={wechatInvitationCode}
+              onChange={setWeChatInvitationCode}
+              disabled={isWeChatSubmitting}
+            />
+          )}
         </Dialog>
       )}
     </Form>
