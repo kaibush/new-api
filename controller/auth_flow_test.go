@@ -857,6 +857,43 @@ func TestRegistrationInvitationOptions(t *testing.T) {
 	assert.NotContains(t, result.Data, "registration_invitation_code")
 }
 
+func TestCheckRegistrationInvitationDoesNotConsumeCode(t *testing.T) {
+	setupRegistrationInvitationTest(t)
+	for _, test := range []struct {
+		name    string
+		code    string
+		enabled bool
+		ok      bool
+	}{
+		{name: "valid", code: " registration-code-123456 ", enabled: true, ok: true},
+		{name: "invalid", code: "incorrect-code-123456", enabled: true},
+		{name: "empty", enabled: true},
+		{name: "disabled", enabled: false, ok: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			common.RegistrationInvitationEnabled = test.enabled
+			body, err := common.Marshal(map[string]string{"invitation_code": test.code})
+			require.NoError(t, err)
+			response := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(response)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/api/user/register/invitation", strings.NewReader(string(body)))
+			CheckRegistrationInvitation(ctx)
+			var result struct {
+				Success bool   `json:"success"`
+				Code    string `json:"code"`
+			}
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+			assert.Equal(t, test.ok, result.Success)
+			if test.ok {
+				assert.Empty(t, result.Code)
+			} else {
+				assert.Equal(t, "REGISTRATION_INVITATION_REQUIRED", result.Code)
+			}
+			assert.NoError(t, model.ValidateRegistrationInvitation(common.RegistrationInvitationHash("registration-code-123456")))
+		})
+	}
+}
+
 func TestRegistrationInvitationAtomicUse(t *testing.T) {
 	setupRegistrationInvitationTest(t)
 	hash := common.RegistrationInvitationHash("registration-code-123456")

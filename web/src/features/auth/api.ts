@@ -262,6 +262,17 @@ export async function telegramLogin(
 // Registration
 // ----------------------------------------------------------------------------
 
+export async function validateRegistrationInvitation(
+  invitationCode: string
+): Promise<ApiResponse> {
+  const res = await api.post(
+    '/api/user/register/invitation',
+    { invitation_code: invitationCode.trim() },
+    { skipAuthRefresh: true, skipBusinessError: true, skipErrorHandler: true }
+  )
+  return res.data
+}
+
 // User registration
 export async function register(payload: RegisterPayload): Promise<ApiResponse> {
   const res = await api.post(`/api/user/register`, payload, {
