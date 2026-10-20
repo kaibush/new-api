@@ -163,12 +163,14 @@ export function CommunityChat() {
                   </time>
                 </div>
                 <MessageContent
-                  variant='flat'
+                  variant='contained'
                   className={cn(
-                    'min-w-0 max-w-full group-[.is-user]:max-w-full',
+                    'min-w-0 max-w-full rounded-2xl border px-3.5 py-2.5 leading-relaxed shadow-xs group-[.is-user]:bg-primary/10 group-[.is-user]:text-foreground group-[.is-assistant]:bg-muted/50',
                     {
-                      'items-end': message.user_id === user?.id,
-                      'items-start': message.user_id !== user?.id,
+                      'items-end rounded-tr-sm border-primary/10':
+                        message.user_id === user?.id,
+                      'items-start rounded-tl-sm border-border/60':
+                        message.user_id !== user?.id,
                     }
                   )}
                 >
@@ -237,27 +239,31 @@ export function CommunityChat() {
                     </>
                   )}
                 </MessageContent>
-              </div>
-              {!message.deleted && (
-                <div className='self-center opacity-100 transition-opacity [@media(hover:hover)_and_(pointer:fine)]:opacity-0 [@media(hover:hover)_and_(pointer:fine)]:group-hover/message:opacity-100 [@media(hover:hover)_and_(pointer:fine)]:focus-within:opacity-100 [@media(hover:hover)_and_(pointer:fine)]:has-[[data-popup-open]]:opacity-100'>
-                  <DataTableRowActionMenu
-                    ariaLabel={t('More actions')}
-                    contentClassName='w-36'
+                {!message.deleted && (
+                  <div
+                    data-message-actions
+                    className='text-muted-foreground flex h-6 items-center gap-1'
                   >
-                    <DropdownMenuItem onClick={() => setReply(message)}>
-                      {t('Reply')}
-                    </DropdownMenuItem>
-                    {(user?.role ?? 0) >= 100 && (
-                      <DropdownMenuItem
-                        variant='destructive'
-                        onClick={() => setRemove(message)}
-                      >
-                        {t('Delete')}
+                    <DataTableRowActionMenu
+                      ariaLabel={t('More actions')}
+                      triggerSize='icon-xs'
+                      contentClassName='w-36'
+                    >
+                      <DropdownMenuItem onClick={() => setReply(message)}>
+                        {t('Reply')}
                       </DropdownMenuItem>
-                    )}
-                  </DataTableRowActionMenu>
-                </div>
-              )}
+                      {(user?.role ?? 0) >= 100 && (
+                        <DropdownMenuItem
+                          variant='destructive'
+                          onClick={() => setRemove(message)}
+                        >
+                          {t('Delete')}
+                        </DropdownMenuItem>
+                      )}
+                    </DataTableRowActionMenu>
+                  </div>
+                )}
+              </div>
             </article>
           ))}
         </div>

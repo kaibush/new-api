@@ -813,6 +813,11 @@ test.each([1, 100])(
     expect(
       screen.getAllByRole('button', { name: 'More actions' })
     ).toHaveLength(1)
+    const bubble = screen.getByText('My message').parentElement
+    expect(
+      trigger.closest('[data-message-actions]')?.previousElementSibling
+    ).toBe(bubble)
+    expect(trigger).toHaveClass('size-6')
     trigger.focus()
     await user.keyboard('{Enter}')
     expect(
