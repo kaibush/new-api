@@ -25,13 +25,13 @@ afterEach(() => {
 })
 it('saves a changed token and clears the input after success', async () => {
   render(<GrokIQSection baseURL='https://grokiq.example.com' />)
-  const input = screen.getByLabelText('GrokIQ administrator token')
-  await userEvent.type(input, 'replacement-token')
+  const input = screen.getByLabelText('GrokIQ integration API Key')
+  await userEvent.type(input, 'giq_example.integration-secret')
   await userEvent.click(screen.getByRole('button', { name: 'Save' }))
   await waitFor(() =>
     expect(save).toHaveBeenCalledWith({
       key: 'GrokIQAdminToken',
-      value: 'replacement-token',
+      value: 'giq_example.integration-secret',
     })
   )
   await waitFor(() => expect(input).toHaveValue(''))

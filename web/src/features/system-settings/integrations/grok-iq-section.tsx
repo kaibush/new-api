@@ -107,7 +107,7 @@ export function GrokIQSection(props: { baseURL: string }) {
             name='GrokIQAdminToken'
             render={({ field }) => (
               <FormItem>
-                <FormLabel>{t('GrokIQ administrator token')}</FormLabel>
+                <FormLabel>{t('GrokIQ integration API Key')}</FormLabel>
                 <FormControl>
                   <Input
                     type='password'
@@ -117,7 +117,7 @@ export function GrokIQSection(props: { baseURL: string }) {
                 </FormControl>
                 <FormDescription>
                   {t(
-                    'Enter the GrokIQ administrator JWT. Leave blank to keep it. Replace it when expired. The token is never sent to console users.'
+                    'Create an integration API Key in GrokIQ Settings → Access and keys with status:read and statistics:read permissions. Choose no expiry for continuous access. Leave blank to keep the saved key. Existing administrator JWTs remain supported.'
                   )}
                 </FormDescription>
                 <FormMessage />

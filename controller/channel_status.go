@@ -98,7 +98,7 @@ func GetChannelStatus(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 	defer cancel()
 	client := *service.GetSSRFProtectedHTTPClient()
-	// Never forward the administrator credential to a redirect destination.
+	// Never forward the integration credential to a redirect destination.
 	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
 	var inventory channelInventory
 	var audits struct {
@@ -106,10 +106,18 @@ func GetChannelStatus(c *gin.Context) {
 		Callers    []channelAuditClient `json:"callers"`
 	}
 	var inventoryErr, auditErr error
+	// Preserve existing JWT integrations while scoped keys use projections that
+	// never expose raw audit records. Keep the stored option name for upgrades.
+	inventoryPath := "public/upstream-accounts"
+	auditPath := "request-audits?window=" + window + "&pageSize=1"
+	if strings.HasPrefix(token, "giq_") {
+		inventoryPath = "integration/v1/upstream-accounts"
+		auditPath = "integration/v1/request-statistics?window=" + window
+	}
 	var wg sync.WaitGroup
-	wg.Go(func() { inventoryErr = fetchGrokIQ(ctx, &client, base, token, "public/upstream-accounts", &inventory) })
+	wg.Go(func() { inventoryErr = fetchGrokIQ(ctx, &client, base, token, inventoryPath, &inventory) })
 	wg.Go(func() {
-		auditErr = fetchGrokIQ(ctx, &client, base, token, "request-audits?window="+window+"&pageSize=1", &audits)
+		auditErr = fetchGrokIQ(ctx, &client, base, token, auditPath, &audits)
 	})
 	wg.Wait()
 	if auditErr == nil && audits.ClientKeys == nil {
