@@ -340,3 +340,125 @@ test('long chat names wrap within the header and presence changes preserve the s
   )
   expect(messages.scrollTop).toBe(100)
 })
+
+test('saved credentials load only after verification and support visibility toggles', async () => {
+  const user = userEvent.setup()
+  vi.mocked(api.get).mockImplementation(async (url) => ({
+    data:
+      url === '/api/verify/methods'
+        ? {
+            success: true,
+            data: {
+              scope: 'community.credentials.read',
+              methods: [{ method: '2fa', available: true }],
+              oauth_providers: [],
+              password_encryption_enabled: false,
+            },
+          }
+        : {
+            success: true,
+            has_secret: true,
+            has_callback_token: true,
+            data: {
+              enabled: true,
+              name: '',
+              bot_enabled: false,
+              bot_name: 'helper',
+              app_id: '',
+              template_id: '',
+              receiver: '',
+            },
+          },
+  }))
+  vi.mocked(api.post).mockImplementation(async (url) => ({
+    data: {
+      success: true,
+      data:
+        url === '/api/verify'
+          ? {
+              proof_token: 'single-use-proof',
+              scope: 'community.credentials.read',
+              method: '2fa',
+              expires_at: Math.floor(Date.now() / 1000) + 60,
+            }
+          : {
+              app_secret: 'stored-app-secret',
+              callback_token: 'stored-callback-token',
+            },
+    },
+  }))
+  show(<SettingsHarness />)
+  const load = await screen.findByRole('button', {
+    name: 'Load saved credentials',
+  })
+  const appSecret = screen.getByLabelText('WeChat AppSecret')
+  const callbackToken = screen.getByLabelText('WeChat callback token')
+  expect(appSecret).toHaveValue('')
+  expect(callbackToken).toHaveValue('')
+  await user.click(load)
+  expect(api.post).not.toHaveBeenCalled()
+  await user.type(
+    await screen.findByLabelText('Authenticator code or backup code'),
+    '123456'
+  )
+  await user.click(screen.getByRole('button', { name: 'Verify' }))
+  await waitFor(() => expect(appSecret).toHaveValue('stored-app-secret'))
+  expect(callbackToken).toHaveValue('stored-callback-token')
+  expect(api.post).toHaveBeenCalledWith(
+    '/api/option/community/credentials',
+    undefined,
+    expect.objectContaining({
+      headers: { 'X-Security-Proof': 'single-use-proof' },
+      singleUseAuthorization: true,
+      signal: expect.any(AbortSignal),
+    })
+  )
+  expect(appSecret).toHaveAttribute('type', 'password')
+  const toggles = screen.getAllByRole('button', {
+    name: 'Toggle password visibility',
+  })
+  await user.click(toggles[0])
+  await user.click(toggles[1])
+  expect(appSecret).toHaveAttribute('type', 'text')
+  expect(callbackToken).toHaveAttribute('type', 'text')
+  await user.click(toggles[0])
+  expect(appSecret).toHaveAttribute('type', 'password')
+  expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+})
+
+test('cancelling credential verification preserves edited keys and never requests saved keys', async () => {
+  const user = userEvent.setup()
+  vi.mocked(api.get).mockImplementation(async (url) => ({
+    data:
+      url === '/api/verify/methods'
+        ? {
+            success: true,
+            data: {
+              scope: 'community.credentials.read',
+              methods: [{ method: '2fa', available: true }],
+              oauth_providers: [],
+              password_encryption_enabled: false,
+            },
+          }
+        : {
+            success: true,
+            has_secret: true,
+            data: { enabled: true, bot_name: 'helper' },
+          },
+  }))
+  show(<SettingsHarness />)
+  await screen.findByRole('button', { name: 'Load saved credentials' })
+  await user.type(screen.getByLabelText('WeChat AppSecret'), 'new-secret')
+  await user.click(
+    screen.getByRole('button', { name: 'Load saved credentials' })
+  )
+  await screen.findByLabelText('Authenticator code or backup code')
+  await user.keyboard('{Escape}')
+  await waitFor(() =>
+    expect(
+      screen.getByRole('button', { name: 'Load saved credentials' })
+    ).toBeEnabled()
+  )
+  expect(screen.getByLabelText('WeChat AppSecret')).toHaveValue('new-secret')
+  expect(api.post).not.toHaveBeenCalled()
+})

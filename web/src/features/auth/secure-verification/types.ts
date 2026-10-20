@@ -26,6 +26,7 @@ export type VerificationMethod =
   | 'session'
 export type SecurityProofScope =
   | 'channel.key.read'
+  | 'community.credentials.read'
   | 'passkey.register'
   | 'passkey.delete'
   | '2fa.setup'

@@ -76,6 +76,27 @@ func GetCommunitySettings(c *gin.Context) {
 	c.JSON(200, gin.H{"success": true, "data": config, "has_secret": config.AppSecret != "", "has_callback_token": config.CallbackToken != ""})
 }
 
+func GetCommunityCredentials(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	if c.GetInt("role") != common.RoleRootUser {
+		communityError(c, http.StatusForbidden, service.ErrVerificationForbidden.Error())
+		return
+	}
+	if middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: service.VerificationScopeCommunityKeyRead}) == nil {
+		return
+	}
+	config, err := model.GetCommunityConfig()
+	if err != nil {
+		communityError(c, http.StatusInternalServerError, "Could not load community settings")
+		return
+	}
+	recordManageAudit(c, "community.credentials_view", nil)
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{
+		"app_secret":     config.AppSecret,
+		"callback_token": config.CallbackToken,
+	}})
+}
+
 func UpdateCommunitySettings(c *gin.Context) {
 	markAuditLogged(c)
 	var req struct {

@@ -226,6 +226,7 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			optionRoute.GET("/", controller.GetOptions)
 			optionRoute.GET("/community", middleware.DisableCache(), controller.GetCommunitySettings)
+			optionRoute.POST("/community/credentials", middleware.DisableCache(), middleware.UserCriticalRateLimit("community-credentials"), controller.GetCommunityCredentials)
 			optionRoute.PUT("/community", middleware.DisableCache(), controller.UpdateCommunitySettings)
 			optionRoute.POST("/community/wechat/test", middleware.DisableCache(), middleware.UserCriticalRateLimit("community-wechat-test"), controller.TestCommunityWeChat)
 			invitationRoute := optionRoute.Group("/registration-invitations", middleware.DisableCache(), anonymousRequestBodyLimit)

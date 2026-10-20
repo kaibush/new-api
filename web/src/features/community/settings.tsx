@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -8,6 +8,7 @@ import { z } from 'zod'
 
 import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
+import { PasswordInput } from '@/components/password-input'
 import { Button } from '@/components/ui/button'
 import {
   Field,
@@ -17,11 +18,20 @@ import {
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import {
+  SecureVerificationDialog,
+  useSecureVerification,
+} from '@/features/auth/secure-verification'
 import { SettingsForm } from '@/features/system-settings/components/settings-form-layout'
 import { SettingsPageFormActions } from '@/features/system-settings/components/settings-page-context'
 import { SettingsSection } from '@/features/system-settings/components/settings-section'
 
-import { getChatSettings, saveChatSettings, testChatWeChat } from './api'
+import {
+  getChatCredentials,
+  getChatSettings,
+  saveChatSettings,
+  testChatWeChat,
+} from './api'
 
 const schema = z.object({
   name: z.string().trim().max(80),
@@ -42,6 +52,9 @@ const schema = z.object({
 export function CommunitySettings() {
   const { t } = useTranslation()
   const client = useQueryClient()
+  const verification = useSecureVerification()
+  const credentialsRequest = useRef<AbortController | null>(null)
+  useEffect(() => () => credentialsRequest.current?.abort(), [])
   const settings = useQuery({
     queryKey: ['community-settings'],
     queryFn: getChatSettings,
@@ -81,6 +94,35 @@ export function CommunitySettings() {
   const test = useMutation({
     mutationFn: testChatWeChat,
     onSuccess: () => toast.success(t('Test message sent')),
+  })
+  const reveal = useMutation({
+    retry: false,
+    gcTime: 0,
+    mutationFn: async () => {
+      const proof = await verification.requestVerification({
+        scope: 'community.credentials.read',
+        title: t('Verify to view saved credentials'),
+      })
+      if (!proof) return
+      const request = new AbortController()
+      credentialsRequest.current = request
+      try {
+        const credentials = await getChatCredentials(
+          proof.proof_token,
+          request.signal
+        )
+        if (request.signal.aborted) return
+        for (const field of ['app_secret', 'callback_token'] as const) {
+          if (!form.getFieldState(field).isDirty) {
+            form.resetField(field, { defaultValue: credentials[field] })
+          }
+        }
+      } finally {
+        if (credentialsRequest.current === request) {
+          credentialsRequest.current = null
+        }
+      }
+    },
   })
   if (settings.isPending) return <LoadingState />
   if (settings.isError) {
@@ -166,9 +208,8 @@ export function CommunitySettings() {
           </Field>
           <Field>
             <FieldLabel htmlFor='wechat-secret'>WeChat AppSecret</FieldLabel>
-            <Input
+            <PasswordInput
               id='wechat-secret'
-              type='password'
               autoComplete='new-password'
               {...form.register('app_secret')}
             />
@@ -197,9 +238,8 @@ export function CommunitySettings() {
             <FieldLabel htmlFor='wechat-callback'>
               {t('WeChat callback token')}
             </FieldLabel>
-            <Input
+            <PasswordInput
               id='wechat-callback'
-              type='password'
               autoComplete='new-password'
               {...form.register('callback_token')}
             />
@@ -207,6 +247,25 @@ export function CommunitySettings() {
               {settings.data.has_callback_token
                 ? t('Secret saved. Leave blank to keep it.')
                 : t('Enter the test account credentials.')}
+            </FieldDescription>
+          </Field>
+          <Field>
+            <Button
+              type='button'
+              variant='outline'
+              disabled={
+                reveal.isPending ||
+                save.isPending ||
+                (!settings.data.has_secret && !settings.data.has_callback_token)
+              }
+              onClick={() => reveal.mutate()}
+            >
+              {t('Load saved credentials')}
+            </Button>
+            <FieldDescription>
+              {t(
+                'Verify your identity to load saved credentials, then use the eye buttons to view them.'
+              )}
             </FieldDescription>
           </Field>
           <p className='text-muted-foreground text-sm'>
@@ -251,6 +310,7 @@ export function CommunitySettings() {
           </div>
         </FieldGroup>
       </SettingsForm>
+      <SecureVerificationDialog {...verification.dialogProps} />
     </SettingsSection>
   )
 }

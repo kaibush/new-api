@@ -383,3 +383,101 @@ func TestCommunitySettingsNameValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestCommunityCredentialsRequireSingleUseRootVerification(t *testing.T) {
+	user, _ := setupSecurityEnrollmentTest(t)
+	previousPasswordLogin := common.PasswordLoginEnabled
+	common.PasswordLoginEnabled = true
+	t.Cleanup(func() { common.PasswordLoginEnabled = previousPasswordLogin })
+	require.NoError(t, model.DB.AutoMigrate(&model.CommunityConfig{}))
+	require.NoError(t, model.SaveCommunityConfig(model.CommunityConfig{
+		BotName: "helper", AppSecret: "saved-app-secret", CallbackToken: "saved-callback-token",
+	}))
+	bundle, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "credential-test")
+	require.NoError(t, err)
+	identity, err := service.ParseAccessToken(bundle.AccessToken)
+	require.NoError(t, err)
+	router := gin.New()
+	router.POST("/credentials", middleware.RootAuth(), GetCommunityCredentials)
+	router.GET("/settings", middleware.RootAuth(), GetCommunitySettings)
+	request := func(method, path, token, proof string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		r.Header.Set("X-Security-Proof", proof)
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, r)
+		return rr
+	}
+	assert.Equal(t, http.StatusUnauthorized, request("POST", "/credentials", "", "").Code)
+	assert.Equal(t, http.StatusForbidden, request("POST", "/credentials", bundle.AccessToken, "").Code)
+	_, err = service.GetVerificationRequirements(identity, service.VerificationScopeCommunityKeyRead)
+	assert.ErrorIs(t, err, service.ErrVerificationForbidden)
+	require.NoError(t, model.DB.Model(user).Update("role", common.RoleRootUser).Error)
+	require.NoError(t, model.PublishUserAuthCache(user.Id))
+	settings := request("GET", "/settings", bundle.AccessToken, "")
+	require.Equal(t, http.StatusOK, settings.Code)
+	assert.NotContains(t, settings.Body.String(), "saved-app-secret")
+	assert.NotContains(t, settings.Body.String(), "saved-callback-token")
+	input := service.VerificationInput{Scope: service.VerificationScopeCommunityKeyRead, Method: "password", Password: "wrong-password"}
+	_, err = service.VerifySecurityInput(identity, input)
+	assert.ErrorIs(t, err, service.ErrVerificationFailed)
+	input.Password = "enrollment-password"
+	for _, tc := range []struct{ name, code string }{
+		{"missing", "SECURITY_PROOF_REQUIRED"},
+		{"wrong scope", "SECURITY_PROOF_SCOPE_MISMATCH"},
+		{"expired", "SECURITY_PROOF_EXPIRED"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var proof string
+			switch tc.name {
+			case "wrong scope":
+				proof = issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{Scope: service.VerificationScopeTwoFASetup}, service.VerificationMethodPassword)
+			case "expired":
+				issued, err := service.VerifySecurityInput(identity, input)
+				require.NoError(t, err)
+				proof = issued.ProofToken
+				var flow model.AuthFlow
+				require.NoError(t, model.DB.Order("id DESC").First(&flow).Error)
+				require.NoError(t, model.DB.Model(&flow).Update("expires_at", time.Now().Add(-time.Minute)).Error)
+			}
+			response := request("POST", "/credentials", bundle.AccessToken, proof)
+			require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+			assert.Contains(t, response.Body.String(), tc.code)
+			assert.NotContains(t, response.Body.String(), "saved-app-secret")
+			assert.NotContains(t, response.Body.String(), "saved-callback-token")
+		})
+	}
+	proof, err := service.VerifySecurityInput(identity, input)
+	require.NoError(t, err)
+	response := request("POST", "/credentials", bundle.AccessToken, proof.ProofToken)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+	assert.JSONEq(t, `{"success":true,"data":{"app_secret":"saved-app-secret","callback_token":"saved-callback-token"}}`, response.Body.String())
+	response = request("POST", "/credentials", bundle.AccessToken, proof.ProofToken)
+	assert.Equal(t, http.StatusForbidden, response.Code)
+	assert.Contains(t, response.Body.String(), "SECURITY_PROOF_CONSUMED")
+	var logs []model.AuditLog
+	require.NoError(t, model.LOG_DB.Find(&logs).Error)
+	audit, err := common.Marshal(logs)
+	require.NoError(t, err)
+	assert.Contains(t, string(audit), "community.credentials_view")
+	for _, secret := range []string{"saved-app-secret", "saved-callback-token", proof.ProofToken} {
+		assert.NotContains(t, string(audit), secret)
+	}
+	// Enrolled factors cannot be bypassed with a password, even when unavailable.
+	twoFA := model.TwoFA{UserId: user.Id, Secret: "JBSWY3DPEHPK3PXP", IsEnabled: true}
+	require.NoError(t, model.DB.Create(&twoFA).Error)
+	_, err = service.VerifySecurityInput(identity, input)
+	assert.ErrorIs(t, err, service.ErrProofMethod)
+	require.NoError(t, model.DB.Model(&twoFA).Update("is_enabled", false).Error)
+	common.PasswordLoginEnabled = false
+	_, err = service.VerifySecurityInput(identity, input)
+	assert.ErrorIs(t, err, service.ErrVerificationUnavailable)
+	common.PasswordLoginEnabled = true
+	proof, err = service.VerifySecurityInput(identity, input)
+	require.NoError(t, err)
+	require.NoError(t, model.DB.Model(&model.UserSession{}).Where("sid = ?", bundle.Session.SID).Update("expires_at", time.Now().Add(-time.Minute).Unix()).Error)
+	response = request("POST", "/credentials", bundle.AccessToken, proof.ProofToken)
+	assert.Equal(t, http.StatusUnauthorized, response.Code)
+	assert.NotContains(t, response.Body.String(), "saved-app-secret")
+}

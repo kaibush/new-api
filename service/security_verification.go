@@ -22,6 +22,7 @@ const (
 	VerificationMethodOAuth              = "oauth"
 	VerificationMethodSession            = "session"
 	VerificationScopeChannelKeyRead      = "channel.key.read"
+	VerificationScopeCommunityKeyRead    = "community.credentials.read"
 	VerificationScopePasskeyRegister     = "passkey.register"
 	VerificationScopePasskeyDelete       = "passkey.delete"
 	VerificationScopeTwoFASetup          = "2fa.setup"
@@ -261,7 +262,8 @@ func BindVerificationOperation(operation VerificationOperation) (VerificationBin
 		normalized = context
 	case VerificationScopePasskeyRegister, VerificationScopePasskeyDelete, VerificationScopeTwoFASetup,
 		VerificationScopeTwoFADisable, VerificationScopeTwoFABackupCodes,
-		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete:
+		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
+		VerificationScopeCommunityKeyRead:
 		if len(fields) != 0 {
 			return VerificationBinding{}, ErrVerificationContextInvalid
 		}
@@ -325,6 +327,7 @@ func securityVerificationPolicy(scope string, state model.UserVerificationState)
 			return nil, model.ErrTwoFANotEnabled
 		}
 	case VerificationScopePasskeyRegister, VerificationScopeTwoFASetup,
+		VerificationScopeCommunityKeyRead,
 		VerificationScopeAccessTokenGenerate, VerificationScopeAccessTokenUpdate, VerificationScopeAccessTokenRevoke,
 		VerificationScopeAccountBind, VerificationScopeAccountUnbind,
 		VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
@@ -375,7 +378,7 @@ func GetVerificationRequirements(identity AuthIdentity, scope string) (*Verifica
 	if state.Status != common.UserStatusEnabled || state.AuthVersion != identity.UserAuthVersion {
 		return nil, ErrAuthTokenInvalid
 	}
-	if scope == VerificationScopeChannelKeyRead && state.Role != common.RoleRootUser {
+	if (scope == VerificationScopeChannelKeyRead || scope == VerificationScopeCommunityKeyRead) && state.Role != common.RoleRootUser {
 		return nil, ErrVerificationForbidden
 	}
 	if strings.HasPrefix(scope, verificationScopeAdminUserPrefix) && state.Role < common.RoleAdminUser {
@@ -392,7 +395,8 @@ func GetVerificationRequirements(identity AuthIdentity, scope string) (*Verifica
 	for i := range methods {
 		if methods[i].Method == VerificationMethodPassword && !common.PasswordLoginEnabled {
 			switch scope {
-			case VerificationScopeAccountBind, VerificationScopeAccountUnbind, VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
+			case VerificationScopeCommunityKeyRead,
+				VerificationScopeAccountBind, VerificationScopeAccountUnbind, VerificationScopePasswordSet, VerificationScopePasswordChange, VerificationScopeAccountDelete,
 				VerificationScopeAdminUserCreate, VerificationScopeAdminUserUpdate, VerificationScopeAdminUserDelete,
 				VerificationScopeAdminUserManage, VerificationScopeAdminUserPasskeyReset,
 				VerificationScopeAdminUserTwoFADisable, VerificationScopeAdminUserBindingClear:

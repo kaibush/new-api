@@ -1,4 +1,5 @@
 import { api } from '@/lib/api'
+import { authResult } from '@/lib/secure-verification'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
 export type ChatMessage = {
@@ -46,6 +47,15 @@ export async function getChatSettings() {
 export async function saveChatSettings(values: ChatSettings) {
   return requireServerSuccess(
     (await api.put('/api/option/community', values)).data
+  )
+}
+export async function getChatCredentials(proof: string, signal: AbortSignal) {
+  return authResult<Pick<ChatSettings, 'app_secret' | 'callback_token'>>(
+    api.post('/api/option/community/credentials', undefined, {
+      headers: { 'X-Security-Proof': proof },
+      singleUseAuthorization: true,
+      signal,
+    })
   )
 }
 export async function testChatWeChat() {
