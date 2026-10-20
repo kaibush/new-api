@@ -41,6 +41,7 @@ import { Label } from '@/components/ui/label'
 import { register, wechatLoginByCode } from '@/features/auth/api'
 import { LegalConsent } from '@/features/auth/components/legal-consent'
 import { OAuthProviders } from '@/features/auth/components/oauth-providers'
+import { RegistrationInvitationInput } from '@/features/auth/components/registration-invitation-input'
 import { registerFormSchema } from '@/features/auth/constants'
 import { useAuthRedirect } from '@/features/auth/hooks/use-auth-redirect'
 import { useEmailVerification } from '@/features/auth/hooks/use-email-verification'
@@ -62,6 +63,7 @@ export function SignUpForm({
   const { t } = useTranslation()
   const [isLoading, setIsLoading] = useState(false)
   const [verificationCode, setVerificationCode] = useState('')
+  const [invitationCode, setInvitationCode] = useState('')
   const [agreedToLegal, setAgreedToLegal] = useState(false)
   const [wechatCode, setWeChatCode] = useState('')
   const [isWeChatDialogOpen, setIsWeChatDialogOpen] = useState(false)
@@ -70,6 +72,10 @@ export function SignUpForm({
   const legalConsentErrorMessage = t('Please agree to the legal terms first')
 
   const { status } = useStatus()
+  const invitationRequired = Boolean(
+    status?.registration_invitation_enabled ??
+    status?.data?.registration_invitation_enabled
+  )
   const {
     isTurnstileEnabled,
     turnstileSiteKey,
@@ -167,6 +173,7 @@ export function SignUpForm({
         email: data.email || undefined,
         verification_code: verificationCode || undefined,
         aff_code: getAffiliateCode(),
+        invitation_code: invitationCode.trim() || undefined,
         turnstile: turnstileToken,
       })
 
@@ -217,7 +224,7 @@ export function SignUpForm({
 
     setIsWeChatSubmitting(true)
     try {
-      const res = await wechatLoginByCode(wechatCode)
+      const res = await wechatLoginByCode(wechatCode, invitationCode)
       if (res?.success) {
         handleWeChatDialogChange(false)
         if (await handleLoginResult(res.data)) {
@@ -251,6 +258,15 @@ export function SignUpForm({
         className={cn('grid gap-4', className)}
         {...props}
       >
+        {invitationRequired && (
+          <RegistrationInvitationInput
+            value={invitationCode}
+            onChange={setInvitationCode}
+            required
+            disabled={isLoading}
+          />
+        )}
+
         {/* Username Field */}
         <FormField
           control={form.control}
@@ -385,10 +401,15 @@ export function SignUpForm({
         {oauthRegisterEnabled && (
           <OAuthProviders
             status={status}
-            disabled={isLoading || (requiresLegalConsent && !agreedToLegal)}
+            disabled={
+              isLoading ||
+              (requiresLegalConsent && !agreedToLegal) ||
+              (invitationRequired && !invitationCode.trim())
+            }
             onWeChatLogin={hasWeChatLogin ? handleOpenWeChatDialog : undefined}
             isWeChatLoading={isWeChatSubmitting}
             className='pt-2'
+            invitationCode={invitationCode}
           />
         )}
       </form>

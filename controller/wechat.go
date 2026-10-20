@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
@@ -63,8 +64,17 @@ func WeChatAuth(c *gin.Context) {
 		})
 		return
 	}
-	code := c.Query("code")
-	wechatId, err := getWeChatIdByCode(code)
+	request := struct {
+		Code           string `json:"code"`
+		InvitationCode string `json:"invitation_code"`
+	}{Code: c.Query("code")}
+	if c.Request.Method == http.MethodPost {
+		if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
+		}
+	}
+	wechatId, err := getWeChatIdByCode(request.Code)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"message": err.Error(),
@@ -93,12 +103,25 @@ func WeChatAuth(c *gin.Context) {
 		}
 	} else {
 		if common.RegisterEnabled {
+			if err := model.ValidateRegistrationInvitation(common.RegistrationInvitationHash(request.InvitationCode)); err != nil {
+				if !errors.Is(err, model.ErrRegistrationInvitationInvalid) {
+					common.ApiErrorI18n(c, i18n.MsgDatabaseError)
+					return
+				}
+				recordUserSecurityAudit(c, 0, "user.registration_denied", map[string]any{"method": "wechat", "reason": "invitation_required", "success": false})
+				writeRegistrationInvitationError(c)
+				return
+			}
 			user.Username = "wechat_" + strconv.Itoa(model.GetMaxUserId()+1)
 			user.DisplayName = "WeChat User"
 			user.Role = common.RoleCommonUser
 			user.Status = common.UserStatusEnabled
 
-			if err := user.Insert(0); err != nil {
+			if err := user.RegisterWithInvitation(0, common.RegistrationInvitationHash(request.InvitationCode)); err != nil {
+				if errors.Is(err, model.ErrRegistrationInvitationInvalid) {
+					writeRegistrationInvitationError(c)
+					return
+				}
 				c.JSON(http.StatusOK, gin.H{
 					"success": false,
 					"message": err.Error(),

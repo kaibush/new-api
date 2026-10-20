@@ -23,11 +23,103 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { api, type RefreshOutcome } from '@/lib/api'
 import type { AuthBundle } from '@/stores/auth-store'
 
-import { executeLogout } from './api'
+import {
+  createOAuthAuthorization,
+  executeLogout,
+  wechatLoginByCode,
+} from './api'
 import { useOAuthLogin } from './hooks/use-oauth-login'
 import { consumeOAuthLoginRedirect } from './lib/oauth-callback-mode'
 
 afterEach(() => vi.restoreAllMocks())
+
+test.each(['github', 'discord', 'oidc', 'linuxdo', 'custom-provider'])(
+  'sends registration invitation separately from referral for %s',
+  async (provider) => {
+    vi.spyOn(window, 'localStorage', 'get').mockReturnValue(
+      window.sessionStorage
+    )
+    window.sessionStorage.setItem('aff', 'referral-code')
+    const post = vi.spyOn(api, 'post').mockResolvedValue({
+      data: { success: true, data: { flow_token: 'invited-state' } },
+    })
+    try {
+      await createOAuthAuthorization(
+        provider,
+        'login',
+        undefined,
+        undefined,
+        undefined,
+        ' registration-code-123456 '
+      )
+      expect(post).toHaveBeenCalledWith(
+        '/api/oauth/state',
+        {
+          provider,
+          intent: 'login',
+          aff: 'referral-code',
+          invitation_code: 'registration-code-123456',
+          scope: undefined,
+        },
+        expect.anything()
+      )
+
+      await createOAuthAuthorization(
+        provider,
+        'bind',
+        undefined,
+        undefined,
+        undefined,
+        'registration-code-123456'
+      )
+      expect(post.mock.calls[1][1]).not.toHaveProperty('invitation_code')
+      expect(post.mock.calls[1][1]).not.toHaveProperty('aff', 'referral-code')
+    } finally {
+      window.sessionStorage.removeItem('aff')
+    }
+  }
+)
+
+test('sends WeChat registration invitation in the body instead of the URL', async () => {
+  const post = vi
+    .spyOn(api, 'post')
+    .mockResolvedValue({ data: { success: true } })
+  await wechatLoginByCode('verification-code', ' registration-code-123456 ')
+  expect(post).toHaveBeenCalledWith('/api/oauth/wechat', {
+    code: 'verification-code',
+    invitation_code: 'registration-code-123456',
+  })
+})
+
+test('passes registration invitation from LinuxDO login to the authorization flow', async () => {
+  const post = vi.spyOn(api, 'post').mockImplementation(async (url) => ({
+    data:
+      url === '/api/oauth/state'
+        ? { success: true, data: { flow_token: 'linuxdo-state' } }
+        : { success: true },
+  }))
+  const open = vi.spyOn(window, 'open').mockReturnValue(null)
+  const { result } = renderHook(() =>
+    useOAuthLogin(
+      { linuxdo_oauth: true, linuxdo_client_id: 'linuxdo-client' },
+      undefined,
+      'registration-code-123456'
+    )
+  )
+  await act(() => result.current.handleLinuxDOLogin())
+  expect(post).toHaveBeenCalledWith(
+    '/api/oauth/state',
+    expect.objectContaining({
+      provider: 'linuxdo',
+      invitation_code: 'registration-code-123456',
+    }),
+    expect.anything()
+  )
+  expect(open).toHaveBeenCalledWith(
+    expect.stringContaining('state=linuxdo-state'),
+    '_self'
+  )
+})
 
 test.each([true, false])(
   'starts Telegram OAuth only when configuration is ready: %s',

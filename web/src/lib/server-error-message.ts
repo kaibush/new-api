@@ -23,6 +23,8 @@ import i18next from 'i18next'
 export const safeServerErrorMessage = Symbol('safeServerErrorMessage')
 
 const serverErrorMessageKeys = {
+  REGISTRATION_INVITATION_REQUIRED:
+    'A valid registration invitation code is required to create an account',
   TELEGRAM_OAUTH_NOT_CONFIGURED:
     'Telegram OAuth is not configured or enabled. Please contact your administrator.',
   TELEGRAM_OAUTH_CONFLICT:

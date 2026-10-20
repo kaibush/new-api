@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -31,6 +31,7 @@ import { cn } from '@/lib/utils'
 
 import { useOAuthLogin } from '../hooks/use-oauth-login'
 import type { SystemStatus } from '../types'
+import { RegistrationInvitationInput } from './registration-invitation-input'
 
 type OAuthProvidersProps = {
   status: SystemStatus | null
@@ -39,6 +40,7 @@ type OAuthProvidersProps = {
   onWeChatLogin?: () => void
   isWeChatLoading?: boolean
   redirectTo?: string
+  invitationCode?: string
 }
 
 type ProviderButton = {
@@ -56,8 +58,10 @@ export function OAuthProviders({
   onWeChatLogin,
   isWeChatLoading = false,
   redirectTo,
+  invitationCode,
 }: OAuthProvidersProps) {
   const { t } = useTranslation()
+  const [loginInvitationCode, setLoginInvitationCode] = useState('')
   const {
     isLoading,
     githubButtonText,
@@ -68,7 +72,7 @@ export function OAuthProviders({
     handleLinuxDOLogin,
     handleTelegramLogin,
     handleCustomOAuthLogin,
-  } = useOAuthLogin(status, redirectTo)
+  } = useOAuthLogin(status, redirectTo, invitationCode ?? loginInvitationCode)
 
   const providerButtons: ProviderButton[] = []
 
@@ -156,6 +160,16 @@ export function OAuthProviders({
           </span>
         </div>
       </div>
+
+      {(status?.registration_invitation_enabled ??
+        status?.data?.registration_invitation_enabled) &&
+        invitationCode === undefined && (
+          <RegistrationInvitationInput
+            value={loginInvitationCode}
+            onChange={setLoginInvitationCode}
+            disabled={disabled || isLoading}
+          />
+        )}
 
       <div className='flex flex-col gap-2'>
         {providerButtons.map(

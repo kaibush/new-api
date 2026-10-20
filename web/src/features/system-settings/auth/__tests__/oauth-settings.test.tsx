@@ -37,6 +37,7 @@ import zh from '@/i18n/locales/zh.json'
 import { api } from '@/lib/api'
 
 import { SettingsPageProvider } from '../../components/settings-page-context'
+import { BasicAuthSection } from '../basic-auth-section'
 import { OAuthSection } from '../oauth-section'
 
 const defaults: ComponentProps<typeof OAuthSection>['defaultValues'] = {
@@ -69,7 +70,10 @@ const defaults: ComponentProps<typeof OAuthSection>['defaultValues'] = {
 
 let testI18n: i18n
 
-function Fixture(props: { values?: Partial<typeof defaults> }) {
+function Fixture(props: {
+  values?: Partial<typeof defaults>
+  basic?: boolean
+}) {
   const [container, setContainer] = useState<HTMLDivElement | null>(null)
   const [client] = useState(
     () => new QueryClient({ defaultOptions: { mutations: { retry: false } } })
@@ -80,19 +84,37 @@ function Fixture(props: { values?: Partial<typeof defaults> }) {
       <QueryClientProvider client={client}>
         <div ref={setContainer} />
         <SettingsPageProvider actionsContainer={container}>
-          <OAuthSection
-            defaultValues={{ ...defaults, ...props.values }}
-            serverAddress='https://gateway.example.com'
-          />
+          {props.basic ? (
+            <BasicAuthSection
+              defaultValues={{
+                PasswordLoginEnabled: true,
+                PasswordRegisterEnabled: true,
+                RegisterEnabled: true,
+                RegistrationInvitationEnabled: false,
+                EmailVerificationEnabled: false,
+                EmailDomainRestrictionEnabled: false,
+                EmailAliasRestrictionEnabled: false,
+                EmailDomainWhitelist: '',
+              }}
+            />
+          ) : (
+            <OAuthSection
+              defaultValues={{ ...defaults, ...props.values }}
+              serverAddress='https://gateway.example.com'
+            />
+          )}
         </SettingsPageProvider>
       </QueryClientProvider>
     </I18nextProvider>
   )
 }
 
-async function renderSettings(values?: Partial<typeof defaults>) {
+async function renderSettings(
+  values?: Partial<typeof defaults>,
+  basic = false
+) {
   const route = createRootRoute({
-    component: () => <Fixture values={values} />,
+    component: () => <Fixture values={values} basic={basic} />,
   })
   const router = createRouter({
     routeTree: route,
@@ -114,6 +136,24 @@ beforeEach(async () => {
 })
 
 describe('OAuth settings saves', () => {
+  it('enables one-time registration invitations without a shared code setting', async () => {
+    const user = userEvent.setup()
+    await renderSettings(undefined, true)
+    await user.click(
+      screen.getByRole('switch', { name: 'Registration Invitation' })
+    )
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() =>
+      expect(api.put).toHaveBeenCalledWith('/api/option/', {
+        key: 'RegistrationInvitationEnabled',
+        value: true,
+      })
+    )
+    expect(
+      screen.queryByRole('textbox', { name: 'Registration invitation code' })
+    ).not.toBeInTheDocument()
+  })
+
   it.each([
     [false, 'provider.example.com/discovery'],
     [true, 'provider.example.com/discovery'],

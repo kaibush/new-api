@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -17,6 +18,8 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
 	"github.com/QuantumNous/new-api/service"
@@ -629,6 +632,405 @@ type authFlowTestOAuthProvider struct {
 	userInfoCalls int
 }
 
+type registrationInvitationOAuthProvider struct {
+	oauth.Provider
+	user *oauth.OAuthUser
+}
+
+func (*registrationInvitationOAuthProvider) IsEnabled() bool { return true }
+
+func (*registrationInvitationOAuthProvider) ExchangeToken(context.Context, string, *gin.Context) (*oauth.OAuthToken, error) {
+	return &oauth.OAuthToken{}, nil
+}
+
+func (provider *registrationInvitationOAuthProvider) GetUserInfo(context.Context, *oauth.OAuthToken) (*oauth.OAuthUser, error) {
+	return provider.user, nil
+}
+
+func setupRegistrationInvitationTest(t *testing.T) *model.User {
+	t.Helper()
+	user, _ := setupSecurityEnrollmentTest(t)
+	previousRegister, previousPasswordRegister, previousEmail := common.RegisterEnabled, common.PasswordRegisterEnabled, common.EmailVerificationEnabled
+	previousInvitation := common.RegistrationInvitationEnabled
+	previousDefaultToken := constant.GenerateDefaultToken
+	previousOptions := common.OptionMap
+	common.OptionMap = make(map[string]string)
+	common.RegisterEnabled, common.PasswordRegisterEnabled, common.EmailVerificationEnabled = true, true, false
+	common.RegistrationInvitationEnabled = true
+	require.NoError(t, model.DB.AutoMigrate(&model.RegistrationInvitation{}))
+	require.NoError(t, model.DB.Create(&model.RegistrationInvitation{CodeHash: hex.EncodeToString(common.RegistrationInvitationHash("registration-code-123456")), CodePrefix: "registra", ExpiresAt: time.Now().Add(time.Hour).Unix()}).Error)
+	constant.GenerateDefaultToken = false
+	require.NoError(t, model.DB.Model(user).Update("aff_code", "referral-only").Error)
+	t.Cleanup(func() {
+		common.RegisterEnabled, common.PasswordRegisterEnabled, common.EmailVerificationEnabled = previousRegister, previousPasswordRegister, previousEmail
+		common.RegistrationInvitationEnabled = previousInvitation
+		constant.GenerateDefaultToken = previousDefaultToken
+		common.OptionMap = previousOptions
+	})
+	return user
+}
+
+func TestRegistrationInvitationAcrossRegistrationMethods(t *testing.T) {
+	for _, method := range []string{"password", "linuxdo", "github", "discord", "oidc", "custom", "wechat"} {
+		for _, test := range []struct {
+			name       string
+			code       string
+			enabled    bool
+			configured bool
+			expect     bool
+		}{
+			{name: "missing code and valid referral", enabled: true, configured: true},
+			{name: "incorrect code", code: "incorrect-code-123456", enabled: true, configured: true},
+			{name: "valid code", code: " registration-code-123456 ", enabled: true, configured: true, expect: true},
+			{name: "disabled needs no code", configured: true, expect: true},
+			{name: "enabled without configured code denies", enabled: true},
+		} {
+			t.Run(method+"/"+test.name, func(t *testing.T) {
+				setupRegistrationInvitationTest(t)
+				common.RegistrationInvitationEnabled = test.enabled
+				if !test.configured {
+					require.NoError(t, model.DB.Where("id > 0").Delete(&model.RegistrationInvitation{}).Error)
+				}
+				response := httptest.NewRecorder()
+				ctx, _ := gin.CreateTestContext(response)
+				ctx.Request = httptest.NewRequest(http.MethodPost, "/register", nil)
+				if method == "password" {
+					body, err := common.Marshal(map[string]string{"username": "invited-user", "password": "registered-password", "aff_code": "referral-only", "invitation_code": test.code})
+					require.NoError(t, err)
+					ctx.Request = httptest.NewRequest(http.MethodPost, "/register", strings.NewReader(string(body)))
+					Register(ctx)
+				} else if method == "wechat" {
+					previousEnabled, previousAddress := common.WeChatAuthEnabled, common.WeChatServerAddress
+					server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+						_, err := writer.Write([]byte(`{"success":true,"data":"invited-wechat-user"}`))
+						assert.NoError(t, err)
+					}))
+					t.Cleanup(server.Close)
+					common.WeChatAuthEnabled, common.WeChatServerAddress = true, server.URL
+					t.Cleanup(func() { common.WeChatAuthEnabled, common.WeChatServerAddress = previousEnabled, previousAddress })
+					body, err := common.Marshal(map[string]string{"code": "wechat-verification", "invitation_code": test.code})
+					require.NoError(t, err)
+					ctx.Request = httptest.NewRequest(http.MethodPost, "/oauth/wechat", strings.NewReader(string(body)))
+					WeChatAuth(ctx)
+				} else {
+					provider := oauth.GetProvider(method)
+					if method == "custom" {
+						provider = oauth.NewGenericOAuthProvider(&model.CustomOAuthProvider{Id: 101, Name: "Custom", Slug: "custom"})
+					}
+					require.NotNil(t, provider)
+					user, _, err := findOrCreateOAuthUser(ctx, provider, &oauth.OAuthUser{ProviderUserID: "invited-provider-user", Username: "invited-user", Extra: map[string]any{}}, &oauth.OAuthToken{}, "referral-only", common.RegistrationInvitationHash(test.code))
+					if test.expect {
+						require.NoError(t, err)
+						require.NotNil(t, user)
+						assert.NotZero(t, user.Id)
+					} else {
+						assert.ErrorIs(t, err, errRegistrationInvitationRequired)
+						assert.Nil(t, user)
+					}
+				}
+				if method == "password" || method == "wechat" {
+					var result struct {
+						Success bool   `json:"success"`
+						Code    string `json:"code"`
+					}
+					require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+					assert.Equal(t, test.expect, result.Success, response.Body.String())
+					if !test.expect {
+						assert.Equal(t, "REGISTRATION_INVITATION_REQUIRED", result.Code)
+					}
+				}
+				var count int64
+				require.NoError(t, model.DB.Model(&model.User{}).Count(&count).Error)
+				expectedCount := int64(1)
+				if test.expect {
+					expectedCount++
+				}
+				assert.Equal(t, expectedCount, count)
+				var audits []model.AuditLog
+				require.NoError(t, model.LOG_DB.Where("action = ?", "user.registration_denied").Find(&audits).Error)
+				if !test.expect {
+					require.Len(t, audits, 1)
+					encoded, err := common.Marshal(audits[0])
+					require.NoError(t, err)
+					assert.NotContains(t, string(encoded), "registration-code-123456")
+					assert.NotContains(t, string(encoded), "registered-password")
+				} else {
+					assert.Empty(t, audits)
+				}
+			})
+		}
+	}
+}
+
+func TestRegistrationInvitationOAuthLifecycle(t *testing.T) {
+	for _, scenario := range []string{"valid", "missing", "expired", "invitation expired", "revoked", "enabled during authorization", "disabled during authorization", "existing account"} {
+		t.Run(scenario, func(t *testing.T) {
+			user := setupRegistrationInvitationTest(t)
+			provider := &registrationInvitationOAuthProvider{Provider: &oauth.LinuxDOProvider{}, user: &oauth.OAuthUser{ProviderUserID: "invited-linuxdo-user", Username: "invited-user", Extra: map[string]any{}}}
+			oauth.Register("invitation-linuxdo-test", provider)
+			t.Cleanup(func() { oauth.Unregister("invitation-linuxdo-test") })
+			if scenario == "existing account" {
+				require.NoError(t, model.DB.Model(user).Update("linux_do_id", provider.user.ProviderUserID).Error)
+				common.RegisterEnabled = false
+			}
+			if scenario == "enabled during authorization" {
+				common.RegistrationInvitationEnabled = false
+			}
+			code := "registration-code-123456"
+			if scenario == "missing" || scenario == "existing account" || scenario == "enabled during authorization" || scenario == "disabled during authorization" {
+				code = ""
+			}
+			body, err := common.Marshal(map[string]string{"provider": "invitation-linuxdo-test", "intent": "login", "invitation_code": code})
+			require.NoError(t, err)
+			started := securityEnrollmentRequest(http.MethodPost, "/api/oauth/state", string(body), "", service.AuthIdentity{}, GenerateOAuthCode)
+			var result struct {
+				Success bool `json:"success"`
+				Data    struct {
+					FlowToken string `json:"flow_token"`
+				} `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(started.Body.Bytes(), &result))
+			require.True(t, result.Success, started.Body.String())
+			if scenario == "revoked" {
+				require.NoError(t, model.DB.Model(&model.RegistrationInvitation{}).Where("id > 0").Update("revoked_at", time.Now().Unix()).Error)
+			}
+			if scenario == "invitation expired" {
+				require.NoError(t, model.DB.Model(&model.RegistrationInvitation{}).Where("id > 0").Update("expires_at", time.Now().Add(-time.Minute).Unix()).Error)
+			}
+			if scenario == "expired" {
+				flow, err := model.GetAuthFlow(result.Data.FlowToken, model.AuthFlowMatch{Purpose: model.AuthFlowPurposeOAuth})
+				require.NoError(t, err)
+				require.NoError(t, model.DB.Model(flow).Update("expires_at", time.Now().Add(-time.Minute)).Error)
+			}
+			if scenario == "enabled during authorization" {
+				common.RegistrationInvitationEnabled = true
+			}
+			if scenario == "disabled during authorization" {
+				common.RegistrationInvitationEnabled = false
+			}
+			router := gin.New()
+			router.GET("/api/oauth/:provider", HandleOAuth)
+			expectSuccess := scenario == "valid" || scenario == "disabled during authorization" || scenario == "existing account"
+			for attempt := range 2 {
+				response := httptest.NewRecorder()
+				router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/oauth/invitation-linuxdo-test?state="+result.Data.FlowToken+"&code=provider-code&invitation_code=registration-code-123456", nil))
+				var callback struct {
+					Success bool `json:"success"`
+				}
+				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &callback))
+				assert.Equal(t, expectSuccess && attempt == 0, callback.Success, response.Body.String())
+				if !expectSuccess || attempt > 0 {
+					assert.Empty(t, response.Header().Values("Set-Cookie"))
+				}
+			}
+			var count int64
+			require.NoError(t, model.DB.Model(&model.User{}).Count(&count).Error)
+			expectedCount := int64(1)
+			if expectSuccess && scenario != "existing account" {
+				expectedCount++
+			}
+			assert.Equal(t, expectedCount, count)
+		})
+	}
+}
+
+func TestRegistrationInvitationOptions(t *testing.T) {
+	setupRegistrationInvitationTest(t)
+	for _, enabled := range []bool{true, false, true} {
+		require.NoError(t, model.UpdateOption("RegistrationInvitationEnabled", fmt.Sprint(enabled)))
+		assert.Equal(t, enabled, common.RegistrationInvitationEnabled)
+		assert.NoError(t, model.ValidateRegistrationInvitation(common.RegistrationInvitationHash("registration-code-123456")))
+		if enabled {
+			assert.ErrorIs(t, model.ValidateRegistrationInvitation(nil), model.ErrRegistrationInvitationInvalid)
+		} else {
+			assert.NoError(t, model.ValidateRegistrationInvitation(nil))
+		}
+	}
+	status := securityEnrollmentRequest(http.MethodGet, "/api/status", "", "", service.AuthIdentity{}, GetStatus)
+	var result struct {
+		Data map[string]any `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(status.Body.Bytes(), &result))
+	assert.Equal(t, true, result.Data["registration_invitation_enabled"])
+	assert.NotContains(t, status.Body.String(), "another-registration-code")
+	assert.NotContains(t, result.Data, "registration_invitation_code")
+}
+
+func TestRegistrationInvitationAtomicUse(t *testing.T) {
+	setupRegistrationInvitationTest(t)
+	hash := common.RegistrationInvitationHash("registration-code-123456")
+	failedBinding := errors.New("provider binding failed")
+	user := &model.User{Username: "rolled-back-user", Role: common.RoleCommonUser}
+	err := model.DB.Transaction(func(tx *gorm.DB) error {
+		if err := user.InsertWithRegistrationInvitation(tx, 0, hash); err != nil {
+			return err
+		}
+		return failedBinding
+	})
+	require.ErrorIs(t, err, failedBinding)
+	assert.NoError(t, model.ValidateRegistrationInvitation(hash), "failed registration must not consume the code")
+	var count int64
+	require.NoError(t, model.DB.Model(&model.User{}).Where("username = ?", user.Username).Count(&count).Error)
+	assert.Zero(t, count)
+
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	var workers sync.WaitGroup
+	for i := range 2 {
+		workers.Go(func() {
+			<-start
+			candidate := &model.User{Username: fmt.Sprintf("invitation-racer-%d", i), Role: common.RoleCommonUser}
+			results <- model.DB.Transaction(func(tx *gorm.DB) error {
+				return candidate.InsertWithRegistrationInvitation(tx, 0, hash)
+			})
+		})
+	}
+	close(start)
+	workers.Wait()
+	close(results)
+	winners := 0
+	for err := range results {
+		if err == nil {
+			winners++
+		}
+	}
+	assert.Equal(t, 1, winners, "only one simultaneous registration may commit")
+	require.NoError(t, model.DB.Model(&model.User{}).Count(&count).Error)
+	assert.EqualValues(t, 2, count, "losing registration must roll back its user")
+	rows, total, err := model.ListRegistrationInvitations(0, 20, "registration-code-123456")
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, rows, 1)
+	assert.NotZero(t, rows[0].UsedAt)
+	assert.NotZero(t, rows[0].UsedUserId)
+	assert.Contains(t, rows[0].Username, "invitation-racer-")
+	assert.ErrorIs(t, model.RevokeRegistrationInvitation(rows[0].Id), model.ErrRegistrationInvitationInvalid)
+
+	response := securityEnrollmentRequest(http.MethodPost, "/register", `{"username":"replayed-user","password":"registered-password","invitation_code":"registration-code-123456"}`, "", service.AuthIdentity{}, Register)
+	assert.Contains(t, response.Body.String(), "REGISTRATION_INVITATION_REQUIRED")
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/oauth/linuxdo", nil)
+	_, _, err = findOrCreateOAuthUser(ctx, &oauth.LinuxDOProvider{}, &oauth.OAuthUser{ProviderUserID: "replay-linuxdo", Username: "replay-linuxdo"}, &oauth.OAuthToken{}, "", hash)
+	assert.ErrorIs(t, err, model.ErrRegistrationInvitationInvalid)
+	require.NoError(t, model.DB.Model(&model.User{}).Count(&count).Error)
+	assert.EqualValues(t, 2, count)
+}
+
+func TestRegistrationInvitationManagement(t *testing.T) {
+	user := setupRegistrationInvitationTest(t)
+	router := gin.New()
+	group := router.Group("/api/option/registration-invitations", middleware.RootAuth(), middleware.DisableCache())
+	group.POST("/", GenerateRegistrationInvitations)
+	group.POST("/search", SearchRegistrationInvitations)
+	group.DELETE("/:id", RevokeRegistrationInvitation)
+	ordinary, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "invitation-test")
+	require.NoError(t, err)
+	for _, token := range []string{"", ordinary.AccessToken} {
+		for _, path := range []string{"/", "/search", "/1"} {
+			method := http.MethodPost
+			if path == "/1" {
+				method = http.MethodDelete
+			}
+			request := httptest.NewRequest(method, "/api/option/registration-invitations"+path, strings.NewReader(`{"count":21,"days":30,"page":1}`))
+			request.Header.Set("Authorization", "Bearer "+token)
+			request.AddCookie(&http.Cookie{Name: "session", Value: ordinary.RefreshToken})
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			assert.Contains(t, []int{http.StatusUnauthorized, http.StatusForbidden}, response.Code)
+		}
+	}
+	require.NoError(t, model.DB.Model(user).Update("role", common.RoleRootUser).Error)
+	require.NoError(t, model.PublishUserAuthCache(user.Id))
+	root, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "invitation-test")
+	require.NoError(t, err)
+	request := httptest.NewRequest(http.MethodPost, "/api/option/registration-invitations/", strings.NewReader(`{"count":21,"days":30}`))
+	request.Header.Set("Authorization", "Bearer "+root.AccessToken)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	var generated struct {
+		Success bool     `json:"success"`
+		Data    []string `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &generated))
+	require.True(t, generated.Success, response.Body.String())
+	require.Len(t, generated.Data, 21)
+	assert.Contains(t, response.Header().Get("Cache-Control"), "no-store")
+	seen := map[string]bool{}
+	for _, code := range generated.Data {
+		assert.Len(t, code, 64)
+		assert.False(t, seen[code])
+		seen[code] = true
+	}
+	for _, page := range []int{1, 2} {
+		request = httptest.NewRequest(http.MethodPost, "/api/option/registration-invitations/search", strings.NewReader(fmt.Sprintf(`{"page":%d}`, page)))
+		request.Header.Set("Authorization", "Bearer "+root.AccessToken)
+		response = httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		var listed struct {
+			Success bool `json:"success"`
+			Data    struct {
+				Items []model.RegistrationInvitation `json:"items"`
+				Total int                            `json:"total"`
+			} `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &listed))
+		require.True(t, listed.Success)
+		assert.Equal(t, 22, listed.Data.Total)
+		assert.Len(t, listed.Data.Items, min(20, 22-(page-1)*20))
+		assert.NotContains(t, response.Body.String(), generated.Data[0])
+		assert.NotContains(t, response.Body.String(), "code_hash")
+	}
+	rows, total, err := model.ListRegistrationInvitations(0, 20, generated.Data[0])
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, rows, 1)
+	assert.Equal(t, user.Id, rows[0].CreatedBy)
+	assert.EqualValues(t, 30*24*60*60, rows[0].ExpiresAt-rows[0].CreatedAt)
+	request = httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/option/registration-invitations/%d", rows[0].Id), nil)
+	request.Header.Set("Authorization", "Bearer "+root.AccessToken)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	assert.Contains(t, response.Body.String(), `"success":true`)
+	assert.ErrorIs(t, model.ValidateRegistrationInvitation(common.RegistrationInvitationHash(generated.Data[0])), model.ErrRegistrationInvitationInvalid)
+	var audits []model.AuditLog
+	require.NoError(t, model.LOG_DB.Find(&audits).Error)
+	encoded, err := common.Marshal(audits)
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), "registration_invitation.generate")
+	assert.Contains(t, string(encoded), "registration_invitation.revoke")
+	for _, code := range generated.Data {
+		assert.NotContains(t, string(encoded), code)
+	}
+	for _, body := range []string{`{"count":0,"days":30}`, `{"count":101,"days":30}`, `{"count":1,"days":0}`, `{"count":1,"days":366}`, `{"count":1.5,"days":30}`} {
+		response := securityEnrollmentRequest(http.MethodPost, "/", body, "", service.AuthIdentity{}, GenerateRegistrationInvitations)
+		assert.Contains(t, response.Body.String(), `"success":false`)
+	}
+}
+
+func TestRegistrationInvitationStateRejectsInvalidRequests(t *testing.T) {
+	setupRegistrationInvitationTest(t)
+	provider := &registrationInvitationOAuthProvider{Provider: &oauth.LinuxDOProvider{}}
+	oauth.Register("invitation-linuxdo-test", provider)
+	t.Cleanup(func() { oauth.Unregister("invitation-linuxdo-test") })
+	for _, request := range []map[string]string{
+		{"provider": "invitation-linuxdo-test", "intent": "bind", "invitation_code": "registration-code-123456"},
+		{"provider": "invitation-linuxdo-test", "intent": "verify", "invitation_code": "registration-code-123456"},
+		{"provider": "invitation-linuxdo-test", "intent": "login", "invitation_code": strings.Repeat("x", 129)},
+	} {
+		body, err := common.Marshal(request)
+		require.NoError(t, err)
+		response := securityEnrollmentRequest(http.MethodPost, "/api/oauth/state", string(body), "", service.AuthIdentity{}, GenerateOAuthCode)
+		var result struct {
+			Success bool `json:"success"`
+		}
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+		assert.False(t, result.Success)
+	}
+	var count int64
+	require.NoError(t, model.DB.Model(&model.AuthFlow{}).Count(&count).Error)
+	assert.Zero(t, count)
+}
+
 func (*authFlowTestOAuthProvider) GetName() string { return "Auth Flow Test" }
 func (*authFlowTestOAuthProvider) IsEnabled() bool { return true }
 func (provider *authFlowTestOAuthProvider) ExchangeToken(context.Context, string, *gin.Context) (*oauth.OAuthToken, error) {
@@ -677,7 +1079,7 @@ func TestGenerateOAuthCodeCarriesAffiliateInLoginFlow(t *testing.T) {
 	setupAuthFlowControllerTest(t)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodPost, "/api/oauth/state", strings.NewReader(`{"provider":"auth-flow-test","intent":"login","aff":"invite-code"}`))
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/oauth/state", strings.NewReader(`{"provider":"auth-flow-test","intent":"login","aff":"invite-code","invitation_code":"registration-code-123456"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 
 	GenerateOAuthCode(c)
@@ -698,6 +1100,8 @@ func TestGenerateOAuthCodeCarriesAffiliateInLoginFlow(t *testing.T) {
 	var payload oauthFlowPayload
 	require.NoError(t, common.UnmarshalJsonStr(flow.Payload, &payload))
 	assert.Equal(t, "invite-code", payload.AffiliateCode)
+	assert.Equal(t, common.RegistrationInvitationHash("registration-code-123456"), payload.InvitationHash)
+	assert.NotContains(t, flow.Payload, "registration-code-123456")
 	assert.Zero(t, flow.UserId)
 	assert.Empty(t, flow.SessionId)
 }

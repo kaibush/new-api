@@ -56,6 +56,7 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.POST("/oauth/email/bind", middleware.UserAuth(), middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("account-security"), middleware.DisableCache(), controller.EmailBind)
 		// WeChat uses its existing authorization-code service.
 		apiRouter.GET("/oauth/wechat", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.WeChatAuth)
+		apiRouter.POST("/oauth/wechat", middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.WeChatAuth)
 		apiRouter.POST("/oauth/wechat/bind", middleware.UserAuth(), middleware.CriticalRateLimit(), controller.WeChatBind)
 		apiRouter.GET("/oauth/telegram/login", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.TelegramLegacyAuth)
 		apiRouter.POST("/oauth/telegram/bind/start", middleware.UserAuth(), middleware.CriticalRateLimit(), middleware.DisableCache(), controller.TelegramLegacyAuth)
@@ -216,6 +217,10 @@ func SetApiRouter(router *gin.Engine) {
 		optionRoute.Use(middleware.RootAuth())
 		{
 			optionRoute.GET("/", controller.GetOptions)
+			invitationRoute := optionRoute.Group("/registration-invitations", middleware.DisableCache(), anonymousRequestBodyLimit)
+			invitationRoute.POST("/search", controller.SearchRegistrationInvitations)
+			invitationRoute.POST("/", middleware.UserCriticalRateLimit("registration-invitations"), controller.GenerateRegistrationInvitations)
+			invitationRoute.DELETE("/:id", controller.RevokeRegistrationInvitation)
 			optionRoute.POST("/help-center/images", controller.UploadHelpCenterImage)
 			optionRoute.GET("/request_policy", controller.GetRequestPolicy)
 			optionRoute.PATCH("/request_policy", controller.UpdateRequestPolicy)

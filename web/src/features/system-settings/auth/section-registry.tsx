@@ -23,6 +23,7 @@ import { BotProtectionSection } from './bot-protection-section'
 import { CustomOAuthSection } from './custom-oauth/custom-oauth-section'
 import { OAuthSection } from './oauth-section'
 import { PasskeySection } from './passkey-section'
+import { RegistrationInvitationsSection } from './registration-invitations-section'
 
 const AUTH_SECTIONS = [
   {
@@ -35,12 +36,18 @@ const AUTH_SECTIONS = [
           PasswordRegisterEnabled: settings.PasswordRegisterEnabled,
           EmailVerificationEnabled: settings.EmailVerificationEnabled,
           RegisterEnabled: settings.RegisterEnabled,
+          RegistrationInvitationEnabled: settings.RegistrationInvitationEnabled,
           EmailDomainRestrictionEnabled: settings.EmailDomainRestrictionEnabled,
           EmailAliasRestrictionEnabled: settings.EmailAliasRestrictionEnabled,
           EmailDomainWhitelist: settings.EmailDomainWhitelist,
         }}
       />
     ),
+  },
+  {
+    id: 'registration-invitations',
+    titleKey: 'Registration invitations',
+    build: () => <RegistrationInvitationsSection />,
   },
   {
     id: 'oauth',

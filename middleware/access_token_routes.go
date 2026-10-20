@@ -144,7 +144,10 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"DELETE /api/subscription/admin/user_subscriptions/:id":          accessTokenScopeRule("billing:write"),
 
 	// router/api-router.go: /api/option
-	"GET /api/option/":                                           accessTokenScopeRule("option:read"),
+	"GET /api/option/": accessTokenScopeRule("option:read"),
+	"POST /api/option/registration-invitations/search":           accessTokenSessionRule,
+	"POST /api/option/registration-invitations/":                 accessTokenSessionRule,
+	"DELETE /api/option/registration-invitations/:id":            accessTokenSessionRule,
 	"GET /api/option/request_policy":                             accessTokenScopeRule("option:read"),
 	"PATCH /api/option/request_policy":                           accessTokenScopeRule("option:write"),
 	"PUT /api/option/":                                           accessTokenScopeRule("option:write"),
