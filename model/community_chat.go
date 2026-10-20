@@ -28,18 +28,28 @@ type CommunityConfig struct {
 	CallbackToken string `json:"-" gorm:"type:text"`
 }
 
+type CommunityReply struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	Text     string `json:"text"`
+	Filename string `json:"filename"`
+	Deleted  bool   `json:"deleted"`
+}
+
 type CommunityMessage struct {
-	ID        int64  `json:"id" gorm:"primaryKey"`
-	UserID    int    `json:"user_id" gorm:"index"`
-	Name      string `json:"name" gorm:"type:varchar(80)"`
-	Avatar    string `json:"avatar" gorm:"type:text"`
-	Text      string `json:"text" gorm:"type:text"`
-	Kind      string `json:"kind" gorm:"type:varchar(16)"`
-	URL       string `json:"url" gorm:"type:text"`
-	Filename  string `json:"filename" gorm:"type:varchar(255)"`
-	Size      int64  `json:"size"`
-	CreatedAt int64  `json:"created_at"`
-	Deleted   bool   `json:"deleted"`
+	ReplyToID *int64          `json:"reply_to_id,omitempty"`
+	Reply     *CommunityReply `json:"reply,omitempty" gorm:"-"`
+	ID        int64           `json:"id" gorm:"primaryKey"`
+	UserID    int             `json:"user_id" gorm:"index"`
+	Name      string          `json:"name" gorm:"type:varchar(80)"`
+	Avatar    string          `json:"avatar" gorm:"type:text"`
+	Text      string          `json:"text" gorm:"type:text"`
+	Kind      string          `json:"kind" gorm:"type:varchar(16)"`
+	URL       string          `json:"url" gorm:"type:text"`
+	Filename  string          `json:"filename" gorm:"type:varchar(255)"`
+	Size      int64           `json:"size"`
+	CreatedAt int64           `json:"created_at"`
+	Deleted   bool            `json:"deleted"`
 }
 
 type CommunityProfile struct {
@@ -94,11 +104,60 @@ func SaveCommunityConfig(config CommunityConfig) error {
 func RecentCommunityMessages() ([]CommunityMessage, error) {
 	rows := make([]CommunityMessage, 0, 50)
 	err := DB.Order("id DESC").Limit(50).Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, 0)
+	for _, row := range rows {
+		if row.ReplyToID != nil {
+			ids = append(ids, *row.ReplyToID)
+		}
+	}
+	if len(ids) > 0 {
+		var replies []CommunityMessage
+		if err = DB.Where("id IN ?", ids).Find(&replies).Error; err != nil {
+			return nil, err
+		}
+		byID := make(map[int64]*CommunityReply, len(replies))
+		for _, reply := range replies {
+			preview := &CommunityReply{ID: reply.ID, Name: reply.Name, Deleted: reply.Deleted}
+			if !reply.Deleted {
+				preview.Text = reply.Text
+				preview.Filename = reply.Filename
+			}
+			byID[reply.ID] = preview
+		}
+		for i := range rows {
+			if rows[i].ReplyToID != nil {
+				rows[i].Reply = byID[*rows[i].ReplyToID]
+			}
+		}
+	}
 	slices.Reverse(rows)
-	return rows, err
+	return rows, nil
+}
+
+var ErrCommunityReplyUnavailable = errors.New("Reply target is unavailable")
+
+func ValidateCommunityReply(id *int64) error {
+	if id == nil {
+		return nil
+	}
+	if *id <= 0 {
+		return ErrCommunityReplyUnavailable
+	}
+	var target CommunityMessage
+	err := DB.First(&target, *id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) || target.Deleted {
+		return ErrCommunityReplyUnavailable
+	}
+	return err
 }
 
 func CreateCommunityMessage(userID int, message *CommunityMessage) error {
+	if err := ValidateCommunityReply(message.ReplyToID); err != nil {
+		return err
+	}
 	user, err := GetUserById(userID, false)
 	if err != nil {
 		return err

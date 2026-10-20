@@ -6,6 +6,7 @@ import (
 	"crypto/sha1"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -193,46 +194,49 @@ func TestCommunityWeChat(c *gin.Context) {
 
 func SendCommunityMessage(c *gin.Context) {
 	var req struct {
-		Text string `json:"text"`
+		Text      string `json:"text"`
+		ReplyToID *int64 `json:"reply_to_id"`
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 12<<10)
 	if common.DecodeJson(c.Request.Body, &req) != nil || strings.TrimSpace(req.Text) == "" || utf8.RuneCountInString(req.Text) > 2000 {
 		communityError(c, 400, "Message must contain 1 to 2000 characters")
 		return
 	}
-	message := model.CommunityMessage{Text: strings.TrimSpace(req.Text), Kind: "text"}
+	message := model.CommunityMessage{Text: strings.TrimSpace(req.Text), Kind: "text", ReplyToID: req.ReplyToID}
 	if err := model.CreateCommunityMessage(c.GetInt("id"), &message); err != nil {
+		if errors.Is(err, model.ErrCommunityReplyUnavailable) {
+			communityError(c, 400, "Reply target is unavailable")
+			return
+		}
 		communityError(c, 500, "Could not send message")
 		return
 	}
-	notifyCommunityBot(message)
-	c.JSON(200, gin.H{"success": true, "data": message})
+	botStatus := notifyCommunityBot(message)
+	c.JSON(200, gin.H{"success": true, "data": message, "bot_status": botStatus})
 }
 
-func notifyCommunityBot(message model.CommunityMessage) {
+// notifyCommunityBot reports API acceptance, not end-user delivery or reading.
+func notifyCommunityBot(message model.CommunityMessage) string {
 	config, err := model.GetCommunityConfig()
-	if err != nil || !config.Enabled || !config.BotEnabled || !service.CommunityMentionsBot(message.Text, config.BotName) {
-		return
+	if err != nil {
+		return "failed"
+	}
+	if !config.Enabled || !config.BotEnabled || !service.CommunityMentionsBot(message.Text, config.BotName) {
+		return ""
 	}
 	select {
 	case communityBotSlots <- struct{}{}:
 	default:
-		common.SysLog("community WeChat notification skipped: queue busy")
-		return
+		return "busy"
 	}
-	go func() {
-		defer func() {
-			<-communityBotSlots
-			if recover() != nil {
-				common.SysError("community WeChat notification panic")
-			}
-		}()
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := service.SendCommunityWeChat(ctx, config, message); err != nil {
-			common.SysError(fmt.Sprintf("community notification failed: message=%d %s", message.ID, err))
-		}
-	}()
+	defer func() { <-communityBotSlots }()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := service.SendCommunityWeChat(ctx, config, message); err != nil {
+		common.SysError(fmt.Sprintf("community notification failed: message=%d %s", message.ID, err))
+		return "failed"
+	}
+	return "accepted"
 }
 
 func DeleteCommunityMessage(c *gin.Context) {
@@ -241,7 +245,7 @@ func DeleteCommunityMessage(c *gin.Context) {
 		communityError(c, 400, "Invalid message")
 		return
 	}
-	result := model.DB.Model(&model.CommunityMessage{}).Where("id = ?", id).Updates(map[string]any{"deleted": true, "text": "", "url": "", "filename": "", "size": 0})
+	result := model.DB.Model(&model.CommunityMessage{}).Where("id = ?", id).Updates(map[string]any{"deleted": true, "text": "", "url": "", "filename": "", "size": 0, "reply_to_id": nil})
 	if result.Error != nil {
 		communityError(c, 500, "Could not delete message")
 		return

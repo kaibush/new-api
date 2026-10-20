@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -167,6 +168,19 @@ func UploadCommunityAttachment(c *gin.Context) {
 		communityError(c, 400, "Message must contain 1 to 2000 characters")
 		return
 	}
+	var replyToID *int64
+	if raw := c.PostForm("reply_to_id"); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || id <= 0 {
+			communityError(c, 400, "Invalid reply target")
+			return
+		}
+		replyToID = &id
+	}
+	if err := model.ValidateCommunityReply(replyToID); err != nil {
+		communityError(c, 400, "Reply target is unavailable")
+		return
+	}
 	file, err := files[0].Open()
 	if err != nil {
 		communityError(c, 400, "Could not read file")
@@ -220,11 +234,16 @@ func UploadCommunityAttachment(c *gin.Context) {
 		c.JSON(200, gin.H{"success": true, "data": gin.H{"url": link}})
 		return
 	}
-	message := model.CommunityMessage{Text: text, Kind: kind, URL: link, Filename: name, Size: int64(len(data))}
+
+	message := model.CommunityMessage{ReplyToID: replyToID, Text: text, Kind: kind, URL: link, Filename: name, Size: int64(len(data))}
 	if err = model.CreateCommunityMessage(c.GetInt("id"), &message); err != nil {
+		if errors.Is(err, model.ErrCommunityReplyUnavailable) {
+			communityError(c, 400, "Reply target is unavailable")
+			return
+		}
 		communityError(c, 500, "Could not send message")
 		return
 	}
-	notifyCommunityBot(message)
-	c.JSON(200, gin.H{"success": true, "data": message})
+	botStatus := notifyCommunityBot(message)
+	c.JSON(200, gin.H{"success": true, "data": message, "bot_status": botStatus})
 }

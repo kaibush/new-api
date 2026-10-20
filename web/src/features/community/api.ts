@@ -3,6 +3,14 @@ import { authResult } from '@/lib/secure-verification'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
 export type ChatMessage = {
+  reply_to_id?: number
+  reply?: {
+    id: number
+    name: string
+    text: string
+    filename: string
+    deleted: boolean
+  }
   id: number
   user_id: number
   name: string
@@ -63,18 +71,34 @@ export async function testChatWeChat() {
     (await api.post('/api/option/community/wechat/test')).data
   )
 }
-export async function sendChatMessage(text: string) {
+export type ChatSendResult = {
+  success: boolean
+  data: ChatMessage
+  bot_status?: 'accepted' | 'failed' | 'busy' | ''
+}
+export async function sendChatMessage(text: string, replyToId?: number) {
   return requireServerSuccess(
-    (await api.post('/api/community/messages', { text })).data
+    (
+      await api.post<ChatSendResult>('/api/community/messages', {
+        text,
+        ...(replyToId ? { reply_to_id: replyToId } : {}),
+      })
+    ).data
   )
 }
-export async function uploadChatFile(file: File, kind: string, text = '') {
+export async function uploadChatFile(
+  file: File,
+  kind: string,
+  text = '',
+  replyToId?: number
+) {
   const data = new FormData()
   data.append('file', file)
   data.append('kind', kind)
   data.append('text', text)
+  if (replyToId) data.append('reply_to_id', String(replyToId))
   return requireServerSuccess(
-    (await api.post('/api/community/attachments', data)).data
+    (await api.post<ChatSendResult>('/api/community/attachments', data)).data
   )
 }
 export async function deleteChatMessage(id: number) {

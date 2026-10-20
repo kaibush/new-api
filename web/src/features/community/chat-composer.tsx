@@ -1,0 +1,374 @@
+import { Attachment01Icon, Image01Icon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { useMutation } from '@tanstack/react-query'
+import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
+
+import { Button } from '@/components/ui/button'
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command'
+import { Input } from '@/components/ui/input'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTitle,
+  PopoverTrigger,
+} from '@/components/ui/popover'
+import { Textarea } from '@/components/ui/textarea'
+
+import {
+  sendChatMessage,
+  uploadChatFile,
+  type ChatMember,
+  type ChatMessage,
+  type ChatStatus,
+} from './api'
+import { EmojiPicker } from './emoji-picker'
+import { MessageText } from './message-text'
+
+export function ChatComposer(props: {
+  connected: boolean
+  status: ChatStatus
+  users: ChatMember[]
+  reply: ChatMessage | null
+  onCancelReply: () => void
+  onSent: (sentReplyId?: number) => void
+}) {
+  const { t } = useTranslation()
+  const [text, setText] = useState('')
+  const [pending, setPending] = useState<{
+    file: File
+    kind: 'image' | 'file'
+  } | null>(null)
+  const [preview, setPreview] = useState('')
+  const [mentions, setMentions] = useState<Record<string, ChatMember>>({})
+  const [mentionOpen, setMentionOpen] = useState(false)
+  const [feedback, setFeedback] = useState('')
+  const input = useRef<HTMLInputElement>(null)
+  const editor = useRef<HTMLTextAreaElement>(null)
+  const kind = useRef<'image' | 'file'>('image')
+  const selection = useRef({ start: 0, end: 0 })
+  useEffect(() => {
+    if (!pending || pending.kind !== 'image') {
+      setPreview('')
+      return
+    }
+    const url = URL.createObjectURL(pending.file)
+    setPreview(url)
+    return () => URL.revokeObjectURL(url)
+  }, [pending])
+  const send = useMutation({
+    onMutate: () => setFeedback(''),
+    mutationFn: (replyToId: number | undefined) => {
+      const labels = Object.keys(mentions).sort((a, b) => b.length - a.length)
+      let outgoing = text
+      if (labels.length) {
+        const pattern = labels
+          .map((label) => label.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+          .join('|')
+        outgoing = text.replaceAll(
+          new RegExp(`(^|\\s)(${pattern})(?=$|\\s|[.,!?，。！？])`, 'g'),
+          (_, prefix: string, label: string) =>
+            `${prefix}@[${mentions[label].name.replaceAll(/[\]\r\n]/g, '')}](user:${mentions[label].user_id})`
+        )
+      }
+      return pending
+        ? uploadChatFile(pending.file, pending.kind, outgoing, replyToId)
+        : sendChatMessage(outgoing, replyToId)
+    },
+    onSuccess: (result, sentReplyId) => {
+      setText('')
+      setMentions({})
+      setPending(null)
+      props.onSent(sentReplyId)
+      setFeedback(result.bot_status || 'sent')
+    },
+  })
+  function stage(file: File, fileKind: 'image' | 'file') {
+    if (pending) {
+      toast.error(t('Remove the pending attachment first'))
+      return
+    }
+    if (file.size > (fileKind === 'image' ? 5 : 10) * 1024 * 1024) {
+      toast.error(t('Attachment exceeds the size limit'))
+      return
+    }
+    if (
+      fileKind === 'image' &&
+      !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(
+        file.type
+      )
+    ) {
+      toast.error(t('Unsupported or invalid file'))
+      return
+    }
+    setPending({ file, kind: fileKind })
+    setFeedback('')
+  }
+  function insert(value: string) {
+    const { start, end } = selection.current
+    const next = text.slice(0, start) + value + text.slice(end)
+    if (next.length > 2000) return
+    setText(next)
+    selection.current = {
+      start: start + value.length,
+      end: start + value.length,
+    }
+    requestAnimationFrame(() => {
+      editor.current?.focus()
+      editor.current?.setSelectionRange(
+        selection.current.start,
+        selection.current.end
+      )
+    })
+  }
+  let feedbackText = t('Message sent')
+  if (feedback === 'accepted') {
+    feedbackText = t(
+      'The assistant notification was accepted by WeChat. Delivery is not confirmed.'
+    )
+  }
+  if (feedback === 'failed') {
+    feedbackText = t(
+      'Message sent, but the assistant notification failed. Please contact an administrator.'
+    )
+  }
+  if (feedback === 'busy') {
+    feedbackText = t(
+      'Message sent, but the assistant is busy and was not notified.'
+    )
+  }
+  return (
+    <form
+      className='space-y-2 rounded-lg border p-2'
+      onSubmit={(event) => {
+        event.preventDefault()
+        if (
+          !send.isPending &&
+          !props.reply?.deleted &&
+          props.connected &&
+          (text.trim() || pending)
+        ) {
+          send.mutate(props.reply?.id)
+        }
+      }}
+    >
+      <div
+        role='group'
+        aria-label={t('Message tools')}
+        className='flex flex-wrap items-center gap-1 border-b pb-2'
+      >
+        <EmojiPicker
+          disabled={send.isPending || text.length >= 2000}
+          onSelect={insert}
+        />
+        {(['image', 'file'] as const).map((item) => (
+          <Button
+            key={item}
+            type='button'
+            variant='ghost'
+            size='icon'
+            disabled={send.isPending || !!pending}
+            aria-label={item === 'image' ? t('Image') : t('File')}
+            title={item === 'image' ? t('Image') : t('File')}
+            onClick={() => {
+              kind.current = item
+              if (input.current) {
+                input.current.accept =
+                  item === 'image'
+                    ? '.png,.jpg,.jpeg,.webp,.gif'
+                    : '.pdf,.txt,.csv,.zip,.docx,.xlsx,.pptx'
+                input.current.click()
+              }
+            }}
+          >
+            <HugeiconsIcon
+              icon={item === 'image' ? Image01Icon : Attachment01Icon}
+              size={20}
+            />
+          </Button>
+        ))}
+        <Popover open={mentionOpen} onOpenChange={setMentionOpen}>
+          <PopoverTrigger
+            render={
+              <Button
+                type='button'
+                variant='ghost'
+                size='icon'
+                aria-label={t('Mention user')}
+                title={t('Mention user')}
+                disabled={send.isPending}
+              />
+            }
+          >
+            @
+          </PopoverTrigger>
+          <PopoverContent align='start' side='top'>
+            <PopoverTitle className='sr-only'>{t('Mention user')}</PopoverTitle>
+            <Command>
+              <CommandInput placeholder={t('Search users')} />
+              <CommandList>
+                <CommandEmpty>{t('No users found')}</CommandEmpty>
+                {props.users.map((user) => (
+                  <CommandItem
+                    key={user.user_id}
+                    value={`${user.name} ${user.user_id}`}
+                    onSelect={() => {
+                      const duplicateName = props.users.some(
+                        (other) =>
+                          other.user_id !== user.user_id &&
+                          other.name === user.name
+                      )
+                      const label = `@${user.name}${duplicateName ? ` #${user.user_id}` : ''}`
+                      setMentions((current) => ({ ...current, [label]: user }))
+                      insert(` ${label} `)
+                      setMentionOpen(false)
+                    }}
+                  >
+                    {user.name}{' '}
+                    <span className='text-muted-foreground'>
+                      #{user.user_id}
+                    </span>
+                  </CommandItem>
+                ))}
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+        {props.status.bot_enabled && (
+          <Button
+            type='button'
+            variant='ghost'
+            size='sm'
+            disabled={send.isPending}
+            onClick={() =>
+              insert(
+                `${text && !/\s$/.test(text.slice(0, selection.current.start)) ? ' ' : ''}@${props.status.bot_name} `
+              )
+            }
+          >
+            {t('Mention bot')} @{props.status.bot_name}
+          </Button>
+        )}
+      </div>
+      {props.reply && (
+        <div className='bg-muted flex items-start justify-between gap-2 rounded p-2 text-sm'>
+          <div className='min-w-0'>
+            <p>{t('Replying to {{name}}', { name: props.reply.name })}</p>
+            <p className='text-muted-foreground truncate'>
+              <MessageText
+                text={
+                  props.reply.deleted
+                    ? t('Message deleted')
+                    : props.reply.text || props.reply.filename
+                }
+              />
+            </p>
+          </div>
+          <Button
+            type='button'
+            variant='ghost'
+            size='sm'
+            disabled={send.isPending}
+            onClick={() => props.onCancelReply()}
+          >
+            {t('Cancel reply')}
+          </Button>
+        </div>
+      )}
+      {pending && (
+        <div className='bg-muted flex items-center gap-2 rounded p-2'>
+          {preview && (
+            <img
+              src={preview}
+              alt={t('Pending image')}
+              className='size-16 rounded object-contain'
+            />
+          )}
+          <span className='min-w-0 flex-1 truncate text-sm'>
+            {pending.file.name}
+          </span>
+          <Button
+            type='button'
+            variant='ghost'
+            size='sm'
+            disabled={send.isPending}
+            onClick={() => setPending(null)}
+          >
+            {t('Remove attachment')}
+          </Button>
+        </div>
+      )}
+      <Textarea
+        ref={editor}
+        aria-label={t('Message')}
+        placeholder={t('Write a message')}
+        value={text}
+        maxLength={2000}
+        disabled={send.isPending}
+        rows={3}
+        onChange={(event) => setText(event.target.value)}
+        onSelect={(event) => {
+          selection.current = {
+            start: event.currentTarget.selectionStart,
+            end: event.currentTarget.selectionEnd,
+          }
+        }}
+        onPaste={(event) => {
+          const images = [...event.clipboardData.items].filter(
+            (item) => item.kind === 'file' && item.type.startsWith('image/')
+          )
+          if (!images.length) return
+          event.preventDefault()
+          if (send.isPending) return
+          if (images.length > 1) {
+            toast.error(t('Select one supported file'))
+            return
+          }
+          const file = images[0].getAsFile()
+          if (file) stage(file, 'image')
+        }}
+      />
+      <div className='flex items-center justify-between gap-2'>
+        <p className='text-muted-foreground text-xs'>
+          {t(
+            'Paste an image to preview it before sending. Images: 5 MiB. Files: 10 MiB.'
+          )}
+        </p>
+        <Button
+          type='submit'
+          disabled={
+            send.isPending ||
+            !props.connected ||
+            (!text.trim() && !pending) ||
+            !!props.reply?.deleted
+          }
+        >
+          {send.isPending ? t('Sending...') : t('Send')}
+        </Button>
+      </div>
+      {feedback && (
+        <p role='status' className='text-sm'>
+          {feedbackText}
+        </p>
+      )}
+      <Input
+        ref={input}
+        type='file'
+        className='hidden'
+        aria-label={t('Upload attachment')}
+        onChange={(event) => {
+          const file = event.target.files?.[0]
+          event.target.value = ''
+          if (file) stage(file, kind.current)
+        }}
+      />
+    </form>
+  )
+}

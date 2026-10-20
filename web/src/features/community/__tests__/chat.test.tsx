@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   act,
+  fireEvent,
   render,
   renderHook,
   screen,
@@ -51,7 +52,45 @@ function show(component: React.ReactNode) {
 }
 beforeEach(() => {
   FakeSocket.instances = []
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+    callback(0)
+    return 0
+  })
+  vi.stubGlobal(
+    'URL',
+    class extends URL {
+      static createObjectURL = vi.fn(() => 'blob:preview')
+      static revokeObjectURL = vi.fn()
+    }
+  )
   vi.stubGlobal('WebSocket', FakeSocket)
+  vi.stubGlobal(
+    'IntersectionObserver',
+    class {
+      constructor(private callback: IntersectionObserverCallback) {}
+      observe(target: HTMLElement) {
+        if (Number(target.dataset.index) > 16) return
+        queueMicrotask(() =>
+          this.callback(
+            [
+              {
+                target,
+                isIntersecting: true,
+                intersectionRatio: 1,
+                time: 0,
+                boundingClientRect: target.getBoundingClientRect(),
+                intersectionRect: target.getBoundingClientRect(),
+                rootBounds: null,
+              } satisfies IntersectionObserverEntry,
+            ],
+            this as unknown as IntersectionObserver
+          )
+        )
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+  )
   useAuthStore.setState((state) => ({
     auth: {
       ...state.auth,
@@ -135,21 +174,24 @@ test('disabled chat hides the composer and does not open a socket', async () => 
   expect(FakeSocket.instances).toHaveLength(0)
 })
 
-test('uploads a sticker through the shared attachment API and closes the socket on unmount', async () => {
+test('images are staged and can be removed before uploading', async () => {
   const user = userEvent.setup()
-  const view = show(<CommunityChat />)
-  await screen.findByRole('button', { name: 'Sticker' })
-  await user.click(screen.getByRole('button', { name: 'Sticker' }))
+  vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:preview')
+  vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+  show(<CommunityChat />)
+  await user.click(await screen.findByRole('button', { name: 'Image' }))
+  expect(
+    screen.queryByRole('button', { name: 'Sticker' })
+  ).not.toBeInTheDocument()
   await user.upload(
     screen.getByLabelText('Upload attachment'),
-    new File(['image'], 'sticker.gif', { type: 'image/gif' })
+    new File(['image'], 'hello.png', { type: 'image/png' })
   )
-  await waitFor(() => expect(api.post).toHaveBeenCalled())
-  const data = vi.mocked(api.post).mock.calls[0][1] as FormData
-  expect(data.get('kind')).toBe('sticker')
-  expect((data.get('file') as File).name).toBe('sticker.gif')
-  view.unmount()
-  expect(FakeSocket.instances[0].close).toHaveBeenCalled()
+  expect(await screen.findByAltText('Pending image')).toBeInTheDocument()
+  expect(api.post).not.toHaveBeenCalled()
+  await user.click(screen.getByRole('button', { name: 'Remove attachment' }))
+  expect(screen.queryByAltText('Pending image')).not.toBeInTheDocument()
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:preview')
 })
 
 test('administrator can enable chat while preserving a stored secret', async () => {
@@ -259,29 +301,32 @@ test('custom chat title and live online list reflect presence and disconnects', 
   expect(screen.getByRole('button', { name: 'Online users: —' })).toBeDisabled()
 })
 
-test('emoji popup supports category selection, keyboard insertion and Escape', async () => {
+test('open-source emoji popup inserts an emoji and closes with Escape', async () => {
   const user = userEvent.setup()
   show(<CommunityChat />)
   const trigger = await screen.findByRole('button', { name: 'Insert emoji' })
   await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Hello ')
   await user.click(trigger)
   expect(trigger).toHaveAttribute('aria-expanded', 'true')
-  const smileys = await screen.findByRole('button', { name: 'Smileys' })
-  smileys.focus()
-  await user.keyboard('{ArrowRight}{Enter}')
-  expect(screen.getByRole('button', { name: 'Gestures' })).toHaveAttribute(
-    'aria-pressed',
-    'true'
+  await waitFor(() =>
+    expect(document.querySelector('em-emoji-picker')).toBeInTheDocument()
   )
-  const emoji = screen.getByRole('button', { name: 'Insert 👍' })
-  emoji.focus()
-  await user.keyboard('{Enter}')
+  let button: HTMLButtonElement | undefined
+  await waitFor(() => {
+    button = [
+      ...(document
+        .querySelector('em-emoji-picker')
+        ?.shadowRoot?.querySelectorAll('button') ?? []),
+    ].find((item) => item.getAttribute('aria-label') === '😀')
+    expect(button).toBeDefined()
+  })
+  if (!button) throw new Error('Emoji button is unavailable')
+  fireEvent.click(button)
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue(
-    'Hello 👍'
+    'Hello 😀'
   )
   await user.keyboard('{Escape}')
   await waitFor(() => expect(trigger).toHaveAttribute('aria-expanded', 'false'))
-  expect(trigger).toHaveFocus()
 })
 
 test('sidebar uses the configured name and falls back when it is cleared', async () => {
@@ -533,4 +578,191 @@ test('aligns own messages on the right and other users on the left by user ID', 
   expect(screen.getByText('Message deleted').closest('article')).toHaveClass(
     'flex-row-reverse'
   )
+})
+
+test('pasted images stay pending until Send and preserve the draft on failure', async () => {
+  const user = userEvent.setup()
+  vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:paste')
+  vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+  vi.mocked(api.post).mockRejectedValueOnce(new Error('upload failed'))
+  show(<CommunityChat />)
+  const editor = await screen.findByRole('textbox', { name: 'Message' })
+  act(() =>
+    FakeSocket.instances[0].onmessage?.({
+      data: JSON.stringify({ type: 'history', messages: [] }),
+    })
+  )
+  const file = new File(['png'], 'clipboard.png', { type: 'image/png' })
+  fireEvent.paste(editor, {
+    clipboardData: {
+      items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }],
+    },
+  })
+  expect(await screen.findByAltText('Pending image')).toBeInTheDocument()
+  expect(api.post).not.toHaveBeenCalled()
+  await user.type(editor, 'Screenshot details')
+  await user.click(screen.getByRole('button', { name: 'Send' }))
+  await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1))
+  await screen.findByRole('button', { name: 'Send' })
+  expect(editor).toHaveValue('Screenshot details')
+  expect(screen.getByAltText('Pending image')).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Send' }))
+  await waitFor(() =>
+    expect(screen.queryByAltText('Pending image')).not.toBeInTheDocument()
+  )
+  const data = vi.mocked(api.post).mock.calls[1][1] as FormData
+  expect(data.get('text')).toBe('Screenshot details')
+  expect((data.get('file') as File).name).toBe('clipboard.png')
+})
+
+test.each(['accepted', 'failed', 'busy'])(
+  'shows private bot feedback for %s without resending the chat message',
+  async (status) => {
+    const user = userEvent.setup()
+    vi.mocked(api.post).mockResolvedValue({
+      data: { success: true, bot_status: status },
+    })
+    show(<CommunityChat />)
+    await screen.findByRole('textbox', { name: 'Message' })
+    act(() =>
+      FakeSocket.instances[0].onmessage?.({
+        data: JSON.stringify({ type: 'history', messages: [] }),
+      })
+    )
+    await user.click(screen.getByRole('button', { name: /Mention bot/ }))
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    const copy = {
+      accepted:
+        'The assistant notification was accepted by WeChat. Delivery is not confirmed.',
+      failed:
+        'Message sent, but the assistant notification failed. Please contact an administrator.',
+      busy: 'Message sent, but the assistant is busy and was not notified.',
+    }
+    expect(
+      await screen.findByText(copy[status as keyof typeof copy])
+    ).toHaveAttribute('role', 'status')
+    expect(api.post).toHaveBeenCalledTimes(1)
+  }
+)
+
+test('selects users by ID and sends a reply reference', async () => {
+  const user = userEvent.setup()
+  show(<CommunityChat />)
+  await screen.findByRole('textbox', { name: 'Message' })
+  act(() =>
+    FakeSocket.instances[0].onmessage?.({
+      data: JSON.stringify({
+        type: 'history',
+        messages: [
+          {
+            id: 23,
+            user_id: 2,
+            name: 'Bob',
+            text: 'Original question',
+            kind: 'text',
+            created_at: 1700000000,
+          },
+        ],
+      }),
+    })
+  )
+  await user.click(screen.getByRole('button', { name: 'Reply' }))
+  expect(screen.getByText('Replying to Bob')).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Mention user' }))
+  await user.click(await screen.findByRole('option', { name: /Bob/ }))
+  await user.click(screen.getByRole('button', { name: 'Send' }))
+  await waitFor(() =>
+    expect(api.post).toHaveBeenCalledWith('/api/community/messages', {
+      text: ' @[Bob](user:2) ',
+      reply_to_id: 23,
+    })
+  )
+  expect(
+    screen.queryByRole('button', { name: 'Cancel reply' })
+  ).not.toBeInTheDocument()
+})
+
+test('history renders quoted messages and user mentions without exposing mention encoding', async () => {
+  show(<CommunityChat />)
+  await screen.findByRole('textbox', { name: 'Message' })
+  act(() =>
+    FakeSocket.instances[0].onmessage?.({
+      data: JSON.stringify({
+        type: 'history',
+        messages: [
+          {
+            id: 24,
+            user_id: 2,
+            name: 'Bob',
+            text: '@[Alice](user:1) Here is the answer',
+            kind: 'text',
+            created_at: 1700000000,
+            reply_to_id: 23,
+            reply: {
+              id: 23,
+              name: 'Alice',
+              text: 'Quoted question',
+              deleted: false,
+            },
+          },
+        ],
+      }),
+    })
+  )
+  expect(
+    screen.getByText('Quoted question').closest('blockquote')
+  ).toBeInTheDocument()
+  expect(screen.getByText('@Alice')).toHaveClass('font-bold')
+  expect(screen.queryByText('@[Alice](user:1)')).not.toBeInTheDocument()
+})
+
+test('oversized pasted images are rejected without posting a message', async () => {
+  show(<CommunityChat />)
+  const editor = await screen.findByRole('textbox', { name: 'Message' })
+  const file = new File(['png'], 'large.png', { type: 'image/png' })
+  Object.defineProperty(file, 'size', { value: 5 * 1024 * 1024 + 1 })
+  fireEvent.paste(editor, {
+    clipboardData: {
+      items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }],
+    },
+  })
+  expect(screen.queryByAltText('Pending image')).not.toBeInTheDocument()
+  expect(api.post).not.toHaveBeenCalled()
+})
+
+test('a new reply selected during sending is preserved when the earlier send finishes', async () => {
+  const user = userEvent.setup()
+  let finish: (() => void) | undefined
+  vi.mocked(api.post).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = () => resolve({ data: { success: true } })
+      })
+  )
+  show(<CommunityChat />)
+  const editor = await screen.findByRole('textbox', { name: 'Message' })
+  act(() =>
+    FakeSocket.instances[0].onmessage?.({
+      data: JSON.stringify({
+        type: 'history',
+        messages: [
+          {
+            id: 23,
+            user_id: 2,
+            name: 'Bob',
+            text: 'Question',
+            kind: 'text',
+            created_at: 1700000000,
+          },
+        ],
+      }),
+    })
+  )
+  await user.type(editor, 'A separate message')
+  await user.click(screen.getByRole('button', { name: 'Send' }))
+  await user.click(screen.getByRole('button', { name: 'Reply' }))
+  await act(async () => {
+    finish?.()
+  })
+  expect(screen.getByText('Replying to Bob')).toBeInTheDocument()
 })

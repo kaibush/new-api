@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { MessageContent } from '@/components/ai-elements/message'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { EmptyState } from '@/components/empty-state'
 import { ErrorState } from '@/components/error-state'
@@ -11,7 +12,6 @@ import { LoadingState } from '@/components/loading-state'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
 import { toIntlLocale } from '@/i18n/languages'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatNumber } from '@/lib/format'
@@ -21,11 +21,11 @@ import { useAuthStore } from '@/stores/auth-store'
 import {
   deleteChatMessage,
   getChatStatus,
-  sendChatMessage,
   uploadChatFile,
   type ChatMessage,
 } from './api'
-import { EmojiPicker } from './emoji-picker'
+import { ChatComposer } from './chat-composer'
+import { MessageText } from './message-text'
 import { OnlineUsers } from './online-users'
 import { useChat } from './use-chat'
 
@@ -39,23 +39,14 @@ export function CommunityChat() {
     refetchInterval: 15000,
   })
   const { messages, connected, users } = useChat(status.data?.enabled === true)
-  const [text, setText] = useState('')
-  const [uploadKind, setUploadKind] = useState('image')
+  const [reply, setReply] = useState<ChatMessage | null>(null)
   const [remove, setRemove] = useState<ChatMessage | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const scroll = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
-  const send = useMutation({
-    mutationFn: sendChatMessage,
-    onSuccess: () => setText(''),
-  })
   const upload = useMutation({
-    mutationFn: ({ file, kind }: { file: File; kind: string }) =>
-      uploadChatFile(file, kind, text),
-    onSuccess: (_, vars) => {
-      if (vars.kind !== 'avatar') setText('')
-      toast.success(t('Upload successful'))
-    },
+    mutationFn: (file: File) => uploadChatFile(file, 'avatar'),
+    onSuccess: () => toast.success(t('Upload successful')),
   })
   const deletion = useMutation({
     mutationFn: deleteChatMessage,
@@ -73,15 +64,14 @@ export function CommunityChat() {
   if (!status.data.enabled) {
     return <EmptyState title={t('Community chat is disabled')} />
   }
-  const busy = send.isPending || upload.isPending
-  const selectFile = (kind: string) => {
-    setUploadKind(kind)
-    if (fileInput.current) {
-      fileInput.current.accept =
-        kind === 'file'
-          ? '.pdf,.txt,.csv,.zip,.docx,.xlsx,.pptx'
-          : '.png,.jpg,.jpeg,.webp,.gif'
-      fileInput.current.click()
+  const members = new Map(users.map((member) => [member.user_id, member]))
+  for (const message of messages) {
+    if (!members.has(message.user_id)) {
+      members.set(message.user_id, {
+        user_id: message.user_id,
+        name: message.name,
+        avatar: message.avatar,
+      })
     }
   }
   return (
@@ -99,8 +89,8 @@ export function CommunityChat() {
           <OnlineUsers users={users} connected={connected} />
           <Button
             variant='outline'
-            disabled={busy}
-            onClick={() => selectFile('avatar')}
+            disabled={upload.isPending}
+            onClick={() => fileInput.current?.click()}
           >
             {t('Upload avatar')}
           </Button>
@@ -128,8 +118,10 @@ export function CommunityChat() {
           {messages.map((message) => (
             <article
               key={message.id}
-              className={cn('flex items-start gap-3', {
-                'flex-row-reverse': message.user_id === user?.id,
+              id={`message-${message.id}`}
+              className={cn('group flex items-start gap-3', {
+                'flex-row-reverse is-user': message.user_id === user?.id,
+                'is-assistant': message.user_id !== user?.id,
               })}
             >
               <Avatar className='size-9 shrink-0'>
@@ -141,7 +133,8 @@ export function CommunityChat() {
                   {getUserAvatarFallback(message.name)}
                 </AvatarFallback>
               </Avatar>
-              <div
+              <MessageContent
+                variant='flat'
                 className={cn('flex min-w-0 max-w-[80%] flex-col gap-1', {
                   'items-end': message.user_id === user?.id,
                   'items-start': message.user_id !== user?.id,
@@ -165,6 +158,23 @@ export function CommunityChat() {
                     {new Date(message.created_at * 1000).toLocaleString(locale)}
                   </time>
                 </div>
+                {message.reply_to_id && !message.deleted && (
+                  <blockquote className='border-primary bg-muted max-w-full border-l-2 p-2 text-sm'>
+                    <p className='font-medium'>
+                      {message.reply?.name || t('Reply')}
+                    </p>
+                    <p className='line-clamp-2 break-words'>
+                      <MessageText
+                        text={
+                          message.reply && !message.reply.deleted
+                            ? message.reply.text || message.reply.filename
+                            : t('Message deleted')
+                        }
+                        currentUserId={user?.id}
+                      />
+                    </p>
+                  </blockquote>
+                )}
                 {message.deleted ? (
                   <p className='text-muted-foreground italic'>
                     {t('Message deleted')}
@@ -173,7 +183,10 @@ export function CommunityChat() {
                   <>
                     {message.text && (
                       <p className='max-w-full text-left break-words whitespace-pre-wrap'>
-                        {message.text}
+                        <MessageText
+                          text={message.text}
+                          currentUserId={user?.id}
+                        />
                       </p>
                     )}
                     {(message.kind === 'image' ||
@@ -209,7 +222,17 @@ export function CommunityChat() {
                     )}
                   </>
                 )}
-              </div>
+              </MessageContent>
+              {!message.deleted && (
+                <Button
+                  type='button'
+                  variant='ghost'
+                  size='sm'
+                  onClick={() => setReply(message)}
+                >
+                  {t('Reply')}
+                </Button>
+              )}
               {(user?.role ?? 0) >= 100 && !message.deleted && (
                 <Button
                   size='sm'
@@ -222,92 +245,34 @@ export function CommunityChat() {
             </article>
           ))}
         </div>
-        <form
-          className='space-y-2 border-t pt-3'
-          onSubmit={(event) => {
-            event.preventDefault()
-            if (text.trim() && !busy) send.mutate(text)
+        <ChatComposer
+          connected={connected}
+          status={status.data}
+          users={[...members.values()]}
+          reply={
+            reply
+              ? messages.find((message) => message.id === reply.id) || reply
+              : null
+          }
+          onCancelReply={() => setReply(null)}
+          onSent={(sentReplyId) =>
+            setReply((current) =>
+              current?.id === sentReplyId ? null : current
+            )
+          }
+        />
+        <Input
+          ref={fileInput}
+          type='file'
+          accept='.png,.jpg,.jpeg,.webp,.gif'
+          className='hidden'
+          aria-label={t('Upload avatar')}
+          onChange={(event) => {
+            const file = event.target.files?.[0]
+            event.target.value = ''
+            if (file) upload.mutate(file)
           }}
-        >
-          {status.data.bot_enabled && (
-            <Button
-              type='button'
-              variant='outline'
-              size='sm'
-              onClick={() =>
-                setText((value) => `${value}@${status.data.bot_name} `)
-              }
-            >
-              {t('Mention bot')} @{status.data.bot_name}
-            </Button>
-          )}
-          <Textarea
-            aria-label={t('Message')}
-            placeholder={t('Write a message')}
-            value={text}
-            maxLength={2000}
-            onChange={(event) => setText(event.target.value)}
-            disabled={busy}
-            rows={3}
-          />
-          <div className='flex flex-wrap items-center gap-2'>
-            <Button
-              type='button'
-              variant='outline'
-              disabled={busy}
-              onClick={() => selectFile('image')}
-            >
-              {t('Image')}
-            </Button>
-            <Button
-              type='button'
-              variant='outline'
-              disabled={busy}
-              onClick={() => selectFile('sticker')}
-            >
-              {t('Sticker')}
-            </Button>
-            <Button
-              type='button'
-              variant='outline'
-              disabled={busy}
-              onClick={() => selectFile('file')}
-            >
-              {t('File')}
-            </Button>
-            <EmojiPicker
-              disabled={busy || text.length >= 2000}
-              onSelect={(emoji) =>
-                setText((value) =>
-                  value.length + emoji.length <= 2000 ? value + emoji : value
-                )
-              }
-            />
-            <Button
-              type='submit'
-              disabled={busy || !connected || !text.trim()}
-              className='ms-auto'
-            >
-              {t('Send')}
-            </Button>
-          </div>
-          <p className='text-muted-foreground text-xs'>
-            {t(
-              'Images and stickers: 5 MiB. Files: 10 MiB. Attachment links can be shared outside this chat.'
-            )}
-          </p>
-          <Input
-            ref={fileInput}
-            type='file'
-            className='hidden'
-            aria-label={t('Upload attachment')}
-            onChange={(event) => {
-              const file = event.target.files?.[0]
-              event.target.value = ''
-              if (file) upload.mutate({ file, kind: uploadKind })
-            }}
-          />
-        </form>
+        />
         <ConfirmDialog
           open={remove !== null}
           onOpenChange={(open) => {

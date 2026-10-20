@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"fmt"
 	"image"
 	"image/color"
 	"image/gif"
@@ -14,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -273,9 +275,12 @@ func TestCommunityAttachmentStorageAndOwnership(t *testing.T) {
 	}
 	bundle, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "upload-test")
 	require.NoError(t, err)
+	original := model.CommunityMessage{Kind: "text", Text: "Screenshot request"}
+	require.NoError(t, model.CreateCommunityMessage(user.Id, &original))
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	require.NoError(t, writer.WriteField("kind", "sticker"))
+	require.NoError(t, writer.WriteField("reply_to_id", strconv.FormatInt(original.ID, 10)))
 	file, err := writer.CreateFormFile("file", "hello.png")
 	require.NoError(t, err)
 	require.NoError(t, png.Encode(file, image.NewRGBA(image.Rect(0, 0, 2, 2))))
@@ -294,6 +299,8 @@ func TestCommunityAttachmentStorageAndOwnership(t *testing.T) {
 	}
 	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
 	assert.Equal(t, user.Id, result.Data.UserID)
+	require.NotNil(t, result.Data.ReplyToID)
+	assert.Equal(t, original.ID, *result.Data.ReplyToID)
 	assert.Equal(t, "sticker", result.Data.Kind)
 	assert.True(t, strings.HasPrefix(result.Data.URL, "https://cdn.example/community/"))
 	assert.NotContains(t, response.Body.String(), "fake-secret")
@@ -480,4 +487,121 @@ func TestCommunityCredentialsRequireSingleUseRootVerification(t *testing.T) {
 	response = request("POST", "/credentials", bundle.AccessToken, proof.ProofToken)
 	assert.Equal(t, http.StatusUnauthorized, response.Code)
 	assert.NotContains(t, response.Body.String(), "saved-app-secret")
+}
+
+type communityMessageBeforeReplies struct {
+	ID        int64  `json:"id" gorm:"primaryKey"`
+	UserID    int    `json:"user_id" gorm:"index"`
+	Name      string `json:"name" gorm:"type:varchar(80)"`
+	Avatar    string `json:"avatar" gorm:"type:text"`
+	Text      string `json:"text" gorm:"type:text"`
+	Kind      string `json:"kind" gorm:"type:varchar(16)"`
+	URL       string `json:"url" gorm:"type:text"`
+	Filename  string `json:"filename" gorm:"type:varchar(255)"`
+	Size      int64  `json:"size"`
+	CreatedAt int64  `json:"created_at"`
+	Deleted   bool   `json:"deleted"`
+}
+
+func TestCommunityRepliesMigrationAndHistory(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			if dialect != "sqlite" && os.Getenv("TEST_"+strings.ToUpper(dialect)+"_DSN") == "" {
+				t.Skip("database DSN not configured")
+			}
+			t.Setenv("TEST_SECURITY_DIALECT", dialect)
+			for _, upgrade := range []bool{false, true} {
+				t.Run(fmt.Sprintf("upgrade=%t", upgrade), func(t *testing.T) {
+					user, _ := setupSecurityEnrollmentTest(t)
+					if upgrade {
+						require.NoError(t, model.DB.Table("community_messages").AutoMigrate(&communityMessageBeforeReplies{}))
+						require.NoError(t, model.DB.Table("community_messages").Create(&communityMessageBeforeReplies{UserID: user.Id, Name: "Original author", Text: "Original question", Kind: "text"}).Error)
+					}
+					for range 2 {
+						require.NoError(t, model.DB.AutoMigrate(&model.CommunityMessage{}, &model.CommunityProfile{}))
+					}
+					require.True(t, model.DB.Migrator().HasIndex(&model.CommunityMessage{}, "UserID"))
+					var original model.CommunityMessage
+					if upgrade {
+						require.NoError(t, model.DB.First(&original).Error)
+					} else {
+						original = model.CommunityMessage{Text: "Original question", Kind: "text"}
+						require.NoError(t, model.CreateCommunityMessage(user.Id, &original))
+					}
+					assert.Equal(t, "Original question", original.Text)
+					// The quoted message may be older than the live history window.
+					for range 50 {
+						require.NoError(t, model.DB.Create(&model.CommunityMessage{UserID: user.Id, Kind: "text", Text: "Later message"}).Error)
+					}
+					reply := model.CommunityMessage{Text: "Answer", Kind: "text", ReplyToID: &original.ID}
+					require.NoError(t, model.CreateCommunityMessage(user.Id, &reply))
+					rows, err := model.RecentCommunityMessages()
+					require.NoError(t, err)
+					require.Len(t, rows, 50)
+					require.NotNil(t, rows[49].Reply)
+					assert.Equal(t, original.ID, rows[49].Reply.ID)
+					assert.Equal(t, "Original question", rows[49].Reply.Text)
+					require.NoError(t, model.DB.Model(&original).Updates(map[string]any{"deleted": true, "text": ""}).Error)
+					rows, err = model.RecentCommunityMessages()
+					require.NoError(t, err)
+					require.NotNil(t, rows[49].Reply)
+					assert.True(t, rows[49].Reply.Deleted)
+					assert.Empty(t, rows[49].Reply.Text)
+					require.Error(t, model.CreateCommunityMessage(user.Id, &model.CommunityMessage{Text: "Invalid", ReplyToID: &original.ID}))
+					for _, id := range []int64{0, -1, 999999} {
+						require.Error(t, model.CreateCommunityMessage(user.Id, &model.CommunityMessage{Text: "Invalid", ReplyToID: &id}))
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestCommunityBotFeedback(t *testing.T) {
+	user, _ := setupSecurityEnrollmentTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.CommunityConfig{}, &model.CommunityMessage{}, &model.CommunityProfile{}))
+	config := model.CommunityConfig{Enabled: true, BotEnabled: true, BotName: "helper", AppID: "feedback-test", AppSecret: "test-secret", TemplateID: "test-template", Receiver: "test-receiver"}
+	require.NoError(t, model.SaveCommunityConfig(config))
+	previous := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = previous })
+	response := `{"errcode":0,"msgid":123}`
+	http.DefaultTransport = communityRoundTripper(func(r *http.Request) (*http.Response, error) {
+		body := response
+		if strings.HasSuffix(r.URL.Path, "/token") {
+			body = `{"access_token":"test-token","expires_in":7200}`
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})
+	assert.Empty(t, notifyCommunityBot(model.CommunityMessage{Text: "Ordinary message"}))
+	message := model.CommunityMessage{Text: "@helper help"}
+	assert.Equal(t, "accepted", notifyCommunityBot(message))
+	original := model.CommunityMessage{Kind: "text", Text: "Question"}
+	require.NoError(t, model.CreateCommunityMessage(user.Id, &original))
+	payload, err := common.Marshal(map[string]any{"text": "@helper answer", "reply_to_id": original.ID})
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest("POST", "/messages", bytes.NewReader(payload))
+	c.Set("id", user.Id)
+	SendCommunityMessage(c)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var result struct {
+		BotStatus string                 `json:"bot_status"`
+		Data      model.CommunityMessage `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &result))
+	assert.Equal(t, "accepted", result.BotStatus)
+	require.NotNil(t, result.Data.ReplyToID)
+	assert.Equal(t, original.ID, *result.Data.ReplyToID)
+	assert.Equal(t, user.Id, result.Data.UserID)
+
+	response = `{"errcode":40003}`
+	assert.Equal(t, "failed", notifyCommunityBot(message))
+	for range cap(communityBotSlots) {
+		communityBotSlots <- struct{}{}
+	}
+	assert.Equal(t, "busy", notifyCommunityBot(message))
+	for range cap(communityBotSlots) {
+		<-communityBotSlots
+	}
 }
