@@ -5,12 +5,14 @@ import { toast } from 'sonner'
 
 import { MessageContent } from '@/components/ai-elements/message'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { DataTableRowActionMenu } from '@/components/data-table'
 import { EmptyState } from '@/components/empty-state'
 import { ErrorState } from '@/components/error-state'
 import { Main } from '@/components/layout'
 import { LoadingState } from '@/components/loading-state'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { toIntlLocale } from '@/i18n/languages'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
@@ -119,7 +121,7 @@ export function CommunityChat() {
             <article
               key={message.id}
               id={`message-${message.id}`}
-              className={cn('group flex items-start gap-3', {
+              className={cn('group group/message flex items-start gap-3', {
                 'flex-row-reverse is-user': message.user_id === user?.id,
                 'is-assistant': message.user_id !== user?.id,
               })}
@@ -133,114 +135,128 @@ export function CommunityChat() {
                   {getUserAvatarFallback(message.name)}
                 </AvatarFallback>
               </Avatar>
-              <MessageContent
-                variant='flat'
-                className={cn('flex min-w-0 max-w-[80%] flex-col gap-1', {
-                  'items-end': message.user_id === user?.id,
-                  'items-start': message.user_id !== user?.id,
-                })}
+              <div
+                className={cn(
+                  'flex min-w-0 max-w-[min(80%,42rem)] flex-col gap-1',
+                  {
+                    'items-end': message.user_id === user?.id,
+                    'items-start': message.user_id !== user?.id,
+                  }
+                )}
               >
                 <div
                   className={cn(
-                    'flex max-w-full flex-wrap items-center gap-2',
+                    'flex max-w-full flex-wrap items-baseline gap-x-2 gap-y-0.5',
                     {
                       'justify-end': message.user_id === user?.id,
                     }
                   )}
                 >
-                  <span className='min-w-0 font-medium break-words'>
+                  <span className='max-w-full min-w-0 font-medium break-words'>
                     {message.name}
                   </span>
                   <time
-                    className='text-muted-foreground text-xs'
+                    className='text-muted-foreground max-w-full shrink-0 text-xs break-words'
                     dateTime={new Date(message.created_at * 1000).toISOString()}
                   >
                     {new Date(message.created_at * 1000).toLocaleString(locale)}
                   </time>
                 </div>
-                {message.reply_to_id && !message.deleted && (
-                  <blockquote className='border-primary bg-muted max-w-full border-l-2 p-2 text-sm'>
-                    <p className='font-medium'>
-                      {message.reply?.name || t('Reply')}
-                    </p>
-                    <p className='line-clamp-2 break-words'>
-                      <MessageText
-                        text={
-                          message.reply && !message.reply.deleted
-                            ? message.reply.text || message.reply.filename
-                            : t('Message deleted')
-                        }
-                        currentUserId={user?.id}
-                      />
-                    </p>
-                  </blockquote>
-                )}
-                {message.deleted ? (
-                  <p className='text-muted-foreground italic'>
-                    {t('Message deleted')}
-                  </p>
-                ) : (
-                  <>
-                    {message.text && (
-                      <p className='max-w-full text-left break-words whitespace-pre-wrap'>
+                <MessageContent
+                  variant='flat'
+                  className={cn(
+                    'min-w-0 max-w-full group-[.is-user]:max-w-full',
+                    {
+                      'items-end': message.user_id === user?.id,
+                      'items-start': message.user_id !== user?.id,
+                    }
+                  )}
+                >
+                  {message.reply_to_id && !message.deleted && (
+                    <blockquote className='border-primary bg-muted max-w-full border-l-2 p-2 text-sm'>
+                      <p className='font-medium'>
+                        {message.reply?.name || t('Reply')}
+                      </p>
+                      <p className='line-clamp-2 break-words'>
                         <MessageText
-                          text={message.text}
+                          text={
+                            message.reply && !message.reply.deleted
+                              ? message.reply.text || message.reply.filename
+                              : t('Message deleted')
+                          }
                           currentUserId={user?.id}
                         />
                       </p>
-                    )}
-                    {(message.kind === 'image' ||
-                      message.kind === 'sticker') && (
-                      <a
-                        className='max-w-full'
-                        href={message.url}
-                        target='_blank'
-                        rel='noopener noreferrer'
-                      >
-                        <img
-                          src={message.url}
-                          alt={message.filename}
-                          loading='lazy'
-                          className={
-                            message.kind === 'sticker'
-                              ? 'max-h-40 max-w-[min(10rem,100%)] rounded-md object-contain'
-                              : 'max-h-80 max-w-full rounded-md object-contain'
-                          }
-                        />
-                      </a>
-                    )}
-                    {message.kind === 'file' && (
-                      <a
-                        className='text-primary block break-all underline'
-                        href={message.url}
-                        target='_blank'
-                        rel='noopener noreferrer'
-                      >
-                        {message.filename} ({formatNumber(message.size, locale)}{' '}
-                        B)
-                      </a>
-                    )}
-                  </>
-                )}
-              </MessageContent>
+                    </blockquote>
+                  )}
+                  {message.deleted ? (
+                    <p className='text-muted-foreground italic'>
+                      {t('Message deleted')}
+                    </p>
+                  ) : (
+                    <>
+                      {message.text && (
+                        <p className='max-w-full text-left break-words whitespace-pre-wrap'>
+                          <MessageText
+                            text={message.text}
+                            currentUserId={user?.id}
+                          />
+                        </p>
+                      )}
+                      {(message.kind === 'image' ||
+                        message.kind === 'sticker') && (
+                        <a
+                          className='max-w-full'
+                          href={message.url}
+                          target='_blank'
+                          rel='noopener noreferrer'
+                        >
+                          <img
+                            src={message.url}
+                            alt={message.filename}
+                            loading='lazy'
+                            className={
+                              message.kind === 'sticker'
+                                ? 'max-h-40 max-w-[min(10rem,100%)] rounded-md object-contain'
+                                : 'max-h-80 max-w-full rounded-md object-contain'
+                            }
+                          />
+                        </a>
+                      )}
+                      {message.kind === 'file' && (
+                        <a
+                          className='text-primary block break-all underline'
+                          href={message.url}
+                          target='_blank'
+                          rel='noopener noreferrer'
+                        >
+                          {message.filename} (
+                          {formatNumber(message.size, locale)} B)
+                        </a>
+                      )}
+                    </>
+                  )}
+                </MessageContent>
+              </div>
               {!message.deleted && (
-                <Button
-                  type='button'
-                  variant='ghost'
-                  size='sm'
-                  onClick={() => setReply(message)}
-                >
-                  {t('Reply')}
-                </Button>
-              )}
-              {(user?.role ?? 0) >= 100 && !message.deleted && (
-                <Button
-                  size='sm'
-                  variant='ghost'
-                  onClick={() => setRemove(message)}
-                >
-                  {t('Delete')}
-                </Button>
+                <div className='self-center opacity-100 transition-opacity [@media(hover:hover)_and_(pointer:fine)]:opacity-0 [@media(hover:hover)_and_(pointer:fine)]:group-hover/message:opacity-100 [@media(hover:hover)_and_(pointer:fine)]:focus-within:opacity-100 [@media(hover:hover)_and_(pointer:fine)]:has-[[data-popup-open]]:opacity-100'>
+                  <DataTableRowActionMenu
+                    ariaLabel={t('More actions')}
+                    contentClassName='w-36'
+                  >
+                    <DropdownMenuItem onClick={() => setReply(message)}>
+                      {t('Reply')}
+                    </DropdownMenuItem>
+                    {(user?.role ?? 0) >= 100 && (
+                      <DropdownMenuItem
+                        variant='destructive'
+                        onClick={() => setRemove(message)}
+                      >
+                        {t('Delete')}
+                      </DropdownMenuItem>
+                    )}
+                  </DataTableRowActionMenu>
+                </div>
               )}
             </article>
           ))}

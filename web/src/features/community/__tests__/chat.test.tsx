@@ -601,7 +601,7 @@ test('pasted images stay pending until Send and preserve the draft on failure', 
   expect(await screen.findByAltText('Pending image')).toBeInTheDocument()
   expect(api.post).not.toHaveBeenCalled()
   await user.type(editor, 'Screenshot details')
-  await user.click(screen.getByRole('button', { name: 'Send' }))
+  await user.keyboard('{Enter}')
   await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1))
   await screen.findByRole('button', { name: 'Send' })
   expect(editor).toHaveValue('Screenshot details')
@@ -666,7 +666,8 @@ test('selects users by ID and sends a reply reference', async () => {
       }),
     })
   )
-  await user.click(screen.getByRole('button', { name: 'Reply' }))
+  await user.click(screen.getByRole('button', { name: 'More actions' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'Reply' }))
   expect(screen.getByText('Replying to Bob')).toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: 'Mention user' }))
   await user.click(await screen.findByRole('option', { name: /Bob/ }))
@@ -760,9 +761,147 @@ test('a new reply selected during sending is preserved when the earlier send fin
   )
   await user.type(editor, 'A separate message')
   await user.click(screen.getByRole('button', { name: 'Send' }))
-  await user.click(screen.getByRole('button', { name: 'Reply' }))
+  await user.click(screen.getByRole('button', { name: 'More actions' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'Reply' }))
   await act(async () => {
     finish?.()
   })
   expect(screen.getByText('Replying to Bob')).toBeInTheDocument()
+})
+
+test.each([1, 100])(
+  'message actions are in a menu and deletion is restricted for role %i',
+  async (role) => {
+    const user = userEvent.setup()
+    useAuthStore.setState((state) => ({
+      auth: { ...state.auth, user: { id: 1, username: 'Alice', role } },
+    }))
+    show(<CommunityChat />)
+    await screen.findByRole('textbox', { name: 'Message' })
+    act(() =>
+      FakeSocket.instances[0].onmessage?.({
+        data: JSON.stringify({
+          type: 'history',
+          messages: [
+            {
+              id: 1,
+              user_id: 1,
+              name: 'Alice',
+              text: 'My message',
+              kind: 'text',
+              created_at: 1700000000,
+            },
+            {
+              id: 2,
+              user_id: 2,
+              name: 'Bob',
+              deleted: true,
+              kind: 'text',
+              created_at: 1700000000,
+            },
+          ],
+        }),
+      })
+    )
+    expect(
+      screen.queryByRole('button', { name: 'Reply' })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Delete' })
+    ).not.toBeInTheDocument()
+    const trigger = screen.getByRole('button', { name: 'More actions' })
+    expect(
+      screen.getAllByRole('button', { name: 'More actions' })
+    ).toHaveLength(1)
+    trigger.focus()
+    await user.keyboard('{Enter}')
+    expect(
+      await screen.findByRole('menuitem', { name: 'Reply' })
+    ).toBeInTheDocument()
+    if (role === 100) {
+      await user.click(screen.getByRole('menuitem', { name: 'Delete' }))
+      expect(await screen.findByRole('alertdialog')).toBeInTheDocument()
+      expect(
+        screen.getByText('This message will be removed from the chat.')
+      ).toBeInTheDocument()
+    } else {
+      expect(
+        screen.queryByRole('menuitem', { name: 'Delete' })
+      ).not.toBeInTheDocument()
+      await user.keyboard('{Escape}')
+      await waitFor(() => expect(trigger).toHaveFocus())
+    }
+  }
+)
+
+test('keeps long sender names and full timestamps outside the clipped message bubble', async () => {
+  show(<CommunityChat />)
+  await screen.findByRole('textbox', { name: 'Message' })
+  act(() =>
+    FakeSocket.instances[0].onmessage?.({
+      data: JSON.stringify({
+        type: 'history',
+        messages: [
+          {
+            id: 1,
+            user_id: 2,
+            name: 'A long display name that must remain readable',
+            text: 'Short body',
+            kind: 'text',
+            created_at: 1700000000,
+          },
+        ],
+      }),
+    })
+  )
+  const name = screen.getByText('A long display name that must remain readable')
+  const bubble = screen.getByText('Short body').parentElement
+  expect(bubble?.contains(name)).toBe(false)
+  expect(name.parentElement).toHaveClass('flex-wrap')
+  const time = name.parentElement?.querySelector('time')
+  expect(time).toHaveClass('shrink-0', 'max-w-full')
+})
+
+test('Enter sends while Shift+Enter inserts a newline', async () => {
+  const user = userEvent.setup()
+  show(<CommunityChat />)
+  const editor = await screen.findByRole('textbox', { name: 'Message' })
+  act(() =>
+    FakeSocket.instances[0].onmessage?.({
+      data: JSON.stringify({ type: 'history', messages: [] }),
+    })
+  )
+  await user.type(editor, 'First line')
+  await user.keyboard('{Shift>}{Enter}{/Shift}')
+  expect(editor).toHaveValue('First line\n')
+  expect(api.post).not.toHaveBeenCalled()
+  await user.type(editor, 'Second line')
+  await user.keyboard('{Enter}')
+  await waitFor(() =>
+    expect(api.post).toHaveBeenCalledWith('/api/community/messages', {
+      text: 'First line\nSecond line',
+    })
+  )
+})
+
+test('IME confirmation, blank drafts and disconnected Enter never send', async () => {
+  const user = userEvent.setup()
+  show(<CommunityChat />)
+  const editor = await screen.findByRole('textbox', { name: 'Message' })
+  fireEvent.keyDown(editor, { key: 'Enter' })
+  await user.type(editor, '中文输入')
+  fireEvent.keyDown(editor, { key: 'Enter' })
+  expect(api.post).not.toHaveBeenCalled()
+  act(() =>
+    FakeSocket.instances[0].onmessage?.({
+      data: JSON.stringify({ type: 'history', messages: [] }),
+    })
+  )
+  fireEvent.compositionStart(editor)
+  fireEvent.keyDown(editor, { key: 'Enter' })
+  fireEvent.compositionEnd(editor)
+  fireEvent.keyDown(editor, { key: 'Enter', isComposing: true })
+  fireEvent.keyDown(editor, { key: 'Enter', keyCode: 229 })
+  expect(api.post).not.toHaveBeenCalled()
+  expect(editor).toHaveValue('中文输入')
 })

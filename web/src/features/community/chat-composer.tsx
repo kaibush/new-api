@@ -52,6 +52,7 @@ export function ChatComposer(props: {
   const [feedback, setFeedback] = useState('')
   const input = useRef<HTMLInputElement>(null)
   const editor = useRef<HTMLTextAreaElement>(null)
+  const composing = useRef(false)
   const kind = useRef<'image' | 'file'>('image')
   const selection = useRef({ start: 0, end: 0 })
   useEffect(() => {
@@ -313,6 +314,29 @@ export function ChatComposer(props: {
         maxLength={2000}
         disabled={send.isPending}
         rows={3}
+        aria-describedby='community-send-hint'
+        onCompositionStart={() => {
+          composing.current = true
+        }}
+        onCompositionEnd={() => {
+          composing.current = false
+        }}
+        onKeyDown={(event) => {
+          if (
+            event.key !== 'Enter' ||
+            event.shiftKey ||
+            event.ctrlKey ||
+            event.metaKey ||
+            event.altKey ||
+            composing.current ||
+            event.nativeEvent.isComposing ||
+            event.nativeEvent.keyCode === 229
+          ) {
+            return
+          }
+          event.preventDefault()
+          event.currentTarget.form?.requestSubmit()
+        }}
         onChange={(event) => setText(event.target.value)}
         onSelect={(event) => {
           selection.current = {
@@ -353,6 +377,9 @@ export function ChatComposer(props: {
           {send.isPending ? t('Sending...') : t('Send')}
         </Button>
       </div>
+      <p id='community-send-hint' className='text-muted-foreground text-xs'>
+        {t('Enter to send, Shift+Enter for a new line')}
+      </p>
       {feedback && (
         <p role='status' className='text-sm'>
           {feedbackText}
