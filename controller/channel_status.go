@@ -222,11 +222,31 @@ func GetChannelStatus(c *gin.Context) {
 	if auditErr != nil {
 		result["auditError"] = auditErr.Error()
 	} else {
-		// Keys partition all requests; caller identities may still be pending enrichment.
+		isAdmin := c.GetInt("role") >= common.RoleAdminUser
+		// Match both authenticated values, never a caller ID supplied in the query.
+		clients := make([]channelAuditClient, 0)
+		for _, item := range audits.Callers {
+			if !isAdmin {
+				raw, ok := strings.CutPrefix(item.ID, "user:")
+				var identity []string
+				if !ok || common.UnmarshalJsonStr(raw, &identity) != nil || len(identity) != 2 || identity[0] != strconv.Itoa(c.GetInt("id")) || identity[1] != c.GetString("username") {
+					continue
+				}
+			}
+			clients = append(clients, item)
+		}
+		result["clients"] = clients
+
+		// Personal quality uses only identified requests owned by the current user.
+		// Administrators use keys, which partition all requests even before caller enrichment.
+		summaryClients := clients
+		if isAdmin {
+			summaryClients = audits.ClientKeys
+		}
 		total := channelAuditClient{Name: "GrokIQ"}
 		var samples, successes int64
 		hasSamples, hasSuccesses := true, true
-		for _, item := range audits.ClientKeys {
+		for _, item := range summaryClients {
 			total.RequestCount += item.RequestCount
 			total.ThinkingRequests += item.ThinkingRequests
 			if item.ThinkingSampleRequests == nil {
@@ -247,19 +267,6 @@ func GetChannelStatus(c *gin.Context) {
 			total.HTTPSuccessRequests = &successes
 		}
 		result["summary"] = total
-		// Match both authenticated values, never a caller ID supplied in the query.
-		clients := make([]channelAuditClient, 0)
-		for _, item := range audits.Callers {
-			if c.GetInt("role") < common.RoleAdminUser {
-				raw, ok := strings.CutPrefix(item.ID, "user:")
-				var identity []string
-				if !ok || common.UnmarshalJsonStr(raw, &identity) != nil || len(identity) != 2 || identity[0] != strconv.Itoa(c.GetInt("id")) || identity[1] != c.GetString("username") {
-					continue
-				}
-			}
-			clients = append(clients, item)
-		}
-		result["clients"] = clients
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
 }

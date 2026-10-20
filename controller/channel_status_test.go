@@ -77,20 +77,28 @@ func TestChannelStatusPrivacyAndFailures(t *testing.T) {
 			engine.ServeHTTP(anonymous, httptest.NewRequest(http.MethodGet, "/api/channel-status", nil))
 			assert.Equal(t, http.StatusUnauthorized, anonymous.Code)
 			for _, tc := range []struct {
-				name        string
-				role        int
-				user        string
-				wantClients int
+				name          string
+				role          int
+				id            int
+				user          string
+				wantClients   int
+				wantRequests  int64
+				wantThinking  int64
+				wantSamples   *int64
+				wantSuccesses *int64
 			}{
-				{"own card", common.RoleCommonUser, "alice", 1},
-				{"no matching identity", common.RoleCommonUser, "unmatched", 0},
-				{"administrator cards", common.RoleAdminUser, "admin", 4},
+				{"own card", common.RoleCommonUser, 1, "alice", 1, 2, 1, common.GetPointer(int64(2)), common.GetPointer(int64(2))},
+				{"no matching identity", common.RoleCommonUser, 1, "unmatched", 0, 0, 0, common.GetPointer(int64(0)), common.GetPointer(int64(0))},
+				{"matching username with different ID", common.RoleCommonUser, 2, "alice", 0, 0, 0, common.GetPointer(int64(0)), common.GetPointer(int64(0))},
+				{"own card with missing metrics", common.RoleCommonUser, 2, "bob", 1, 8, 0, nil, nil},
+				{"administrator cards", common.RoleAdminUser, 1, "admin", 4, 10, 7, common.GetPointer(int64(8)), common.GetPointer(int64(9))},
+				{"root cards", common.RoleRootUser, 1, "root", 4, 10, 7, common.GetPointer(int64(8)), common.GetPointer(int64(9))},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					rec := httptest.NewRecorder()
 					c, _ := gin.CreateTestContext(rec)
-					c.Request = httptest.NewRequest(http.MethodGet, "/api/channel-status?window=3h&user_id=2", nil)
-					c.Set("id", 1)
+					c.Request = httptest.NewRequest(http.MethodGet, "/api/channel-status?window=3h&user_id=2&username=bob&role=100", nil)
+					c.Set("id", tc.id)
 					c.Set("username", tc.user)
 					c.Set("role", tc.role)
 					GetChannelStatus(c)
@@ -106,9 +114,14 @@ func TestChannelStatusPrivacyAndFailures(t *testing.T) {
 					require.NoError(t, common.Unmarshal(rec.Body.Bytes(), &body))
 					require.True(t, body.Success)
 					assert.Len(t, body.Data.Clients, tc.wantClients)
-					assert.EqualValues(t, 10, body.Data.Summary.RequestCount)
-					require.NotNil(t, body.Data.Summary.ThinkingSampleRequests)
-					assert.EqualValues(t, 8, *body.Data.Summary.ThinkingSampleRequests)
+					assert.Equal(t, channelAuditClient{
+						Name:                   "GrokIQ",
+						RequestCount:           tc.wantRequests,
+						ThinkingRequests:       tc.wantThinking,
+						ThinkingSampleRequests: tc.wantSamples,
+						HTTPSuccessRequests:    tc.wantSuccesses,
+					}, body.Data.Summary)
+					assert.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
 					providers := body.Data.Inventory["providers"].(map[string]any)
 					assert.EqualValues(t, 67, providers["grok_build"].(map[string]any)["capacity"])
 					assert.NotContains(t, body.Data.Inventory, "total")
@@ -123,7 +136,12 @@ func TestChannelStatusPrivacyAndFailures(t *testing.T) {
 					assert.NotContains(t, rec.Body.String(), "integration-secret")
 					assert.NotContains(t, rec.Body.String(), "private prompt")
 					if tc.role == common.RoleCommonUser {
-						assert.NotContains(t, rec.Body.String(), "bob")
+						if tc.user != "bob" {
+							assert.NotContains(t, rec.Body.String(), "bob")
+						}
+						if tc.user != "alice" || tc.id != 1 {
+							assert.NotContains(t, rec.Body.String(), "alice")
+						}
 						assert.NotContains(t, rec.Body.String(), "different")
 						assert.NotContains(t, rec.Body.String(), "private-key-name")
 					}
