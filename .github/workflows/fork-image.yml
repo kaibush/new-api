@@ -2,7 +2,7 @@ name: Publish fork image (GHCR)
 
 on:
   push:
-    branches: [main]
+    branches: [main, linuxdo-free]
   workflow_dispatch:
 
 permissions:
@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   verify:
-    if: github.repository == 'kaibush/new-api'
+    if: github.repository == 'kaibush/new-api' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/linuxdo-free')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -69,6 +69,10 @@ jobs:
         run: |
           IMAGE_NAME="ghcr.io/${GITHUB_REPOSITORY,,}"
           IMAGE_VERSION="fork-${GITHUB_SHA:0:12}"
+          if [ "$GITHUB_REF_NAME" = 'linuxdo-free' ]; then
+            IMAGE_NAME="${IMAGE_NAME}-linuxdo-free"
+            IMAGE_VERSION="linuxdo-free-${GITHUB_SHA:0:12}"
+          fi
           printf '%s\n' "$IMAGE_VERSION" > VERSION
           printf 'name=%s\nversion=%s\n' "$IMAGE_NAME" "$IMAGE_VERSION" >> "$GITHUB_OUTPUT"
 
@@ -97,8 +101,8 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ steps.image.outputs.version }}
             org.opencontainers.image.licenses=AGPL-3.0
-          cache-from: type=gha,scope=fork-amd64
-          cache-to: type=gha,scope=fork-amd64,mode=max
+          cache-from: type=gha,scope=fork-${{ github.ref_name }}-amd64
+          cache-to: type=gha,scope=fork-${{ github.ref_name }}-amd64,mode=max
           provenance: mode=max
           sbom: true
 
