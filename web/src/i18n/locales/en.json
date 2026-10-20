@@ -171,6 +171,7 @@
     "A little time, just for you": "A little time, just for you",
     "A matching hash confirms the published file, not the safety of its code.": "A matching hash confirms the published file, not the safety of its code.",
     "A Passkey created for www.example.com cannot be used on example.com. Keep the old website available so users can still verify there.": "A Passkey created for www.example.com cannot be used on example.com. Keep the old website available so users can still verify there.",
+    "A registration invitation code is required to continue.": "A registration invitation code is required to continue.",
     "A security operation is already in progress.": "A security operation is already in progress.",
     "A selected model no longer exists. Reload the model list.": "A selected model no longer exists. Reload the model list.",
     "A token that never expires stays valid until you revoke it. Set an expiration date when possible.": "A token that never expires stays valid until you revoke it. Set an expiration date when possible.",

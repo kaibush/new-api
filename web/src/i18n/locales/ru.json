@@ -171,6 +171,7 @@
     "A little time, just for you": "Немного времени для себя",
     "A matching hash confirms the published file, not the safety of its code.": "Совпадение хеша подтверждает соответствие опубликованному файлу, но не безопасность кода.",
     "A Passkey created for www.example.com cannot be used on example.com. Keep the old website available so users can still verify there.": "Ключ доступа, созданный для www.example.com, не работает на example.com. Сохраните доступ к прежнему сайту, чтобы пользователи могли проходить проверку на нём.",
+    "A registration invitation code is required to continue.": "Для продолжения требуется код приглашения для регистрации.",
     "A security operation is already in progress.": "Операция безопасности уже выполняется.",
     "A selected model no longer exists. Reload the model list.": "Выбранная модель больше не существует. Обновите список моделей.",
     "A token that never expires stays valid until you revoke it. Set an expiration date when possible.": "Бессрочный токен действует, пока вы его не отзовёте. По возможности задайте срок действия.",

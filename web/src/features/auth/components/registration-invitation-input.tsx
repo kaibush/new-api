@@ -19,7 +19,12 @@ For commercial licensing, please contact support@quantumnous.com
 import { useId } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldLabel,
+} from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 
 type RegistrationInvitationInputProps = {
@@ -37,10 +42,22 @@ export function RegistrationInvitationInput({
 }: RegistrationInvitationInputProps) {
   const { t } = useTranslation()
   const controlId = useId()
+  const invitationMissing = required && value.trim() === ''
+  const descriptionId = `${controlId}-description`
+  const errorId = `${controlId}-error`
+  let describedBy: string | undefined
+  if (invitationMissing) {
+    describedBy = errorId
+  } else if (!required) {
+    describedBy = descriptionId
+  }
 
   return (
-    <Field data-disabled={disabled || undefined}>
-      <FieldLabel htmlFor={controlId}>
+    <Field
+      data-invalid={invitationMissing || undefined}
+      data-disabled={disabled || undefined}
+    >
+      <FieldLabel htmlFor={controlId} required={required}>
         {t('Registration invitation code')}
       </FieldLabel>
       <Input
@@ -50,11 +67,18 @@ export function RegistrationInvitationInput({
         placeholder={t('Enter your registration invitation code')}
         required={required}
         disabled={disabled}
+        aria-invalid={invitationMissing || undefined}
+        aria-describedby={describedBy}
         maxLength={128}
         autoComplete='off'
       />
+      {invitationMissing ? (
+        <FieldError id={errorId}>
+          {t('A registration invitation code is required to continue.')}
+        </FieldError>
+      ) : null}
       {!required && (
-        <FieldDescription>
+        <FieldDescription id={descriptionId}>
           {t(
             'Only required for new accounts. Existing accounts can sign in without a code.'
           )}

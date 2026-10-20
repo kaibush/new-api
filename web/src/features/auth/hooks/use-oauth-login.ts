@@ -206,7 +206,14 @@ export function useOAuthLogin(
     }
     setIsLoading(true)
     try {
-      const authorization = await createOAuthAuthorization('telegram', 'login')
+      const authorization = await createOAuthAuthorization(
+        'telegram',
+        'login',
+        undefined,
+        undefined,
+        undefined,
+        invitationCode
+      )
       if (!authorization.authorizationUrl) {
         throw new AuthOperationError('Failed to initialize OAuth')
       }

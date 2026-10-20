@@ -171,6 +171,7 @@
     "A little time, just for you": "Un peu de temps pour vous",
     "A matching hash confirms the published file, not the safety of its code.": "Une empreinte identique confirme le fichier publié, pas la sécurité de son code.",
     "A Passkey created for www.example.com cannot be used on example.com. Keep the old website available so users can still verify there.": "Une clé d’accès créée pour www.example.com ne fonctionne pas sur example.com. Gardez l’ancien site accessible pour permettre aux utilisateurs de s’y authentifier.",
+    "A registration invitation code is required to continue.": "Un code d’invitation à l’inscription est requis pour continuer.",
     "A security operation is already in progress.": "Une opération de sécurité est déjà en cours.",
     "A selected model no longer exists. Reload the model list.": "Un modèle sélectionné n’existe plus. Rechargez la liste.",
     "A token that never expires stays valid until you revoke it. Set an expiration date when possible.": "Un jeton qui n’expire jamais reste valide jusqu’à sa révocation. Définissez une date d’expiration si possible.",

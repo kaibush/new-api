@@ -171,6 +171,7 @@
     "A little time, just for you": "留一點時間，給自己",
     "A matching hash confirms the published file, not the safety of its code.": "校驗一致僅表示檔案與發布版本相符，不代表程式碼安全。",
     "A Passkey created for www.example.com cannot be used on example.com. Keep the old website available so users can still verify there.": "為 www.example.com 建立的通行金鑰無法在 example.com 使用。請保留舊網站，讓使用者仍能在該網站驗證。",
+    "A registration invitation code is required to continue.": "請先填寫註冊邀請碼後再繼續。",
     "A security operation is already in progress.": "已有安全操作正在進行。",
     "A selected model no longer exists. Reload the model list.": "所選模型已不存在，請重新載入模型清單。",
     "A token that never expires stays valid until you revoke it. Set an expiration date when possible.": "永不過期的令牌在撤銷前一直有效，建議設定過期時間。",

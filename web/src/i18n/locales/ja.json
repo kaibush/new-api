@@ -171,6 +171,7 @@
     "A little time, just for you": "自分だけの時間を少し",
     "A matching hash confirms the published file, not the safety of its code.": "ハッシュの一致は公開ファイルとの同一性を示すだけで、コードの安全性は保証しません。",
     "A Passkey created for www.example.com cannot be used on example.com. Keep the old website available so users can still verify there.": "www.example.com で作成したパスキーは example.com では使用できません。ユーザーが引き続き認証できるよう、以前のウェブサイトを維持してください。",
+    "A registration invitation code is required to continue.": "続行するには登録用招待コードが必要です。",
     "A security operation is already in progress.": "セキュリティ操作を実行中です。",
     "A selected model no longer exists. Reload the model list.": "選択したモデルは既に削除されています。一覧を再読み込みしてください。",
     "A token that never expires stays valid until you revoke it. Set an expiration date when possible.": "無期限のトークンは取り消すまで有効です。可能な限り有効期限を設定してください。",
