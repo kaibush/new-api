@@ -27,7 +27,6 @@ import {
   IconWeChat,
 } from '@/assets/brand-icons'
 import { Button } from '@/components/ui/button'
-import { validateRegistrationInvitation } from '@/features/auth/api'
 import { cn } from '@/lib/utils'
 
 import { useOAuthLogin } from '../hooks/use-oauth-login'
@@ -42,7 +41,6 @@ type OAuthProvidersProps = {
   isWeChatLoading?: boolean
   redirectTo?: string
   invitationCode?: string
-  onBeforeLogin?: () => boolean | Promise<boolean>
 }
 
 type ProviderButton = {
@@ -61,12 +59,9 @@ export function OAuthProviders({
   isWeChatLoading = false,
   redirectTo,
   invitationCode,
-  onBeforeLogin,
 }: OAuthProvidersProps) {
   const { t } = useTranslation()
   const [loginInvitationCode, setLoginInvitationCode] = useState('')
-  const [invitationInvalid, setInvitationInvalid] = useState(false)
-  const [isCheckingInvitation, setIsCheckingInvitation] = useState(false)
   const registrationInvitationEnabled = Boolean(
     status?.registration_invitation_enabled ??
     status?.data?.registration_invitation_enabled
@@ -88,24 +83,6 @@ export function OAuthProviders({
     handleTelegramLogin,
     handleCustomOAuthLogin,
   } = useOAuthLogin(status, redirectTo, effectiveInvitationCode)
-
-  async function acceptInvitation() {
-    if (!registrationInvitationEnabled || !managesInvitationInput) return true
-    const code = effectiveInvitationCode.trim()
-    if (!code) return false
-    setIsCheckingInvitation(true)
-    try {
-      const result = await validateRegistrationInvitation(code)
-      const valid = Boolean(result?.success)
-      setInvitationInvalid(!valid)
-      return valid
-    } catch {
-      setInvitationInvalid(true)
-      return false
-    } finally {
-      setIsCheckingInvitation(false)
-    }
-  }
 
   const providerButtons: ProviderButton[] = []
 
@@ -197,14 +174,9 @@ export function OAuthProviders({
       {registrationInvitationEnabled && managesInvitationInput && (
         <RegistrationInvitationInput
           value={loginInvitationCode}
-          onChange={(value) => {
-            setLoginInvitationCode(value)
-            setInvitationInvalid(false)
-          }}
+          onChange={setLoginInvitationCode}
           required
-          hint
-          invalid={invitationInvalid}
-          disabled={disabled || isLoading || isCheckingInvitation}
+          disabled={disabled || isLoading}
         />
       )}
 
@@ -216,19 +188,9 @@ export function OAuthProviders({
               variant='outline'
               type='button'
               disabled={
-                disabled ||
-                isLoading ||
-                extraDisabled ||
-                invitationMissing ||
-                isCheckingInvitation
+                disabled || isLoading || extraDisabled || invitationMissing
               }
-              onClick={() => {
-                void (async () => {
-                  if (!(await acceptInvitation())) return
-                  if (onBeforeLogin && !(await onBeforeLogin())) return
-                  onClick()
-                })()
-              }}
+              onClick={onClick}
               className='h-11 w-full justify-center gap-2 rounded-lg'
             >
               {icon}

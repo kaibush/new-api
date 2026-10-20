@@ -62,13 +62,13 @@ test.each([true, false])(
       name: /Registration invitation code/,
     })
     if (enabled) {
-      expect(invitation).toHaveAttribute('aria-required', 'true')
-      expect(invitation).not.toHaveAttribute('required')
-      expect(invitation).not.toHaveAttribute('aria-invalid')
+      expect(invitation).toBeRequired()
+      expect(invitation).toHaveAttribute('aria-invalid', 'true')
       await user.type(
         screen.getByRole('textbox', { name: /Registration invitation code/ }),
         ' registration-code-123456 '
       )
+      expect(invitation).not.toHaveAttribute('aria-invalid')
     } else {
       expect(invitation).not.toBeInTheDocument()
     }
@@ -95,67 +95,8 @@ test.each([true, false])(
         expect.anything()
       )
     )
-    if (enabled) {
-      const urls = post.mock.calls.map(([url]) => url)
-      expect(urls.indexOf('/api/user/register/invitation')).toBeLessThan(
-        urls.indexOf('/api/user/register')
-      )
-    } else {
-      expect(post.mock.calls.map(([url]) => url)).not.toContain(
-        '/api/user/register/invitation'
-      )
-    }
   }
 )
-
-test('registration checks the invitation code before other fields', async () => {
-  vi.mocked(useStatus).mockReturnValue({
-    status: {
-      registration_invitation_enabled: true,
-      oauth_register_enabled: false,
-    },
-    loading: false,
-    error: null,
-  })
-  const post = vi.spyOn(api, 'post').mockResolvedValue({
-    data: { success: false, message: 'invalid invitation' },
-  })
-  const user = userEvent.setup()
-  render(<SignUpForm />)
-
-  await user.click(screen.getByRole('button', { name: 'Create account' }))
-  expect(post).not.toHaveBeenCalled()
-  expect(
-    screen.getByText(
-      'A valid registration invitation code is required to create an account'
-    )
-  ).toBeInTheDocument()
-  expect(screen.getByRole('textbox', { name: 'Username' })).not.toHaveAttribute(
-    'aria-invalid',
-    'true'
-  )
-
-  post.mockResolvedValue({ data: { success: false } })
-  await user.type(
-    screen.getByRole('textbox', { name: /Registration invitation code/ }),
-    'incorrect-code-123456'
-  )
-  await user.click(screen.getByRole('button', { name: 'Create account' }))
-  await waitFor(() =>
-    expect(post).toHaveBeenCalledWith(
-      '/api/user/register/invitation',
-      { invitation_code: 'incorrect-code-123456' },
-      expect.anything()
-    )
-  )
-  expect(post.mock.calls.map(([url]) => url)).not.toContain(
-    '/api/user/register'
-  )
-  expect(screen.getByRole('textbox', { name: 'Username' })).not.toHaveAttribute(
-    'aria-invalid',
-    'true'
-  )
-})
 
 test('OAuth highlights a required invitation code and blocks provider buttons until it is entered', async () => {
   const user = userEvent.setup()
@@ -183,19 +124,14 @@ test('OAuth highlights a required invitation code and blocks provider buttons un
   })
   const linuxdo = screen.getByRole('button', { name: /Continue with LinuxDO/ })
   const github = screen.getByRole('button', { name: /Continue with GitHub/ })
-  expect(invitation).toHaveAttribute('aria-required', 'true')
-  expect(invitation).not.toHaveAttribute('required')
-  expect(invitation).not.toHaveAttribute('aria-invalid')
-  expect(invitation).toHaveClass('border-primary')
+  expect(invitation).toBeRequired()
+  expect(invitation).toHaveAttribute('aria-invalid', 'true')
+  expect(invitation.closest('[data-slot="field"]')).toHaveAttribute(
+    'data-invalid',
+    'true'
+  )
   expect(
-    screen.queryByText(
-      'A valid registration invitation code is required to create an account'
-    )
-  ).not.toBeInTheDocument()
-  expect(
-    screen.getByText(
-      'Only required for new accounts. Existing accounts can sign in without a code.'
-    )
+    screen.getByText('A registration invitation code is required to continue.')
   ).toBeInTheDocument()
   expect(linuxdo).toBeDisabled()
   expect(github).toBeDisabled()
@@ -207,6 +143,11 @@ test('OAuth highlights a required invitation code and blocks provider buttons un
   await user.clear(invitation)
   await user.type(invitation, 'registration-code-123456')
   expect(invitation).not.toHaveAttribute('aria-invalid')
+  expect(
+    screen.queryByText(
+      'A registration invitation code is required to continue.'
+    )
+  ).not.toBeInTheDocument()
   expect(linuxdo).toBeEnabled()
   expect(github).toBeEnabled()
 
@@ -221,35 +162,6 @@ test('OAuth highlights a required invitation code and blocks provider buttons un
       expect.anything()
     )
   )
-  const urls = post.mock.calls.map(([url]) => url)
-  expect(urls.indexOf('/api/user/register/invitation')).toBeLessThan(
-    urls.indexOf('/api/oauth/state')
-  )
-})
-
-test('an empty registration invitation does not block password sign-in', async () => {
-  const user = userEvent.setup()
-  const onSubmit = vi.fn()
-  render(
-    <form
-      onSubmit={(event) => {
-        event.preventDefault()
-        onSubmit(event)
-      }}
-    >
-      <OAuthProviders
-        status={{
-          linuxdo_oauth: true,
-          linuxdo_client_id: 'linuxdo-client',
-          registration_invitation_enabled: true,
-        }}
-      />
-      <button type='submit'>Sign in</button>
-    </form>
-  )
-
-  await user.click(screen.getByRole('button', { name: 'Sign in' }))
-  expect(onSubmit).toHaveBeenCalled()
 })
 
 test('OAuth leaves provider buttons available when registration invitations are disabled', async () => {

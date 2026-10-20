@@ -26,15 +26,12 @@ import {
   FieldLabel,
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { cn } from '@/lib/utils'
 
 type RegistrationInvitationInputProps = {
   value: string
   onChange: (value: string) => void
   required?: boolean
   disabled?: boolean
-  invalid?: boolean
-  hint?: boolean
 }
 
 export function RegistrationInvitationInput({
@@ -42,23 +39,22 @@ export function RegistrationInvitationInput({
   onChange,
   required = false,
   disabled = false,
-  invalid = false,
-  hint = false,
 }: RegistrationInvitationInputProps) {
   const { t } = useTranslation()
   const controlId = useId()
+  const invitationMissing = required && value.trim() === ''
   const descriptionId = `${controlId}-description`
   const errorId = `${controlId}-error`
   let describedBy: string | undefined
-  if (invalid) {
+  if (invitationMissing) {
     describedBy = errorId
-  } else if (hint) {
+  } else if (!required) {
     describedBy = descriptionId
   }
 
   return (
     <Field
-      data-invalid={invalid || undefined}
+      data-invalid={invitationMissing || undefined}
       data-disabled={disabled || undefined}
     >
       <FieldLabel htmlFor={controlId} required={required}>
@@ -69,32 +65,25 @@ export function RegistrationInvitationInput({
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={t('Enter your registration invitation code')}
-        aria-required={required || undefined}
+        required={required}
         disabled={disabled}
-        aria-invalid={invalid || undefined}
+        aria-invalid={invitationMissing || undefined}
         aria-describedby={describedBy}
         maxLength={128}
         autoComplete='off'
-        className={cn(
-          required &&
-            !invalid &&
-            'border-primary focus-visible:border-primary focus-visible:ring-primary/30'
-        )}
       />
-      {invalid ? (
+      {invitationMissing ? (
         <FieldError id={errorId}>
-          {t(
-            'A valid registration invitation code is required to create an account'
-          )}
+          {t('A registration invitation code is required to continue.')}
         </FieldError>
       ) : null}
-      {hint && !invalid ? (
+      {!required && (
         <FieldDescription id={descriptionId}>
           {t(
             'Only required for new accounts. Existing accounts can sign in without a code.'
           )}
         </FieldDescription>
-      ) : null}
+      )}
     </Field>
   )
 }

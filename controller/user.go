@@ -214,26 +214,6 @@ func writeLoginResponse(c *gin.Context, user *model.User, bundle *service.AuthBu
 	})
 }
 
-func CheckRegistrationInvitation(c *gin.Context) {
-	var request struct {
-		InvitationCode string `json:"invitation_code"`
-	}
-	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
-		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
-		return
-	}
-	if err := model.ValidateRegistrationInvitation(common.RegistrationInvitationHash(request.InvitationCode)); err != nil {
-		if !errors.Is(err, model.ErrRegistrationInvitationInvalid) {
-			common.ApiErrorI18n(c, i18n.MsgDatabaseError)
-			return
-		}
-		recordUserSecurityAudit(c, 0, "user.registration_denied", map[string]any{"method": "invitation_check", "reason": "invitation_required", "success": false})
-		writeRegistrationInvitationError(c)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
-}
-
 func Register(c *gin.Context) {
 	if !common.RegisterEnabled {
 		common.ApiErrorI18n(c, i18n.MsgUserRegisterDisabled)

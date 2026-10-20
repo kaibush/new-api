@@ -18,13 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Loader2 } from 'lucide-react'
-import {
-  useEffect,
-  useMemo,
-  useState,
-  type FormEvent,
-  type ReactNode,
-} from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -44,11 +38,7 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  register,
-  validateRegistrationInvitation,
-  wechatLoginByCode,
-} from '@/features/auth/api'
+import { register, wechatLoginByCode } from '@/features/auth/api'
 import { LegalConsent } from '@/features/auth/components/legal-consent'
 import { OAuthProviders } from '@/features/auth/components/oauth-providers'
 import { RegistrationInvitationInput } from '@/features/auth/components/registration-invitation-input'
@@ -74,8 +64,6 @@ export function SignUpForm({
   const [isLoading, setIsLoading] = useState(false)
   const [verificationCode, setVerificationCode] = useState('')
   const [invitationCode, setInvitationCode] = useState('')
-  const [invitationInvalid, setInvitationInvalid] = useState(false)
-  const [isCheckingInvitation, setIsCheckingInvitation] = useState(false)
   const [agreedToLegal, setAgreedToLegal] = useState(false)
   const [wechatCode, setWeChatCode] = useState('')
   const [isWeChatDialogOpen, setIsWeChatDialogOpen] = useState(false)
@@ -156,33 +144,6 @@ export function SignUpForm({
       saveAffiliateCode(aff)
     }
   }, [])
-
-  async function ensureInvitation() {
-    if (!invitationRequired) return true
-    const code = invitationCode.trim()
-    if (!code) {
-      setInvitationInvalid(true)
-      return false
-    }
-    setIsCheckingInvitation(true)
-    try {
-      const result = await validateRegistrationInvitation(code)
-      const valid = Boolean(result?.success)
-      setInvitationInvalid(!valid)
-      return valid
-    } catch {
-      setInvitationInvalid(true)
-      return false
-    } finally {
-      setIsCheckingInvitation(false)
-    }
-  }
-
-  async function handleRegistrationSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!(await ensureInvitation())) return
-    await form.handleSubmit(onSubmit)(event)
-  }
 
   async function onSubmit(data: z.infer<typeof registerFormSchema>) {
     if (requiresLegalConsent && !agreedToLegal) {
@@ -293,22 +254,16 @@ export function SignUpForm({
   return (
     <Form {...form}>
       <form
-        onSubmit={(event) => {
-          void handleRegistrationSubmit(event)
-        }}
+        onSubmit={form.handleSubmit(onSubmit)}
         className={cn('grid gap-4', className)}
         {...props}
       >
         {invitationRequired && (
           <RegistrationInvitationInput
             value={invitationCode}
-            onChange={(value) => {
-              setInvitationCode(value)
-              setInvitationInvalid(false)
-            }}
+            onChange={setInvitationCode}
             required
-            invalid={invitationInvalid}
-            disabled={isLoading || isCheckingInvitation}
+            disabled={isLoading}
           />
         )}
 
@@ -435,7 +390,6 @@ export function SignUpForm({
           className='mt-2 w-full justify-center gap-2'
           disabled={
             isLoading ||
-            isCheckingInvitation ||
             (requiresLegalConsent && !agreedToLegal) ||
             !turnstileReady
           }
@@ -449,7 +403,6 @@ export function SignUpForm({
             status={status}
             disabled={
               isLoading ||
-              isCheckingInvitation ||
               (requiresLegalConsent && !agreedToLegal) ||
               (invitationRequired && !invitationCode.trim())
             }
@@ -457,7 +410,6 @@ export function SignUpForm({
             isWeChatLoading={isWeChatSubmitting}
             className='pt-2'
             invitationCode={invitationCode}
-            onBeforeLogin={ensureInvitation}
           />
         )}
       </form>
