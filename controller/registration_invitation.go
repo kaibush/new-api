@@ -62,3 +62,26 @@ func RevokeRegistrationInvitation(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
+
+func DeleteRegistrationInvitations(c *gin.Context) {
+	var request struct {
+		IDs []int `json:"ids"`
+	}
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil || len(request.IDs) < 1 || len(request.IDs) > 100 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	for _, id := range request.IDs {
+		if id < 1 {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
+		}
+	}
+	count, err := model.DeleteRegistrationInvitations(request.IDs)
+	recordManageAudit(c, "registration_invitation.delete", map[string]any{"invitation_ids": request.IDs, "deleted_count": count, "success": err == nil})
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgDatabaseError)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": count})
+}

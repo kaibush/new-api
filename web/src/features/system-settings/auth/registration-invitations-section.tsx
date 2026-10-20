@@ -21,11 +21,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { z } from 'zod'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { CopyButton } from '@/components/copy-button'
 import {
+  DataTableBulkActions,
   DataTablePagination,
   StaticDataTable,
   useDataTable,
@@ -33,6 +35,7 @@ import {
 import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Field,
   FieldDescription,
@@ -46,6 +49,7 @@ import { formatNumber } from '@/lib/format'
 
 import { SettingsSection } from '../components/settings-section'
 import {
+  deleteRegistrationInvitations,
   generateRegistrationInvitations,
   revokeRegistrationInvitation,
   searchRegistrationInvitations,
@@ -66,6 +70,9 @@ export function RegistrationInvitationsSection() {
   const [search, setSearch] = useState('')
   const [searchInput, setSearchInput] = useState('')
   const [codes, setCodes] = useState<string[]>([])
+  const [deleteTargets, setDeleteTargets] = useState<RegistrationInvitation[]>(
+    []
+  )
   const [revokeTarget, setRevokeTarget] =
     useState<RegistrationInvitation | null>(null)
   const form = useForm<z.infer<typeof generationSchema>>({
@@ -95,14 +102,41 @@ export function RegistrationInvitationsSection() {
       void client.invalidateQueries({ queryKey })
     },
   })
+  const remove = useMutation({
+    mutationFn: deleteRegistrationInvitations,
+    onSuccess: (deletedCount) => {
+      const deletedCodes = new Set(deleteTargets.map((row) => row.code))
+      setCodes((previous) => previous.filter((code) => !deletedCodes.has(code)))
+      setDeleteTargets([])
+      table.resetRowSelection()
+      const remaining = Math.max(0, (list.data?.total ?? 0) - deletedCount)
+      setPagination((previous) => ({
+        ...previous,
+        pageIndex: Math.min(
+          previous.pageIndex,
+          Math.max(0, Math.ceil(remaining / previous.pageSize) - 1)
+        ),
+      }))
+      toast.success(t('Deleted successfully'))
+      void client.invalidateQueries({ queryKey })
+    },
+  })
   const { table } = useDataTable({
     data: list.data?.items ?? [],
     columns: [],
     totalCount: list.data?.total ?? 0,
     pagination,
-    onPaginationChange: setPagination,
+    onPaginationChange: (updater) => {
+      table.resetRowSelection()
+      setPagination(updater)
+    },
     manualPagination: true,
+    enableRowSelection: true,
+    getRowId: (row) => String(row.id),
   })
+  const selected = table.getSelectedRowModel().rows.map((row) => row.original)
+  const canCopySelected =
+    selected.length > 0 && selected.every((row) => !!row.code)
 
   return (
     <SettingsSection title={t('Registration invitations')}>
@@ -164,7 +198,7 @@ export function RegistrationInvitationsSection() {
           />
           <FieldDescription>
             {t(
-              'Copy these codes now. Full codes are shown only once; records display a prefix. Search with a full code to find its user.'
+              'You can copy saved codes individually or select several to copy them together. Search with a full code to find its user.'
             )}
           </FieldDescription>
           <div className='flex gap-2'>
@@ -186,6 +220,7 @@ export function RegistrationInvitationsSection() {
         onSubmit={(event) => {
           event.preventDefault()
           setSearch(searchInput.trim())
+          table.resetRowSelection()
           setPagination({ pageIndex: 0, pageSize: 20 })
         }}
       >
@@ -207,7 +242,10 @@ export function RegistrationInvitationsSection() {
             <Button
               type='button'
               variant='ghost'
-              onClick={() => void list.refetch()}
+              onClick={() => {
+                table.resetRowSelection()
+                void list.refetch()
+              }}
             >
               {t('Refresh')}
             </Button>
@@ -218,15 +256,86 @@ export function RegistrationInvitationsSection() {
       {list.isError && <ErrorState onRetry={() => void list.refetch()} />}
       {list.isSuccess && (
         <>
+          {list.data.items.some((row) => !row.code) && (
+            <p className='text-muted-foreground text-sm'>
+              {t(
+                'Some full codes are unavailable because they were not saved or cannot be decrypted. You can delete these records and generate new codes.'
+              )}
+            </p>
+          )}
+          <DataTableBulkActions
+            table={table}
+            placement='inline'
+            entityName={t('Registration invitation code')}
+          >
+            <CopyButton
+              value={selected.map((row) => row.code).join('\n')}
+              disabled={!canCopySelected}
+              size='sm'
+              variant='outline'
+              aria-label={t('Copy selected invitation codes')}
+            >
+              {t('Copy selected invitation codes')}
+            </CopyButton>
+            <Button
+              size='sm'
+              variant='destructive'
+              disabled={remove.isPending}
+              onClick={() => setDeleteTargets(selected)}
+            >
+              {t('Delete selected')}
+            </Button>
+          </DataTableBulkActions>
           <StaticDataTable
             data={list.data.items}
             getRowKey={(row) => row.id}
             emptyContent={t('No registration invitations found')}
             columns={[
               {
+                id: 'select',
+                className: 'w-12',
+                header: (
+                  <Checkbox
+                    aria-label={t('Select all')}
+                    checked={table.getIsAllPageRowsSelected()}
+                    indeterminate={table.getIsSomePageRowsSelected()}
+                    disabled={list.data.items.length === 0 || remove.isPending}
+                    onCheckedChange={(checked) =>
+                      table.toggleAllPageRowsSelected(!!checked)
+                    }
+                  />
+                ),
+                cell: (row) => (
+                  <Checkbox
+                    aria-label={t('Select row')}
+                    checked={table.getRow(String(row.id)).getIsSelected()}
+                    disabled={remove.isPending}
+                    onCheckedChange={(checked) =>
+                      table.getRow(String(row.id)).toggleSelected(!!checked)
+                    }
+                  />
+                ),
+              },
+              {
                 id: 'code',
                 header: t('Registration invitation code'),
-                cell: (row) => `${row.code_prefix}…`,
+                cell: (row) => (
+                  <div className='flex items-center gap-2'>
+                    <span className='font-mono'>{row.code_prefix}…</span>
+                    {row.code ? (
+                      <CopyButton
+                        value={row.code}
+                        size='sm'
+                        aria-label={t('Copy invitation code')}
+                        tooltip={t('Copy invitation code')}
+                      />
+                    ) : (
+                      <span className='text-muted-foreground text-xs'>
+                        {t('Full code unavailable')}
+                      </span>
+                    )}
+                  </div>
+                ),
               },
               {
                 id: 'status',
@@ -264,19 +373,29 @@ export function RegistrationInvitationsSection() {
                 id: 'actions',
                 header: t('Actions'),
                 cell: (row) => (
-                  <Button
-                    size='sm'
-                    variant='outline'
-                    disabled={
-                      !!row.used_user_id ||
-                      !!row.revoked_at ||
-                      row.expires_at <= Date.now() / 1000 ||
-                      revoke.isPending
-                    }
-                    onClick={() => setRevokeTarget(row)}
-                  >
-                    {t('Disable')}
-                  </Button>
+                  <div className='flex items-center gap-2'>
+                    <Button
+                      size='sm'
+                      variant='outline'
+                      disabled={
+                        !!row.used_user_id ||
+                        !!row.revoked_at ||
+                        row.expires_at <= Date.now() / 1000 ||
+                        revoke.isPending
+                      }
+                      onClick={() => setRevokeTarget(row)}
+                    >
+                      {t('Disable')}
+                    </Button>
+                    <Button
+                      size='sm'
+                      variant='destructive'
+                      disabled={remove.isPending}
+                      onClick={() => setDeleteTargets([row])}
+                    >
+                      {t('Delete')}
+                    </Button>
+                  </div>
                 ),
               },
             ]}
@@ -284,6 +403,21 @@ export function RegistrationInvitationsSection() {
           <DataTablePagination table={table} compact />
         </>
       )}
+      <ConfirmDialog
+        open={deleteTargets.length > 0}
+        onOpenChange={(open) => {
+          if (!open && !remove.isPending) setDeleteTargets([])
+        }}
+        title={t('Delete invitation codes')}
+        desc={t(
+          'Delete {{count}} invitation code(s)? They will no longer allow registration. Existing accounts will not be affected. This cannot be undone.',
+          { count: deleteTargets.length }
+        )}
+        confirmText={t('Delete')}
+        destructive
+        isLoading={remove.isPending}
+        handleConfirm={() => remove.mutate(deleteTargets.map((row) => row.id))}
+      />
       <ConfirmDialog
         open={!!revokeTarget}
         onOpenChange={(open) => {

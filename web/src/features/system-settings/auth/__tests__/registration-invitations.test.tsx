@@ -28,6 +28,7 @@ import { RegistrationInvitationsSection } from '../registration-invitations-sect
 const unused = {
   id: 1,
   code_prefix: '01234567',
+  code: `01234567${'a'.repeat(56)}`,
   created_at: 1700000000,
   expires_at: 4102444800,
   revoked_at: 0,
@@ -39,6 +40,7 @@ const used = {
   ...unused,
   id: 2,
   code_prefix: '89abcdef',
+  code: `89abcdef${'b'.repeat(56)}`,
   used_at: 1700000100,
   used_user_id: 42,
   username: 'linuxdo-user',
@@ -203,4 +205,133 @@ test('keeps a failed disable confirmation open and does not show codes after fai
   expect(
     screen.queryByRole('textbox', { name: 'Generated invitation codes' })
   ).not.toBeInTheDocument()
+})
+
+test('copies a saved invitation after opening the page and copies selected invitations in full', async () => {
+  const user = userEvent.setup()
+  const clipboard = vi.spyOn(navigator.clipboard, 'writeText')
+  renderInvitations()
+  const row = await screen.findByRole('row', { name: /01234567/ })
+  await user.click(
+    within(row).getByRole('button', { name: 'Copy invitation code' })
+  )
+  expect(clipboard).toHaveBeenLastCalledWith(unused.code)
+  await user.click(screen.getByRole('checkbox', { name: 'Select all' }))
+  await user.click(
+    screen.getByRole('button', { name: 'Copy selected invitation codes' })
+  )
+  expect(clipboard).toHaveBeenLastCalledWith(`${unused.code}\n${used.code}`)
+})
+
+test('deletes a used invitation only after confirmation and refreshes the list', async () => {
+  const user = userEvent.setup()
+  renderInvitations()
+  const row = await screen.findByRole('row', { name: /89abcdef/ })
+  await user.click(within(row).getByRole('button', { name: 'Delete' }))
+  const dialog = await screen.findByRole('alertdialog')
+  expect(api.post).not.toHaveBeenCalledWith(
+    `${endpoint}/delete`,
+    expect.anything()
+  )
+  vi.mocked(api.post).mockImplementation(async (url) => {
+    if (url === `${endpoint}/delete`) {
+      return { data: { success: true, data: 1 } }
+    }
+    return { data: { success: true, data: { items: [unused], total: 1 } } }
+  })
+  await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+  await waitFor(() =>
+    expect(api.post).toHaveBeenCalledWith(`${endpoint}/delete`, {
+      ids: [used.id],
+    })
+  )
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('row', { name: /89abcdef/ })
+    ).not.toBeInTheDocument()
+  )
+})
+
+test('bulk deletion uses only selected IDs, preserves selection on failure, and clears it after success', async () => {
+  const user = userEvent.setup()
+  renderInvitations()
+  await screen.findByRole('row', { name: /01234567/ })
+  await user.click(screen.getByRole('checkbox', { name: 'Select all' }))
+  await user.click(screen.getByRole('button', { name: 'Delete selected' }))
+  vi.mocked(api.post).mockResolvedValueOnce({
+    data: { success: false, message: 'Unavailable' },
+  })
+  await user.click(
+    within(await screen.findByRole('alertdialog')).getByRole('button', {
+      name: 'Delete',
+    })
+  )
+  await waitFor(() =>
+    expect(
+      within(screen.getByRole('alertdialog')).getByRole('button', {
+        name: 'Delete',
+      })
+    ).toBeEnabled()
+  )
+  expect(api.post).toHaveBeenCalledWith(`${endpoint}/delete`, {
+    ids: [unused.id, used.id],
+  })
+  vi.mocked(api.post).mockImplementation(async (url) => {
+    if (url === `${endpoint}/delete`) {
+      return { data: { success: true, data: 2 } }
+    }
+    return { data: { success: true, data: { items: [], total: 0 } } }
+  })
+  await user.click(
+    within(screen.getByRole('alertdialog')).getByRole('button', {
+      name: 'Delete',
+    })
+  )
+  expect(
+    await screen.findByText('No registration invitations found')
+  ).toBeVisible()
+  expect(screen.queryByRole('toolbar')).not.toBeInTheDocument()
+})
+
+test('legacy records explain unavailable full codes and cannot silently copy just their prefixes', async () => {
+  const user = userEvent.setup()
+  const clipboard = vi.spyOn(navigator.clipboard, 'writeText')
+  vi.mocked(api.post).mockResolvedValue({
+    data: {
+      success: true,
+      data: { items: [{ ...unused, code: '' }, used], total: 2 },
+    },
+  })
+  renderInvitations()
+  const row = await screen.findByRole('row', { name: /01234567/ })
+  expect(
+    within(row).queryByRole('button', { name: 'Copy invitation code' })
+  ).not.toBeInTheDocument()
+  expect(within(row).getByText('Full code unavailable')).toBeVisible()
+  await user.click(screen.getByRole('checkbox', { name: 'Select all' }))
+  expect(
+    screen.getByRole('button', { name: 'Copy selected invitation codes' })
+  ).toBeDisabled()
+  expect(clipboard).not.toHaveBeenCalled()
+})
+
+test('changing pages clears selection so bulk actions cannot target another page', async () => {
+  const user = userEvent.setup()
+  renderInvitations()
+  const row = await screen.findByRole('row', { name: /01234567/ })
+  const checkbox = within(row).getByRole('checkbox', { name: 'Select row' })
+  checkbox.focus()
+  await user.keyboard(' ')
+  expect(checkbox).toBeChecked()
+  expect(
+    screen.getByRole('checkbox', { name: 'Select all' })
+  ).toBePartiallyChecked()
+  await user.click(screen.getByRole('button', { name: 'Go to next page' }))
+  await waitFor(() =>
+    expect(api.post).toHaveBeenCalledWith(`${endpoint}/search`, {
+      page: 2,
+      code: '',
+    })
+  )
+  expect(screen.queryByRole('toolbar')).not.toBeInTheDocument()
 })

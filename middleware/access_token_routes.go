@@ -153,6 +153,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	// router/api-router.go: /api/option
 	"GET /api/option/": accessTokenScopeRule("option:read"),
 	"POST /api/option/registration-invitations/search":           accessTokenSessionRule,
+	"POST /api/option/registration-invitations/delete":           accessTokenSessionRule,
 	"POST /api/option/registration-invitations/":                 accessTokenSessionRule,
 	"DELETE /api/option/registration-invitations/:id":            accessTokenSessionRule,
 	"GET /api/option/request_policy":                             accessTokenScopeRule("option:read"),

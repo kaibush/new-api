@@ -31,6 +31,7 @@ import { cn } from '@/lib/utils'
 
 interface CopyButtonProps {
   value: string
+  disabled?: boolean
   children?: ReactNode
   className?: string
   iconClassName?: string
@@ -43,6 +44,7 @@ interface CopyButtonProps {
 
 export function CopyButton({
   value,
+  disabled = false,
   children,
   className,
   iconClassName,
@@ -62,6 +64,7 @@ export function CopyButton({
 
   const button = (
     <Button
+      disabled={disabled}
       variant={variant}
       size={size}
       className={cn('shrink-0', className)}
@@ -80,7 +83,7 @@ export function CopyButton({
   if (tooltip || successTooltip) {
     return (
       <Tooltip>
-        <TooltipTrigger render={button}></TooltipTrigger>
+        <TooltipTrigger render={button} />
         <TooltipContent>
           <p>{isCopied ? resolvedSuccessTooltip : resolvedTooltip}</p>
         </TooltipContent>

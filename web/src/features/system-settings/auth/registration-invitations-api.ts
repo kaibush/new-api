@@ -22,6 +22,7 @@ import { requireServerSuccess } from '@/lib/server-error-message'
 export type RegistrationInvitation = {
   id: number
   code_prefix: string
+  code?: string
   created_at: number
   expires_at: number
   revoked_at: number
@@ -57,4 +58,12 @@ export async function generateRegistrationInvitations(values: {
 export async function revokeRegistrationInvitation(id: number) {
   const response = await api.delete<{ success: boolean }>(`${endpoint}/${id}`)
   return requireServerSuccess(response.data)
+}
+
+export async function deleteRegistrationInvitations(ids: number[]) {
+  const response = await api.post<{ success: boolean; data: number }>(
+    `${endpoint}/delete`,
+    { ids }
+  )
+  return requireServerSuccess(response.data).data
 }

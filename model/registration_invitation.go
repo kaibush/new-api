@@ -1,7 +1,11 @@
 package model
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"time"
@@ -12,23 +16,29 @@ import (
 
 var ErrRegistrationInvitationInvalid = errors.New("registration invitation is invalid or unavailable")
 
-// Only the hash is persisted. The complete code is returned once at generation.
+// RegistrationInvitation verifies codes by digest and keeps an encrypted copy for root management.
 type RegistrationInvitation struct {
-	Id         int    `json:"id" gorm:"primaryKey"`
-	CodeHash   string `json:"-" gorm:"type:varchar(64);not null;uniqueIndex"`
-	CodePrefix string `json:"code_prefix" gorm:"type:varchar(8);not null"`
-	CreatedBy  int    `json:"created_by"`
-	CreatedAt  int64  `json:"created_at"`
-	ExpiresAt  int64  `json:"expires_at"`
-	RevokedAt  int64  `json:"revoked_at"`
-	UsedAt     int64  `json:"used_at"`
-	UsedUserId int    `json:"used_user_id" gorm:"index"`
-	Username   string `json:"username" gorm:"-"`
+	Id            int    `json:"id" gorm:"primaryKey"`
+	CodeHash      string `json:"-" gorm:"type:varchar(64);not null;uniqueIndex"`
+	CodePrefix    string `json:"code_prefix" gorm:"type:varchar(8);not null"`
+	CodeEncrypted string `json:"-" gorm:"type:text"`
+	Code          string `json:"code,omitempty" gorm:"-"`
+	CreatedBy     int    `json:"created_by"`
+	CreatedAt     int64  `json:"created_at"`
+	ExpiresAt     int64  `json:"expires_at"`
+	RevokedAt     int64  `json:"revoked_at"`
+	UsedAt        int64  `json:"used_at"`
+	UsedUserId    int    `json:"used_user_id" gorm:"index"`
+	Username      string `json:"username" gorm:"-"`
 }
 
 func GenerateRegistrationInvitations(count, days, creatorID int) ([]string, error) {
 	if count < 1 || count > 100 || days < 1 || days > 365 {
 		return nil, errors.New("invalid invitation count or validity period")
+	}
+	aead, err := registrationInvitationAEAD()
+	if err != nil {
+		return nil, err
 	}
 	now := time.Now()
 	codes := make([]string, count)
@@ -43,6 +53,7 @@ func GenerateRegistrationInvitations(count, days, creatorID int) ([]string, erro
 			CodeHash: hex.EncodeToString(common.RegistrationInvitationHash(codes[i])), CodePrefix: codes[i][:8],
 			CreatedBy: creatorID, CreatedAt: now.Unix(), ExpiresAt: now.Add(time.Duration(days) * 24 * time.Hour).Unix(),
 		}
+		rows[i].CodeEncrypted = base64.StdEncoding.EncodeToString(aead.Seal(nil, nil, []byte(codes[i]), []byte(rows[i].CodeHash)))
 	}
 	if err := DB.Create(&rows).Error; err != nil {
 		return nil, err
@@ -111,6 +122,25 @@ func ListRegistrationInvitations(offset, limit int, code string) ([]Registration
 	if err := query.Order("id DESC").Offset(offset).Limit(limit).Find(&rows).Error; err != nil {
 		return nil, 0, err
 	}
+	aead, err := registrationInvitationAEAD()
+	if err != nil {
+		return nil, 0, err
+	}
+	for i := range rows {
+		// Legacy hashes cannot be reversed. A lost/rotated key must not prevent
+		// listing, revoking, or deleting records either.
+		if rows[i].CodeEncrypted == "" {
+			continue
+		}
+		ciphertext, err := base64.StdEncoding.DecodeString(rows[i].CodeEncrypted)
+		if err != nil {
+			continue
+		}
+		plaintext, err := aead.Open(nil, nil, ciphertext, []byte(rows[i].CodeHash))
+		if err == nil {
+			rows[i].Code = string(plaintext)
+		}
+	}
 	ids := make([]int, 0, len(rows))
 	for _, row := range rows {
 		if row.UsedUserId != 0 {
@@ -143,4 +173,29 @@ func RevokeRegistrationInvitation(id int) error {
 		return ErrRegistrationInvitationInvalid
 	}
 	return nil
+}
+
+// DeleteRegistrationInvitations removes only invitation records, including used,
+// expired and revoked ones. Existing accounts are independent of these records.
+func DeleteRegistrationInvitations(ids []int) (int64, error) {
+	if len(ids) < 1 || len(ids) > 100 {
+		return 0, errors.New("invalid invitation IDs")
+	}
+	for _, id := range ids {
+		if id < 1 {
+			return 0, errors.New("invalid invitation ID")
+		}
+	}
+	result := DB.Where("id IN ?", ids).Delete(&RegistrationInvitation{})
+	return result.RowsAffected, result.Error
+}
+
+func registrationInvitationAEAD() (cipher.AEAD, error) {
+	// Use the host's persistent CRYPTO_SECRET (or SESSION_SECRET fallback).
+	key := sha256.Sum256([]byte("new-api/registration-invitations/v1/" + common.CryptoSecret))
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCMWithRandomNonce(block)
 }

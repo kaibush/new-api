@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -922,11 +923,12 @@ func TestRegistrationInvitationManagement(t *testing.T) {
 	group := router.Group("/api/option/registration-invitations", middleware.RootAuth(), middleware.DisableCache())
 	group.POST("/", GenerateRegistrationInvitations)
 	group.POST("/search", SearchRegistrationInvitations)
+	group.POST("/delete", DeleteRegistrationInvitations)
 	group.DELETE("/:id", RevokeRegistrationInvitation)
 	ordinary, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "invitation-test")
 	require.NoError(t, err)
 	for _, token := range []string{"", ordinary.AccessToken} {
-		for _, path := range []string{"/", "/search", "/1"} {
+		for _, path := range []string{"/", "/search", "/delete", "/1"} {
 			method := http.MethodPost
 			if path == "/1" {
 				method = http.MethodDelete
@@ -977,7 +979,15 @@ func TestRegistrationInvitationManagement(t *testing.T) {
 		require.True(t, listed.Success)
 		assert.Equal(t, 22, listed.Data.Total)
 		assert.Len(t, listed.Data.Items, min(20, 22-(page-1)*20))
-		assert.NotContains(t, response.Body.String(), generated.Data[0])
+		for _, item := range listed.Data.Items {
+			if item.CodePrefix == "registra" {
+				assert.Empty(t, item.Code)
+			} else {
+				assert.True(t, seen[item.Code], "saved codes must be retrievable by root")
+			}
+		}
+		assert.Contains(t, response.Header().Get("Cache-Control"), "no-store")
+		assert.NotContains(t, response.Body.String(), "code_encrypted")
 		assert.NotContains(t, response.Body.String(), "code_hash")
 	}
 	rows, total, err := model.ListRegistrationInvitations(0, 20, generated.Data[0])
@@ -992,12 +1002,30 @@ func TestRegistrationInvitationManagement(t *testing.T) {
 	router.ServeHTTP(response, request)
 	assert.Contains(t, response.Body.String(), `"success":true`)
 	assert.ErrorIs(t, model.ValidateRegistrationInvitation(common.RegistrationInvitationHash(generated.Data[0])), model.ErrRegistrationInvitationInvalid)
+
+	// Cookie-only cross-site requests do not carry the required dashboard bearer token.
+	request = httptest.NewRequest(http.MethodPost, "/api/option/registration-invitations/delete", strings.NewReader(fmt.Sprintf(`{"ids":[%d]}`, rows[0].Id)))
+	request.AddCookie(&http.Cookie{Name: "session", Value: root.RefreshToken})
+	request.Header.Set("Origin", "https://untrusted.example")
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	assert.Equal(t, http.StatusUnauthorized, response.Code)
+	request = httptest.NewRequest(http.MethodPost, "/api/option/registration-invitations/delete", strings.NewReader(fmt.Sprintf(`{"ids":[%d]}`, rows[0].Id)))
+	request.Header.Set("Authorization", "Bearer "+root.AccessToken)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	assert.Contains(t, response.Body.String(), `"success":true`)
+	assert.Contains(t, response.Body.String(), `"data":1`)
+	_, total, err = model.ListRegistrationInvitations(0, 20, generated.Data[0])
+	require.NoError(t, err)
+	assert.Zero(t, total, "deletion removes the record rather than only revoking it")
 	var audits []model.AuditLog
 	require.NoError(t, model.LOG_DB.Find(&audits).Error)
 	encoded, err := common.Marshal(audits)
 	require.NoError(t, err)
 	assert.Contains(t, string(encoded), "registration_invitation.generate")
 	assert.Contains(t, string(encoded), "registration_invitation.revoke")
+	assert.Contains(t, string(encoded), "registration_invitation.delete")
 	for _, code := range generated.Data {
 		assert.NotContains(t, string(encoded), code)
 	}
@@ -1005,6 +1033,87 @@ func TestRegistrationInvitationManagement(t *testing.T) {
 		response := securityEnrollmentRequest(http.MethodPost, "/", body, "", service.AuthIdentity{}, GenerateRegistrationInvitations)
 		assert.Contains(t, response.Body.String(), `"success":false`)
 	}
+}
+
+func TestRegistrationInvitationSavedCodesAndDeletion(t *testing.T) {
+	user := setupRegistrationInvitationTest(t)
+	// Recreate the previous hash-only schema with an existing valid invitation.
+	require.NoError(t, model.DB.Migrator().DropColumn(&model.RegistrationInvitation{}, "CodeEncrypted"))
+	for range 2 {
+		require.NoError(t, model.DB.AutoMigrate(&model.RegistrationInvitation{}))
+	}
+	legacy, total, err := model.ListRegistrationInvitations(0, 20, "registration-code-123456")
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, legacy, 1)
+	assert.Empty(t, legacy[0].Code)
+	assert.NoError(t, model.ValidateRegistrationInvitation(common.RegistrationInvitationHash("registration-code-123456")))
+	duplicate := legacy[0]
+	duplicate.Id = 0
+	assert.Error(t, model.DB.Create(&duplicate).Error, "migration preserves unique invitation hashes")
+
+	codes, err := model.GenerateRegistrationInvitations(4, 30, user.Id)
+	require.NoError(t, err)
+	require.Len(t, codes, 4)
+	ids := make([]int, len(codes))
+	for i, code := range codes {
+		rows, total, err := model.ListRegistrationInvitations(0, 20, code)
+		require.NoError(t, err)
+		require.EqualValues(t, 1, total)
+		require.Len(t, rows, 1)
+		ids[i] = rows[0].Id
+		assert.Equal(t, code, rows[0].Code)
+		var stored model.RegistrationInvitation
+		require.NoError(t, model.DB.First(&stored, ids[i]).Error)
+		assert.Empty(t, stored.Code)
+		assert.NotEmpty(t, stored.CodeEncrypted)
+		assert.NotContains(t, stored.CodeEncrypted, code)
+	}
+	// Ciphertext is authenticated and tied to its record; corruption cannot leak a different code.
+	var first model.RegistrationInvitation
+	require.NoError(t, model.DB.First(&first, ids[0]).Error)
+	require.NoError(t, model.DB.Model(&model.RegistrationInvitation{}).Where("id = ?", ids[1]).Update("code_encrypted", first.CodeEncrypted).Error)
+	rows, _, err := model.ListRegistrationInvitations(0, 20, codes[1])
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Empty(t, rows[0].Code)
+	secret := common.CryptoSecret
+	t.Cleanup(func() { common.CryptoSecret = secret })
+	common.CryptoSecret = "different-invitation-test-key"
+	rows, _, err = model.ListRegistrationInvitations(0, 20, codes[0])
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Empty(t, rows[0].Code)
+	common.CryptoSecret = secret
+
+	require.NoError(t, model.DB.Model(&model.RegistrationInvitation{}).Where("id = ?", ids[1]).Updates(map[string]any{"used_user_id": user.Id, "used_at": time.Now().Unix()}).Error)
+	require.NoError(t, model.DB.Model(&model.RegistrationInvitation{}).Where("id = ?", ids[2]).Update("expires_at", time.Now().Add(-time.Hour).Unix()).Error)
+	require.NoError(t, model.RevokeRegistrationInvitation(ids[3]))
+	for _, code := range codes[1:] {
+		assert.ErrorIs(t, model.ValidateRegistrationInvitation(common.RegistrationInvitationHash(code)), model.ErrRegistrationInvitationInvalid)
+	}
+	for _, invalid := range [][]int{nil, {ids[0], 0}, {-1}, make([]int, 101)} {
+		count, err := model.DeleteRegistrationInvitations(invalid)
+		assert.Error(t, err)
+		assert.Zero(t, count)
+	}
+	for _, body := range []string{`{}`, `{"ids":[]}`, `{"ids":[0]}`, `{"ids":[-1]}`, `{"ids":[1.5]}`} {
+		response := securityEnrollmentRequest(http.MethodPost, "/delete", body, "", service.AuthIdentity{}, DeleteRegistrationInvitations)
+		assert.Contains(t, response.Body.String(), `"success":false`)
+	}
+	deleted, err := model.DeleteRegistrationInvitations(ids)
+	require.NoError(t, err)
+	assert.EqualValues(t, 4, deleted)
+	rows, total, err = model.ListRegistrationInvitations(0, 20, "")
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, total)
+	require.Len(t, rows, 1)
+	assert.Equal(t, legacy[0].Id, rows[0].Id)
+	assert.NoError(t, model.DB.First(&model.User{}, user.Id).Error, "deleting used invitations preserves their accounts")
+	assert.ErrorIs(t, model.ValidateRegistrationInvitation(common.RegistrationInvitationHash(codes[0])), model.ErrRegistrationInvitationInvalid)
+	deleted, err = model.DeleteRegistrationInvitations(ids)
+	require.NoError(t, err)
+	assert.Zero(t, deleted, "repeating deletion must not affect other invitations")
 }
 
 func TestRegistrationInvitationStateRejectsInvalidRequests(t *testing.T) {
@@ -1524,6 +1633,83 @@ func TestOAuthBindIgnoresLegacyGitHubUsernames(t *testing.T) {
 			}
 			assert.Equal(t, test.ownGitHubID, bound.GitHubId)
 			assert.Equal(t, "This GitHub account has already been bound", result.Message)
+		})
+	}
+}
+
+// The latest release (v1.0.0-rc.42) has no invitation table. Verify both
+// creation from that state and upgrades of the intervening hash-only schema.
+func TestRegistrationInvitationDatabaseCompatibility(t *testing.T) {
+	previousEnabled := common.RegistrationInvitationEnabled
+	common.RegistrationInvitationEnabled = true
+	t.Cleanup(func() { common.RegistrationInvitationEnabled = previousEnabled })
+	for _, dialect := range []struct{ kind, env string }{{"sqlite", ""}, {"mysql", "TEST_MYSQL_DSN"}, {"postgres", "TEST_POSTGRES_DSN"}} {
+		t.Run(dialect.kind, func(t *testing.T) {
+			dsn := os.Getenv(dialect.env)
+			if dialect.env != "" && dsn == "" {
+				t.Skip("set " + dialect.env + " for real database verification")
+			}
+			db, _ := newAuditTestDatabase(t, dialect.kind, dsn)
+			previous := model.DB
+			model.DB = db
+			t.Cleanup(func() { model.DB = previous })
+			var version string
+			query := "SELECT version()"
+			if dialect.kind == "sqlite" {
+				query = "SELECT sqlite_version()"
+			}
+			require.NoError(t, db.Raw(query).Scan(&version).Error)
+			t.Logf("database version: %s", version)
+			require.NoError(t, db.AutoMigrate(&model.User{}))
+			for range 2 {
+				require.NoError(t, db.AutoMigrate(&model.RegistrationInvitation{}))
+			}
+			codes, err := model.GenerateRegistrationInvitations(2, 30, 1)
+			require.NoError(t, err)
+			rows, total, err := model.ListRegistrationInvitations(0, 20, codes[0])
+			require.NoError(t, err)
+			require.EqualValues(t, 1, total)
+			require.Equal(t, codes[0], rows[0].Code)
+			legacyID := rows[0].Id
+			require.NoError(t, db.Migrator().DropColumn(&model.RegistrationInvitation{}, "CodeEncrypted"))
+			// Upgrade starts with a fresh connection, as on an application restart.
+			connection, err := db.DB()
+			require.NoError(t, err)
+			require.NoError(t, connection.Close())
+			db, err = gorm.Open(db.Dialector, &gorm.Config{})
+			require.NoError(t, err)
+			model.DB = db
+			t.Cleanup(func() {
+				connection, err := db.DB()
+				require.NoError(t, err)
+				require.NoError(t, connection.Close())
+			})
+			for range 2 {
+				require.NoError(t, db.AutoMigrate(&model.RegistrationInvitation{}))
+			}
+			rows, total, err = model.ListRegistrationInvitations(0, 20, codes[0])
+			require.NoError(t, err)
+			require.EqualValues(t, 1, total)
+			assert.Equal(t, legacyID, rows[0].Id)
+			assert.Empty(t, rows[0].Code)
+			assert.NoError(t, model.ValidateRegistrationInvitation(common.RegistrationInvitationHash(codes[0])))
+			duplicate := rows[0]
+			duplicate.Id = 0
+			assert.Error(t, db.Create(&duplicate).Error)
+			fresh, err := model.GenerateRegistrationInvitations(1, 30, 1)
+			require.NoError(t, err)
+			rows, total, err = model.ListRegistrationInvitations(0, 20, fresh[0])
+			require.NoError(t, err)
+			require.EqualValues(t, 1, total)
+			assert.Equal(t, fresh[0], rows[0].Code)
+			count, err := model.DeleteRegistrationInvitations([]int{legacyID, rows[0].Id})
+			require.NoError(t, err)
+			assert.EqualValues(t, 2, count)
+			assert.ErrorIs(t, model.ValidateRegistrationInvitation(common.RegistrationInvitationHash(fresh[0])), model.ErrRegistrationInvitationInvalid)
+			_, total, err = model.ListRegistrationInvitations(0, 20, "")
+			require.NoError(t, err)
+			assert.EqualValues(t, 1, total)
+			assert.NoError(t, model.ValidateRegistrationInvitation(common.RegistrationInvitationHash(codes[1])))
 		})
 	}
 }

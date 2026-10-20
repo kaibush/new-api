@@ -231,6 +231,7 @@ func SetApiRouter(router *gin.Engine) {
 			optionRoute.POST("/community/wechat/test", middleware.DisableCache(), middleware.UserCriticalRateLimit("community-wechat-test"), controller.TestCommunityWeChat)
 			invitationRoute := optionRoute.Group("/registration-invitations", middleware.DisableCache(), anonymousRequestBodyLimit)
 			invitationRoute.POST("/search", controller.SearchRegistrationInvitations)
+			invitationRoute.POST("/delete", controller.DeleteRegistrationInvitations)
 			invitationRoute.POST("/", middleware.UserCriticalRateLimit("registration-invitations"), controller.GenerateRegistrationInvitations)
 			invitationRoute.DELETE("/:id", controller.RevokeRegistrationInvitation)
 			optionRoute.POST("/help-center/images", controller.UploadHelpCenterImage)
