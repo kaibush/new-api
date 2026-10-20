@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"slices"
@@ -31,7 +32,19 @@ type channelProviderCounts struct {
 	Total     int64 `json:"total"`
 	Available int64 `json:"available"`
 }
+type channelRecovery struct {
+	Cooldown     int64 `json:"cooldown"`
+	WaitingReset int64 `json:"waitingReset"`
+	Probing      int64 `json:"probing"`
+}
+type channelIssues struct {
+	Disabled       int64 `json:"disabled"`
+	ReauthRequired int64 `json:"reauthRequired"`
+}
 type channelInventory struct {
+	Risk       int64                            `json:"risk"`
+	Recovery   *channelRecovery                 `json:"recovery"`
+	Issues     *channelIssues                   `json:"issues"`
 	Reachable  bool                             `json:"reachable"`
 	UpdatedAt  *string                          `json:"updatedAt"`
 	Total      int64                            `json:"total"`
@@ -82,12 +95,33 @@ func GetChannelStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid time window"})
 		return
 	}
+	dataset := c.DefaultQuery("dataset", "overview")
+	period := c.DefaultQuery("period", "24h")
+	if !slices.Contains([]string{"overview", "health", "usage"}, dataset) || !slices.Contains([]string{"24h", "7d", "30d", "90d", "custom"}, period) || (dataset != "usage" && period == "custom") {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid status query"})
+		return
+	}
+	params := url.Values{"period": {period}, "timezone": {"Asia/Shanghai"}}
+	if period == "custom" {
+		start, startErr := time.Parse(time.RFC3339, c.Query("start"))
+		end, endErr := time.Parse(time.RFC3339, c.Query("end"))
+		if startErr != nil || endErr != nil || !end.After(start) || end.Sub(start) > 90*24*time.Hour {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid custom range (maximum 90 days)"})
+			return
+		}
+		params.Set("start", start.UTC().Format(time.RFC3339))
+		params.Set("end", end.UTC().Format(time.RFC3339))
+	}
 	common.OptionMapRWMutex.RLock()
 	base := common.OptionMap["GrokIQBaseURL"]
 	token := common.OptionMap["GrokIQAdminToken"]
 	common.OptionMapRWMutex.RUnlock()
 	c.Header("Cache-Control", "no-store")
 	if base == "" || token == "" {
+		if dataset != "overview" {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "GrokIQ is not configured"})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"configured": false}})
 		return
 	}
@@ -95,11 +129,52 @@ func GetChannelStatus(c *gin.Context) {
 		common.ApiErrorMsg(c, err.Error())
 		return
 	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	timeout := 15 * time.Second
+	if dataset == "usage" {
+		timeout = 75 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
 	defer cancel()
 	client := *service.GetSSRFProtectedHTTPClient()
 	// Never forward the integration credential to a redirect destination.
 	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+	if dataset != "overview" {
+		prefix := "public/"
+		if strings.HasPrefix(token, "giq_") {
+			prefix = "integration/v1/"
+		}
+		var target any
+		var path string
+		switch dataset {
+		case "health":
+			target = &channelHealth{}
+			path = "upstream-health"
+		case "usage":
+			target = &channelUsage{}
+			path = "upstream-usage"
+
+		}
+		err := fetchGrokIQ(ctx, &client, base, token, prefix+path+"?"+params.Encode(), target)
+		if err == nil {
+			switch data := target.(type) {
+			case *channelHealth:
+				if data.Windows == nil || data.Series == nil || data.Models == nil || data.Errors == nil {
+					err = fmt.Errorf("GrokIQ health statistics are missing")
+				}
+			case *channelUsage:
+				if data.Series == nil || data.Activity == nil || data.TopModels == nil || data.Providers == nil {
+					err = fmt.Errorf("GrokIQ usage statistics are missing")
+				}
+
+			}
+		}
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"success": false, "message": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true, "data": target})
+		return
+	}
 	var inventory channelInventory
 	var audits struct {
 		ClientKeys []channelAuditClient `json:"clientKeys"`
@@ -130,7 +205,19 @@ func GetChannelStatus(c *gin.Context) {
 	if inventoryErr != nil {
 		result["inventoryError"] = inventoryErr.Error()
 	} else {
-		result["inventory"] = inventory
+		providers := make(map[string]gin.H, len(inventory.Providers))
+		for name, counts := range inventory.Providers {
+			capacity := 0.0
+			if counts.Total > 0 {
+				capacity = math.Round(float64(counts.Available) * 100 / float64(counts.Total))
+			}
+			providers[name] = gin.H{"capacity": max(0, min(100, capacity))}
+		}
+		public := gin.H{"reachable": inventory.Reachable, "updatedAt": inventory.UpdatedAt, "providers": providers}
+		if c.GetInt("role") >= common.RoleAdminUser {
+			public["accounts"] = gin.H{"total": inventory.Total, "available": inventory.Available, "recovering": inventory.Recovering, "attention": inventory.Attention, "risk": inventory.Risk, "recovery": inventory.Recovery, "issues": inventory.Issues}
+		}
+		result["inventory"] = public
 	}
 	if auditErr != nil {
 		result["auditError"] = auditErr.Error()

@@ -1,15 +1,30 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { useAuthStore } from '@/stores/auth-store'
+
 import { ChannelStatus } from '..'
-import { auditRate, getChannelStatus, type ChannelStatusData } from '../api'
+import {
+  auditRate,
+  getChannelStatus,
+  getStatusDashboard,
+  type ChannelStatusData,
+} from '../api'
 
 vi.mock('../api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api')>()),
   getChannelStatus: vi.fn(),
+  getStatusDashboard: vi.fn(),
 }))
 vi.mock('@/components/layout', () => {
   const Slot = (props: { children: ReactNode }) => <div>{props.children}</div>
@@ -21,7 +36,10 @@ vi.mock('@/components/layout', () => {
     }),
   }
 })
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  useAuthStore.setState((state) => ({ auth: { ...state.auth, user: null } }))
+})
 function renderPage() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -64,7 +82,9 @@ describe('channel status page', () => {
     renderPage()
     expect(await screen.findByText('87.5%')).toBeInTheDocument()
     expect(screen.getByText('90%')).toBeInTheDocument()
-    expect(screen.getByText('alice')).toBeInTheDocument()
+    expect(screen.queryByText('alice')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('tab', { name: 'Active clients' }))
+    expect(await screen.findByText('alice')).toBeInTheDocument()
     await userEvent.selectOptions(
       screen.getByRole('combobox', { name: 'Time range' }),
       '3h'
@@ -93,7 +113,10 @@ describe('channel status page', () => {
       await screen.findByText('No requests in this time range')
     ).toBeInTheDocument()
     expect(screen.getAllByText('—')).toHaveLength(2)
-    expect(screen.getByText('No matching client activity')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('tab', { name: 'Active clients' }))
+    expect(
+      await screen.findByText('No matching client activity')
+    ).toBeInTheDocument()
   })
   it('retains audit cards when inventory fails and supports retry', async () => {
     vi.mocked(getChannelStatus).mockResolvedValue({
@@ -101,9 +124,168 @@ describe('channel status page', () => {
       inventoryError: 'GrokIQ returned HTTP 503',
     })
     renderPage()
-    expect(await screen.findByText('alice')).toBeInTheDocument()
+    expect(await screen.findByText('87.5%')).toBeInTheDocument()
     expect(screen.getByText('GrokIQ returned HTTP 503')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(getChannelStatus).toHaveBeenCalledTimes(2))
+  })
+  it('keeps quality above tabs and shows public capacity without account inventory', async () => {
+    vi.mocked(getChannelStatus).mockResolvedValue({
+      ...populated,
+      inventory: {
+        reachable: true,
+        updatedAt: null,
+        providers: { grok_build: { capacity: 75 } },
+      },
+    })
+    renderPage()
+    const quality = await screen.findByText('87.5%')
+    const tabs = screen.getByRole('tablist')
+    expect(
+      quality.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(screen.getByText('75%')).toBeInTheDocument()
+    expect(screen.queryByText('Recovery queue')).not.toBeInTheDocument()
+    expect(getStatusDashboard).not.toHaveBeenCalled()
+    await userEvent.click(
+      screen.getByRole('tab', { name: 'How these metrics are calculated' })
+    )
+    expect(screen.getByText('87.5%')).toBeInTheDocument()
+    expect(
+      screen.getByRole('tab', { name: 'How these metrics are calculated' })
+    ).toHaveAttribute('aria-selected', 'true')
+  })
+  it('shows administrator recovery and issue details from the authorized response', async () => {
+    vi.mocked(getChannelStatus).mockResolvedValue({
+      ...populated,
+      inventory: {
+        reachable: true,
+        updatedAt: null,
+        providers: {},
+        accounts: {
+          total: 20,
+          available: 15,
+          recovering: 3,
+          attention: 2,
+          risk: 1,
+          recovery: { cooldown: 1, waitingReset: 1, probing: 1 },
+          issues: { disabled: 1, reauthRequired: 1 },
+        },
+      },
+    })
+    renderPage()
+    expect(await screen.findByText('Recovery queue')).toBeInTheDocument()
+    expect(screen.getByText('Reauthentication required')).toBeInTheDocument()
+    expect(screen.getByText('Risk accounts')).toBeInTheDocument()
+  })
+  it('loads health only when selected and retains quality when it fails', async () => {
+    vi.mocked(getChannelStatus).mockResolvedValue(populated)
+    vi.mocked(getStatusDashboard).mockRejectedValue(new Error('unavailable'))
+    renderPage()
+    await screen.findByText('87.5%')
+    await userEvent.click(screen.getByRole('tab', { name: 'Request health' }))
+    await screen.findByRole('button', { name: 'Retry' })
+    expect(getStatusDashboard).toHaveBeenCalledWith(
+      'health',
+      expect.objectContaining({ period: '24h' }),
+      expect.any(AbortSignal)
+    )
+    expect(screen.getByText('87.5%')).toBeInTheDocument()
+  })
+  it('loads usage periods and converts a custom Shanghai range to UTC', async () => {
+    vi.mocked(getChannelStatus).mockResolvedValue(populated)
+    vi.mocked(getStatusDashboard).mockResolvedValue({
+      reachable: true,
+      generatedAt: null,
+      range: { start: null, end: null },
+      usage: {
+        requests: 0,
+        successfulRequests: 0,
+        failedRequests: 0,
+        inputTokens: 0,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+        tokens: 0,
+        billedCostUsdTicks: 0,
+        successRate: 0,
+        cacheHitRate: 0,
+        averageFirstTokenMs: 0,
+        outputTokensPerSecond: 0,
+        firstTokenSamples: 0,
+        throughputSamples: 0,
+      },
+      series: [],
+      activity: [],
+      topModels: [],
+      providers: [],
+    })
+    renderPage()
+    await screen.findByText('87.5%')
+    await userEvent.click(screen.getByRole('tab', { name: 'Usage statistics' }))
+    const period = await screen.findByRole('combobox', {
+      name: 'Statistics period',
+    })
+    await screen.findByText('First token latency (ms)')
+    await userEvent.selectOptions(period, '30d')
+    await waitFor(() =>
+      expect(getStatusDashboard).toHaveBeenLastCalledWith(
+        'usage',
+        expect.objectContaining({ period: '30d' }),
+        expect.any(AbortSignal)
+      )
+    )
+    await userEvent.selectOptions(period, 'custom')
+    const start = screen.getByLabelText('Start time')
+    const end = screen.getByLabelText('End time')
+    fireEvent.change(start, { target: { value: '2026-10-01T00:00' } })
+    fireEvent.change(end, { target: { value: '2026-10-02T00:00' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Apply filters' }))
+    await waitFor(() =>
+      expect(getStatusDashboard).toHaveBeenLastCalledWith(
+        'usage',
+        {
+          period: 'custom',
+          start: '2026-09-30T16:00:00.000Z',
+          end: '2026-10-01T16:00:00.000Z',
+        },
+        expect.any(AbortSignal)
+      )
+    )
+  })
+  it('does not reuse administrator data after the authenticated role changes', async () => {
+    useAuthStore.setState((state) => ({
+      auth: { ...state.auth, user: { id: 1, username: 'alice', role: 10 } },
+    }))
+    vi.mocked(getChannelStatus)
+      .mockResolvedValueOnce({
+        ...populated,
+        inventory: {
+          reachable: true,
+          updatedAt: null,
+          providers: {},
+          accounts: {
+            total: 20,
+            available: 15,
+            recovering: 3,
+            attention: 2,
+            risk: 1,
+            recovery: null,
+            issues: null,
+          },
+        },
+      })
+      .mockResolvedValue(populated)
+    renderPage()
+    await screen.findByText('Risk accounts')
+    act(() =>
+      useAuthStore.setState((state) => ({
+        auth: { ...state.auth, user: { id: 1, username: 'alice', role: 1 } },
+      }))
+    )
+    await waitFor(() =>
+      expect(screen.queryByText('Risk accounts')).not.toBeInTheDocument()
+    )
     await waitFor(() => expect(getChannelStatus).toHaveBeenCalledTimes(2))
   })
   it('does not invent percentages for missing or inconsistent counts', () => {

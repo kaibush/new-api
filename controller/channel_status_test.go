@@ -34,6 +34,11 @@ func TestChannelStatusPrivacyAndFailures(t *testing.T) {
 					assert.Equal(t, pageSize, r.URL.Query().Get("pageSize"))
 					w.WriteHeader(auditStatus)
 					_, _ = w.Write([]byte(`{"clientKeys":[{"name":"gateway","requestCount":10,"thinkingRequests":7,"thinkingSampleRequests":8,"httpSuccessRequests":9}],"callers":[{"id":"user:[\"1\",\"alice\"]","name":"alice","requestCount":2,"thinkingRequests":1,"thinkingSampleRequests":2,"httpSuccessRequests":2},{"id":"user:[\"2\",\"bob\"]","name":"bob","requestCount":8},{"id":"user:[\"1\",\"different\"]","name":"different","requestCount":1},{"id":"unlabeled","name":"private-key-name","requestCount":1}],"items":[{"prompt":"private prompt","token":"integration-secret"}]}`))
+				case "/api/integration/v1/upstream-health", "/api/public/upstream-health":
+					_, _ = w.Write([]byte(`{"enabled":true,"windows":{"15m":{"requests":2,"successfulRequests":1}},"series":[],"models":[],"errors":[],"scan":{"lastError":"private-secret"},"prompt":"private prompt"}`))
+				case "/api/integration/v1/upstream-usage", "/api/public/upstream-usage":
+					assert.Equal(t, "Asia/Shanghai", r.URL.Query().Get("timezone"))
+					_, _ = w.Write([]byte(`{"reachable":true,"usage":{"requests":3,"billedCostUsdTicks":10000000000},"series":[],"activity":[],"topModels":[],"providers":[],"apiKey":"private-secret"}`))
 				default:
 					t.Errorf("unexpected path: %s", r.URL.Path)
 				}
@@ -95,7 +100,7 @@ func TestChannelStatusPrivacyAndFailures(t *testing.T) {
 						Data    struct {
 							Summary   channelAuditClient   `json:"summary"`
 							Clients   []channelAuditClient `json:"clients"`
-							Inventory channelInventory     `json:"inventory"`
+							Inventory map[string]any       `json:"inventory"`
 						} `json:"data"`
 					}
 					require.NoError(t, common.Unmarshal(rec.Body.Bytes(), &body))
@@ -104,7 +109,17 @@ func TestChannelStatusPrivacyAndFailures(t *testing.T) {
 					assert.EqualValues(t, 10, body.Data.Summary.RequestCount)
 					require.NotNil(t, body.Data.Summary.ThinkingSampleRequests)
 					assert.EqualValues(t, 8, *body.Data.Summary.ThinkingSampleRequests)
-					assert.EqualValues(t, 2, body.Data.Inventory.Available)
+					providers := body.Data.Inventory["providers"].(map[string]any)
+					assert.EqualValues(t, 67, providers["grok_build"].(map[string]any)["capacity"])
+					assert.NotContains(t, body.Data.Inventory, "total")
+					if tc.role >= common.RoleAdminUser {
+						require.Contains(t, body.Data.Inventory, "accounts")
+						assert.EqualValues(t, 2, body.Data.Inventory["accounts"].(map[string]any)["available"])
+					} else {
+						assert.NotContains(t, body.Data.Inventory, "accounts")
+						assert.NotContains(t, rec.Body.String(), `"recovery"`)
+						assert.NotContains(t, rec.Body.String(), `"available"`)
+					}
 					assert.NotContains(t, rec.Body.String(), "integration-secret")
 					assert.NotContains(t, rec.Body.String(), "private prompt")
 					if tc.role == common.RoleCommonUser {
@@ -113,6 +128,24 @@ func TestChannelStatusPrivacyAndFailures(t *testing.T) {
 						assert.NotContains(t, rec.Body.String(), "private-key-name")
 					}
 				})
+			}
+			for _, dataset := range []string{"health", "usage"} {
+				rec := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(rec)
+				c.Request = httptest.NewRequest(http.MethodGet, "/api/channel-status?dataset="+dataset+"&period=7d", nil)
+				c.Set("role", common.RoleCommonUser)
+				GetChannelStatus(c)
+				require.Equal(t, http.StatusOK, rec.Code)
+				assert.NotContains(t, rec.Body.String(), "private-secret")
+				assert.NotContains(t, rec.Body.String(), "private prompt")
+				assert.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
+			}
+			for _, query := range []string{"dataset=unknown", "period=invalid", "dataset=visits&period=custom", "dataset=usage&period=custom&start=nope", "dataset=usage&period=custom&start=2026-01-01T00:00:00Z&end=2026-05-01T00:00:00Z", "dataset=usage&period=custom&start=2026-01-02T00:00:00Z&end=2026-01-01T00:00:00Z"} {
+				rec := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(rec)
+				c.Request = httptest.NewRequest(http.MethodGet, "/api/channel-status?"+query, nil)
+				GetChannelStatus(c)
+				assert.Equal(t, http.StatusBadRequest, rec.Code)
 			}
 			for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusBadGateway} {
 				auditStatus = status

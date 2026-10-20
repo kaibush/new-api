@@ -20,11 +20,20 @@ export type ChannelStatusData = {
   inventory?: {
     reachable: boolean
     updatedAt: string | null
-    total: number
-    available: number
-    recovering: number
-    attention: number
-    providers: Record<string, { total: number; available: number }>
+    accounts?: {
+      total: number
+      available: number
+      recovering: number
+      attention: number
+      risk: number
+      recovery: {
+        cooldown: number
+        waitingReset: number
+        probing: number
+      } | null
+      issues: { disabled: number; reauthRequired: number } | null
+    }
+    providers: Record<string, { capacity: number }>
   }
 }
 export async function getChannelStatus(window: string, signal?: AbortSignal) {
@@ -49,4 +58,16 @@ export function auditRate(
     return null
   }
   return (count / total) * 100
+}
+
+export async function getStatusDashboard<T>(
+  dataset: string,
+  params: { period: string; start?: string; end?: string },
+  signal?: AbortSignal
+): Promise<T> {
+  const response = await api.get<{ success: boolean; data: T }>(
+    '/api/channel-status',
+    { params: { dataset, ...params }, signal }
+  )
+  return requireServerSuccess(response.data).data
 }
