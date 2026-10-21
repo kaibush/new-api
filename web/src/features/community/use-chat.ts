@@ -1,5 +1,5 @@
 import { useMutation } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -112,7 +112,13 @@ function mergeChatHistory(
   })
 }
 
-export function useChat(enabled: boolean) {
+export function useChat(
+  enabled: boolean,
+  onNewMessages?: (messages: ChatMessage[]) => void
+) {
+  const notifyMessages = useEffectEvent((messages: ChatMessage[]) => {
+    onNewMessages?.(messages)
+  })
   const token = useAuthStore((s) => s.auth.accessToken)
   const [users, setUsers] = useState<ChatMember[]>([])
   const [history, setHistory] = useState<ChatHistory>(emptyHistory)
@@ -221,6 +227,7 @@ export function useChat(enabled: boolean) {
       setConnected(false)
       return
     }
+    let latestMessageId: number | undefined
     let disposed = false
     let socket: WebSocket | undefined
     let retry: ReturnType<typeof setTimeout> | undefined
@@ -246,6 +253,27 @@ export function useChat(enabled: boolean) {
             }
             setHistory((current) => mergeChatHistory(current, page, false))
             const history = data.messages as ChatMessage[]
+            const previousId = latestMessageId
+            latestMessageId = Math.max(
+              latestMessageId ?? 0,
+              page.cleared_through_id || 0,
+              ...history.map((message) => message.id)
+            )
+            // The first snapshot is history, not a batch of new mentions.
+            if (previousId !== undefined) {
+              notifyMessages(
+                history.filter(
+                  (message) =>
+                    message.id > previousId &&
+                    message.id > (page.cleared_through_id || 0) &&
+                    !page.deleted_ids.includes(message.id) &&
+                    !message.deleted &&
+                    !message.cleared &&
+                    (!message.expires_at ||
+                      message.expires_at > Date.now() / 1000)
+                )
+              )
+            }
             for (const message of history) {
               if (!message.client_id) continue
               const pending = acknowledged.current.get(message.client_id)

@@ -9,6 +9,7 @@ import {
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
+import { toast } from 'sonner'
 import { beforeEach, afterEach, expect, test, vi } from 'vitest'
 
 import { SettingsPageProvider } from '@/features/system-settings/components/settings-page-context'
@@ -18,6 +19,7 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { CommunityChat } from '..'
 import { CommunityBotFeedback } from '../bot-feedback'
+import { CommunityProvider } from '../provider'
 import { CommunitySettings } from '../settings'
 
 class FakeSocket {
@@ -48,7 +50,16 @@ function show(component: React.ReactNode) {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   return render(
-    <QueryClientProvider client={client}>{component}</QueryClientProvider>
+    <QueryClientProvider client={client}>
+      {component &&
+      typeof component === 'object' &&
+      'type' in component &&
+      component.type === CommunityChat ? (
+        <CommunityProvider onOpenChat={() => {}}>{component}</CommunityProvider>
+      ) : (
+        component
+      )}
+    </QueryClientProvider>
   )
 }
 beforeEach(() => {
@@ -2063,4 +2074,206 @@ test('a delayed send response cannot restore a cleared message or its quoted con
   expect(result.current.messages).toHaveLength(1)
   expect(result.current.messages[0].text).toBe('New text')
   expect(result.current.messages[0].reply).toBeUndefined()
+})
+
+test('site presence survives entering and leaving the lobby and closes on logout', async () => {
+  function Site() {
+    const [lobby, setLobby] = useState(false)
+    return (
+      <CommunityProvider onOpenChat={() => setLobby(true)}>
+        <button type='button' onClick={() => setLobby(!lobby)}>
+          Switch page
+        </button>
+        {lobby ? <CommunityChat /> : <p>Dashboard</p>}
+      </CommunityProvider>
+    )
+  }
+  const user = userEvent.setup()
+  show(<Site />)
+  await waitFor(() => expect(FakeSocket.instances).toHaveLength(1))
+  const socket = FakeSocket.instances[0]
+  await user.click(screen.getByRole('button', { name: 'Switch page' }))
+  await screen.findByRole('textbox', { name: 'Message' })
+  await user.click(screen.getByRole('button', { name: 'Switch page' }))
+  expect(screen.getByText('Dashboard')).toBeInTheDocument()
+  expect(FakeSocket.instances).toHaveLength(1)
+  expect(socket.close).not.toHaveBeenCalled()
+  act(() =>
+    useAuthStore.setState((state) => ({
+      auth: { ...state.auth, user: null, accessToken: '' },
+    }))
+  )
+  expect(socket.close).toHaveBeenCalledOnce()
+})
+
+test('new mentions notify outside the lobby, without replaying history or other users mentions', async () => {
+  const opened = vi.fn()
+  const notices: {
+    title: string
+    options: NotificationOptions
+    onclick?: () => void
+    close: ReturnType<typeof vi.fn>
+  }[] = []
+  vi.stubGlobal('isSecureContext', true)
+  vi.stubGlobal(
+    'Notification',
+    class {
+      static permission = 'granted'
+      close = vi.fn()
+      constructor(
+        public title: string,
+        public options: NotificationOptions
+      ) {
+        notices.push(this)
+      }
+    }
+  )
+  vi.spyOn(window, 'focus').mockImplementation(() => {})
+  show(
+    <CommunityProvider onOpenChat={opened}>
+      <p>Dashboard</p>
+    </CommunityProvider>
+  )
+  await waitFor(() => expect(FakeSocket.instances).toHaveLength(1))
+  const socket = FakeSocket.instances[0]
+  const mentioned = {
+    ...historyMessage(10, 'Hello @[Alice](user:1)'),
+    user_id: 2,
+  }
+  act(() =>
+    socket.onmessage?.({
+      data: JSON.stringify({ type: 'history', messages: [mentioned] }),
+    })
+  )
+  expect(notices).toHaveLength(0)
+  const messages = [
+    mentioned,
+    { ...mentioned, id: 11 },
+    { ...mentioned, id: 12, user_id: 1 },
+    { ...mentioned, id: 13, text: '@[Alice](user:3)' },
+    { ...mentioned, id: 14, deleted: true },
+    { ...mentioned, id: 15, expires_at: 1 },
+    {
+      ...mentioned,
+      id: 16,
+      text: 'reply only',
+      reply: { id: 10, text: mentioned.text },
+    },
+  ]
+  act(() =>
+    socket.onmessage?.({ data: JSON.stringify({ type: 'history', messages }) })
+  )
+  expect(notices).toHaveLength(1)
+  expect(notices[0].options.body).toBe('Hello @Alice')
+  act(() =>
+    socket.onmessage?.({ data: JSON.stringify({ type: 'history', messages }) })
+  )
+  expect(notices).toHaveLength(1)
+  vi.useFakeTimers()
+  try {
+    act(() => socket.onclose?.())
+    act(() => vi.advanceTimersByTime(3000))
+    const reconnected = FakeSocket.instances[1]
+    act(() =>
+      reconnected.onmessage?.({
+        data: JSON.stringify({ type: 'history', messages }),
+      })
+    )
+    expect(notices).toHaveLength(1)
+  } finally {
+    vi.useRealTimers()
+  }
+  act(() => notices[0].onclick?.())
+  expect(opened).toHaveBeenCalledOnce()
+  expect(notices[0].close).toHaveBeenCalledOnce()
+})
+
+test('mention notification permission is requested only after a user action', async () => {
+  const requestPermission = vi.fn().mockResolvedValue('granted')
+  vi.stubGlobal('isSecureContext', true)
+  vi.stubGlobal(
+    'Notification',
+    class {
+      static permission = 'default'
+      static requestPermission = requestPermission
+    }
+  )
+  const user = userEvent.setup()
+  show(<CommunityChat />)
+  const button = await screen.findByRole('button', {
+    name: 'Enable mention notifications',
+  })
+  expect(requestPermission).not.toHaveBeenCalled()
+  await user.click(button)
+  await waitFor(() => expect(requestPermission).toHaveBeenCalledOnce())
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('button', { name: 'Enable mention notifications' })
+    ).not.toBeInTheDocument()
+  )
+})
+
+test.each(['denied', 'unsupported', 'constructor-failure'])(
+  'mentions fall back to site alerts when browser notifications are %s',
+  async (mode) => {
+    const { useMentionNotifications } =
+      await import('../use-mention-notifications')
+    const showToast = vi.spyOn(toast, 'info')
+    const openChat = vi.fn()
+    vi.stubGlobal('isSecureContext', true)
+    vi.stubGlobal(
+      'Notification',
+      mode === 'unsupported'
+        ? undefined
+        : class {
+            static permission = mode === 'denied' ? 'denied' : 'granted'
+            constructor() {
+              throw new Error('Unsupported constructor')
+            }
+          }
+    )
+    const { result } = renderHook(() => useMentionNotifications(true, openChat))
+    act(() =>
+      result.current.notify([
+        { ...historyMessage(22, 'Hi @[Alice](user:1)'), user_id: 2 },
+      ])
+    )
+    expect(showToast).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        description: 'Hi @Alice',
+        action: { label: 'Community chat', onClick: openChat },
+      })
+    )
+  }
+)
+
+test('guest pages and disabled community chat do not open a presence connection', async () => {
+  useAuthStore.setState((state) => ({
+    auth: { ...state.auth, user: null, accessToken: '' },
+  }))
+  const rendered = show(
+    <CommunityProvider onOpenChat={() => {}}>
+      <p>Public page</p>
+    </CommunityProvider>
+  )
+  expect(api.get).not.toHaveBeenCalled()
+  expect(FakeSocket.instances).toHaveLength(0)
+  vi.mocked(api.get).mockResolvedValue({
+    data: { success: true, data: { enabled: false } },
+  })
+  act(() =>
+    useAuthStore.setState((state) => ({
+      auth: {
+        ...state.auth,
+        user: { id: 1, username: 'Alice', role: 1 },
+        accessToken: 'test-session-token',
+      },
+    }))
+  )
+  await waitFor(() =>
+    expect(api.get).toHaveBeenCalledWith('/api/community/status')
+  )
+  expect(FakeSocket.instances).toHaveLength(0)
+  rendered.unmount()
 })

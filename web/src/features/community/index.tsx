@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation } from '@tanstack/react-query'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -14,23 +14,19 @@ import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { getChatStatus, uploadChatFile, type ChatMessage } from './api'
+import { uploadChatFile, type ChatMessage } from './api'
 import { ChatComposer } from './chat-composer'
 import { CommunityRecords } from './history'
 import { ChatMessageBubble } from './message-bubble'
 import { ChatModerationDialog } from './moderation-dialog'
 import { OnlineUsers } from './online-users'
-import { useChat } from './use-chat'
+import { useCommunityChat } from './use-community-chat'
 
 export function CommunityChat() {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const user = useAuthStore((s) => s.auth.user)
-  const status = useQuery({
-    queryKey: ['community-status'],
-    queryFn: getChatStatus,
-    refetchInterval: 15000,
-  })
+  const { status, chat, notifications } = useCommunityChat()
   const {
     messages,
     connected,
@@ -44,7 +40,7 @@ export function CommunityChat() {
     historyError,
     clearThrough,
     markDeleted,
-  } = useChat(status.data?.enabled === true)
+  } = chat
   const [reply, setReply] = useState<ChatMessage | null>(null)
   const [remove, setRemove] = useState<ChatMessage | null>(null)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
@@ -87,6 +83,15 @@ export function CommunityChat() {
             </p>
           </div>
           <OnlineUsers users={users} connected={connected} />
+          {notifications.supported &&
+            notifications.permission !== 'granted' && (
+              <Button
+                variant='outline'
+                onClick={() => void notifications.request()}
+              >
+                {t('Enable mention notifications')}
+              </Button>
+            )}
           {(user?.role ?? 0) >= 10 && (
             <Button variant='outline' onClick={() => setFeedbackOpen(true)}>
               {t('Chat records')}

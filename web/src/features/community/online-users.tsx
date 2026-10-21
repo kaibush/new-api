@@ -35,7 +35,7 @@ export function OnlineUsers(props: {
         <PopoverTitle>{t('Online users')}</PopoverTitle>
         <PopoverDescription>
           {t(
-            'Users currently connected to this chat. Each account is counted once.'
+            'Signed-in users currently on this site. Each account is counted once.'
           )}
         </PopoverDescription>
         <ul
