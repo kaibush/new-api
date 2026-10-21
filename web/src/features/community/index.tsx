@@ -67,15 +67,6 @@ export function CommunityChat() {
     return <EmptyState title={t('Community chat is disabled')} />
   }
   const members = new Map(users.map((member) => [member.user_id, member]))
-  for (const message of messages) {
-    if (!members.has(message.user_id)) {
-      members.set(message.user_id, {
-        user_id: message.user_id,
-        name: message.name,
-        avatar: message.avatar,
-      })
-    }
-  }
   return (
     <Main>
       <div className='mx-auto flex h-full min-h-0 w-full max-w-5xl flex-1 flex-col gap-3 p-3 sm:p-5'>

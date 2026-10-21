@@ -669,6 +669,14 @@ test('selects users by ID and sends a reply reference', async () => {
   await user.click(screen.getByRole('button', { name: 'More actions' }))
   await user.click(await screen.findByRole('menuitem', { name: 'Reply' }))
   expect(screen.getByText('Replying to Bob')).toBeInTheDocument()
+  act(() =>
+    FakeSocket.instances[0].onmessage?.({
+      data: JSON.stringify({
+        type: 'presence',
+        users: [{ user_id: 2, name: 'Bob', avatar: '' }],
+      }),
+    })
+  )
   await user.click(screen.getByRole('button', { name: 'Mention user' }))
   await user.click(await screen.findByRole('option', { name: /Bob/ }))
   await user.click(screen.getByRole('button', { name: 'Send' }))
@@ -909,4 +917,60 @@ test('IME confirmation, blank drafts and disconnected Enter never send', async (
   fireEvent.keyDown(editor, { key: 'Enter', keyCode: 229 })
   expect(api.post).not.toHaveBeenCalled()
   expect(editor).toHaveValue('中文输入')
+})
+
+test('mention options include only connected chat users and disappear on departure or disconnect', async () => {
+  const user = userEvent.setup()
+  show(<CommunityChat />)
+  await screen.findByRole('textbox', { name: 'Message' })
+  const socket = FakeSocket.instances[0]
+  act(() => {
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: 'history',
+        messages: [
+          {
+            id: 91,
+            user_id: 2,
+            name: 'Offline author',
+            text: 'Previous message',
+            kind: 'text',
+            created_at: 1700000000,
+          },
+        ],
+      }),
+    })
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: 'presence',
+        users: [{ user_id: 3, name: 'Online visitor', avatar: '' }],
+      }),
+    })
+  })
+  await user.click(screen.getByRole('button', { name: 'Mention user' }))
+  expect(
+    await screen.findByRole('option', { name: /Online visitor/ })
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('option', { name: /Offline author/ })
+  ).not.toBeInTheDocument()
+  act(() =>
+    socket.onmessage?.({
+      data: JSON.stringify({ type: 'presence', users: [] }),
+    })
+  )
+  expect(screen.queryByRole('option')).not.toBeInTheDocument()
+  act(() =>
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: 'presence',
+        users: [{ user_id: 3, name: 'Online visitor', avatar: '' }],
+      }),
+    })
+  )
+  expect(
+    await screen.findByRole('option', { name: /Online visitor/ })
+  ).toBeInTheDocument()
+  act(() => socket.onclose?.())
+  expect(screen.queryByRole('option')).not.toBeInTheDocument()
 })
