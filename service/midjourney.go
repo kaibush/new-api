@@ -113,6 +113,9 @@ func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason s
 		}
 	}
 
+	if err := model.CompleteCheckinUsage(task.UserId, fmt.Sprintf("midjourney:%d", task.Id), 0); err != nil {
+		logger.LogError(ctx, "refund Midjourney check-in accounting: "+err.Error())
+	}
 	billingChannelId := task.GetBillingChannelId()
 	model.UpdateUserUsedQuota(task.UserId, -quota)
 	model.UpdateChannelUsedQuota(billingChannelId, -quota)
@@ -389,4 +392,17 @@ func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestU
 		StatusCode: statusCode,
 		Response:   midjResponse,
 	}, responseBody, nil
+}
+
+// RecordCompletedMidjourneyCheckinUsage keeps legacy image tasks in the same
+// gift attribution and activity accounting as the generic task pipeline.
+func RecordCompletedMidjourneyCheckinUsage(ctx context.Context, task *model.Midjourney) {
+	source := fmt.Sprintf("midjourney:%d", task.Id)
+	if err := model.BeginCheckinUsage(task.UserId, source, true); err != nil {
+		logger.LogError(ctx, "begin Midjourney check-in accounting: "+err.Error())
+		return
+	}
+	if err := model.CompleteCheckinUsage(task.UserId, source, task.Quota); err != nil {
+		logger.LogError(ctx, "complete Midjourney check-in accounting: "+err.Error())
+	}
 }

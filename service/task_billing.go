@@ -24,6 +24,10 @@ import (
 // LogTaskConsumption 记录任务消费日志和统计信息（仅记录，不涉及实际扣费）。
 // 实际扣费已由 BillingSession（PreConsumeBilling + SettleBilling）完成。
 func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model.Task) {
+	if task.Status == model.TaskStatusSuccess {
+		RecordCompletedTaskCheckinUsage(c, task)
+	}
+
 	tokenName := c.GetString("token_name")
 	logContent := fmt.Sprintf("操作 %s", info.Action)
 	// 支持任务仅按次计费
@@ -293,6 +297,9 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 		Other:     other,
 	})
 
+	if err := model.CompleteCheckinUsage(task.UserId, fmt.Sprintf("task:%d", task.ID), 0); err != nil {
+		logger.LogError(ctx, "refund task check-in accounting: "+err.Error())
+	}
 	// 5. 资金退款完成后再清除持久化标记。
 	// 回写失败必须显式告警，避免漏掉潜在的重复退款风险。
 	task.Quota = 0
@@ -443,4 +450,20 @@ func EvaluateTaskCompletionUsage(snap *billingexpr.BillingSnapshot, facts map[st
 		err = fmt.Errorf("task completion expression produced an invalid cost")
 	}
 	return result, usage, err
+}
+
+// RecordCompletedTaskCheckinUsage records the final charge once, independently
+// of consume-log settings. Task database IDs prevent cross-channel ID collisions.
+func RecordCompletedTaskCheckinUsage(ctx context.Context, task *model.Task) {
+	if task.ID == 0 {
+		return
+	}
+	source := fmt.Sprintf("task:%d", task.ID)
+	if err := model.BeginCheckinUsage(task.UserId, source, !taskIsSubscription(task)); err != nil {
+		logger.LogError(ctx, "begin task check-in accounting: "+err.Error())
+		return
+	}
+	if err := model.CompleteCheckinUsage(task.UserId, source, task.Quota); err != nil {
+		logger.LogError(ctx, "complete task check-in accounting: "+err.Error())
+	}
 }

@@ -46,6 +46,9 @@ func TestMain(m *testing.M) {
 	common.LogConsumeEnabled = true
 
 	if err := db.AutoMigrate(
+		&model.Checkin{},
+		&model.CheckinAccount{},
+		&model.CheckinUsage{},
 		&model.Task{},
 		&model.User{},
 		&model.Token{},
@@ -70,6 +73,9 @@ func TestMain(m *testing.M) {
 func truncate(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
+		model.DB.Exec("DELETE FROM checkin_usages")
+		model.DB.Exec("DELETE FROM checkin_accounts")
+		model.DB.Exec("DELETE FROM checkins")
 		model.DB.Exec("DELETE FROM tasks")
 		model.DB.Exec("DELETE FROM users")
 		model.DB.Exec("DELETE FROM tokens")
@@ -1800,4 +1806,42 @@ func TestSettle_TokenRecalcFallsBackToCompletionTokens(t *testing.T) {
 			assert.Equal(t, testCase.wantQuota, task.Quota)
 		})
 	}
+}
+
+func TestCheckinAccountingFollowsSettlementWithoutConsumeLogs(t *testing.T) {
+	truncate(t)
+	previousLogging := common.LogConsumeEnabled
+	common.LogConsumeEnabled = false
+	t.Cleanup(func() { common.LogConsumeEnabled = previousLogging })
+	const userID = 998
+	seedUser(t, userID, 1000)
+	require.NoError(t, model.DB.Create(&model.CheckinAccount{UserID: userID, GiftRemaining: 200, ObservedSince: time.Now().Unix()}).Error)
+	info := &relaycommon.RelayInfo{UserId: userID, RequestId: "checkin-settled", IsPlayground: true, BillingSource: BillingSourceWallet}
+	info.Billing = &BillingSession{relayInfo: info, funding: &WalletFunding{userId: userID}}
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	require.NoError(t, SettleBilling(ctx, info, 100))
+	require.NoError(t, SettleBilling(ctx, info, 100))
+	assert.Equal(t, 900, getUserQuota(t, userID))
+	var account model.CheckinAccount
+	require.NoError(t, model.DB.First(&account, "user_id = ?", userID).Error)
+	assert.Equal(t, int64(100), account.GiftRemaining)
+	var usages []model.CheckinUsage
+	require.NoError(t, model.DB.Where("user_id = ?", userID).Find(&usages).Error)
+	require.Len(t, usages, 1)
+	assert.Equal(t, int64(100), usages[0].Quota)
+	assert.False(t, usages[0].Pending)
+	// Submission is not activity. Only successful terminal completion consumes gifts.
+	task := makeTask(userID, 0, 40, 0, BillingSourceWallet, 0)
+	task.Status = model.TaskStatusInProgress
+	task.PrivateData.BillingContext.PerCallBilling = true
+	require.NoError(t, model.DB.Create(task).Error)
+	task.Status = model.TaskStatusSuccess
+	finalizeTerminalTask(context.Background(), &mockAdaptor{}, task, &relaycommon.TaskInfo{Status: model.TaskStatusSuccess})
+	// A duplicate terminal callback must not consume the gift twice.
+	RecordCompletedTaskCheckinUsage(context.Background(), task)
+	require.NoError(t, model.DB.First(&account, "user_id = ?", userID).Error)
+	assert.Equal(t, int64(60), account.GiftRemaining)
+	require.NoError(t, model.DB.Where("user_id = ?", userID).Find(&usages).Error)
+	require.Len(t, usages, 2)
+	assert.Equal(t, int64(0), countLogs(t))
 }

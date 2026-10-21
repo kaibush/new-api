@@ -231,7 +231,14 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
-	if key == helpcenter.OptionKey {
+	if key == "checkin_setting.limits" {
+		var limits operation_setting.CheckinLimits
+		if err := common.UnmarshalJsonStr(value, &limits); err != nil {
+			return err
+		}
+		return limits.Validate()
+	}
+	if key == helpcenter.OptionKey || key == "checkin_setting.limits" {
 		_, err := helpcenter.Parse(value)
 		return err
 	}
@@ -254,7 +261,7 @@ func validateOptionValue(key string, value string) error {
 }
 
 func UpdateOption(key string, value string) error {
-	if key == helpcenter.OptionKey {
+	if key == helpcenter.OptionKey || key == "checkin_setting.limits" {
 		return UpdateOptionsBulk(map[string]string{key: value})
 	}
 	if IsRequestPolicyOption(key) {

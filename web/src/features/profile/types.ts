@@ -219,7 +219,27 @@ export interface CheckinStats {
 /**
  * Check-in status response
  */
+export interface CheckinEligibility {
+  limited: boolean
+  allowed: boolean
+  reasons: string[]
+  min_quota: number
+  max_quota: number
+  reward_percent: number
+  gift_remaining: number
+  gift_cap: number
+  monthly_awarded: number
+  monthly_cap: number
+  recent_spend: number
+  minimum_spend: number
+  activity_days: number
+  observation_until: number
+  next_month_at: number
+  today: string
+}
+
 export interface CheckinStatusResponse {
+  eligibility: CheckinEligibility
   /** Whether check-in feature is enabled */
   enabled: boolean
   /** Check-in statistics */

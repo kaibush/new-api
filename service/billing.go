@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/gin-gonic/gin"
@@ -48,7 +50,34 @@ func PreConsumeBilling(c *gin.Context, preConsumedQuota int, relayInfo *relaycom
 
 // SettleBilling 执行计费结算。如果 RelayInfo 上有 BillingSession 则通过 session 结算，
 // 否则回退到旧的 PostConsumeQuota 路径（兼容按次计费等场景）。
-func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuota int) error {
+func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuota int) (settleErr error) {
+	// Task usage is recorded at terminal completion, never at submission.
+	if !relayInfo.ForcePreConsume && relayInfo.TaskRelayInfo == nil {
+		if relayInfo.RequestId == "" {
+			relayInfo.RequestId = common.GetUUID()
+		}
+		source := "request:" + relayInfo.RequestId
+		if err := model.BeginCheckinUsage(relayInfo.UserId, source, relayInfo.BillingSource != BillingSourceSubscription); err != nil {
+			return err
+		}
+		defer func() {
+			if settleErr != nil {
+				if session, ok := relayInfo.Billing.(*BillingSession); ok {
+					session.mu.Lock()
+					settled := session.settled
+					session.mu.Unlock()
+					if settled {
+						if err := model.CompleteCheckinUsage(relayInfo.UserId, source, actualQuota); err != nil {
+							logger.LogError(ctx, "check-in accounting: "+err.Error())
+						}
+					}
+				}
+				return
+			}
+			settleErr = model.CompleteCheckinUsage(relayInfo.UserId, source, actualQuota)
+		}()
+	}
+
 	if relayInfo.Billing != nil {
 		preConsumed := relayInfo.Billing.GetPreConsumedQuota()
 		delta := actualQuota - preConsumed

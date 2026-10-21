@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -23,6 +24,11 @@ func GetCheckinStatus(c *gin.Context) {
 	// 获取月份参数，默认为当前月份
 	month := c.DefaultQuery("month", time.Now().Format("2006-01"))
 
+	eligibility, err := model.GetCheckinEligibility(userId)
+	if err != nil {
+		common.ApiErrorMsg(c, "Unable to verify check-in eligibility")
+		return
+	}
 	stats, err := model.GetUserCheckinStats(userId, month)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
@@ -35,10 +41,11 @@ func GetCheckinStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"enabled":   setting.Enabled,
-			"min_quota": setting.MinQuota,
-			"max_quota": setting.MaxQuota,
-			"stats":     stats,
+			"enabled":     setting.Enabled,
+			"min_quota":   setting.MinQuota,
+			"max_quota":   setting.MaxQuota,
+			"stats":       stats,
+			"eligibility": eligibility,
 		},
 	})
 }
@@ -55,6 +62,11 @@ func DoCheckin(c *gin.Context) {
 
 	checkin, err := model.UserCheckin(userId)
 	if err != nil {
+		var restricted *model.CheckinRestrictedError
+		if errors.As(err, &restricted) {
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": restricted.Error(), "data": gin.H{"eligibility": restricted.Eligibility}})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": err.Error(),

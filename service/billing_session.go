@@ -106,11 +106,17 @@ func (s *BillingSession) Refund(c *gin.Context) {
 	extraReserved := s.extraReserved
 	subscriptionId := s.relayInfo.SubscriptionId
 	funding := s.funding
+	checkinUserID, checkinSource := s.relayInfo.UserId, "request:"+s.relayInfo.RequestId
+	trackCheckin := !s.relayInfo.ForcePreConsume && s.relayInfo.TaskRelayInfo == nil
 
 	gopool.Go(func() {
 		// 1) 退还资金来源
 		if err := funding.Refund(); err != nil {
 			common.SysLog("error refunding billing source: " + err.Error())
+		} else if trackCheckin {
+			if err := model.CompleteCheckinUsage(checkinUserID, checkinSource, 0); err != nil {
+				common.SysError("refund check-in accounting: " + err.Error())
+			}
 		}
 		if extraReserved > 0 && funding.Source() == BillingSourceSubscription && subscriptionId > 0 {
 			if err := model.PostConsumeUserSubscriptionDelta(subscriptionId, -int64(extraReserved)); err != nil {

@@ -31,6 +31,7 @@ import { toast } from 'sonner'
 
 import { Dialog } from '@/components/dialog'
 import { Turnstile } from '@/components/turnstile'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { IconBadge } from '@/components/ui/icon-badge'
@@ -41,8 +42,10 @@ import {
   TooltipTrigger,
   TooltipProvider,
 } from '@/components/ui/tooltip'
+import { toIntlLocale } from '@/i18n/languages'
 import { formatQuotaWithCurrency } from '@/lib/currency'
 import dayjs from '@/lib/dayjs'
+import { formatNumber } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import { createServerError } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
@@ -61,7 +64,8 @@ export function CheckinCalendarCard({
   turnstileEnabled,
   turnstileSiteKey,
 }: CheckinCalendarCardProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const [currentMonth, setCurrentMonth] = useState(() => {
     const now = new Date()
     return new Date(now.getFullYear(), now.getMonth(), 1)
@@ -83,6 +87,8 @@ export function CheckinCalendarCard({
   const {
     data: checkinData,
     isLoading,
+    isError,
+    isFetching,
     refetch,
   } = useQuery({
     queryKey: ['checkin-status', currentMonthStr],
@@ -120,8 +126,9 @@ export function CheckinCalendarCard({
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   }, [])
 
+  const eligibility = checkinData?.eligibility
   const checkedToday = checkinData?.stats?.checked_in_today === true
-  const todayAward = checkinRecordsMap[todayString]
+  const todayAward = checkinRecordsMap[eligibility?.today || todayString]
 
   useEffect(() => {
     if (initialLoaded) return
@@ -163,6 +170,7 @@ export function CheckinCalendarCard({
           if (token && shouldTriggerTurnstile(res.message)) {
             setTurnstileWidgetKey((v) => v + 1)
           }
+          void refetch()
           handleServerError(res, t('Check-in failed'))
         }
       } catch (error) {
@@ -326,7 +334,12 @@ export function CheckinCalendarCard({
             </button>
             <Button
               onClick={() => doCheckin()}
-              disabled={checkinLoading || checkedToday}
+              disabled={
+                checkinLoading ||
+                checkedToday ||
+                !checkinData ||
+                eligibility?.allowed === false
+              }
               size='sm'
               className='w-full shrink-0 sm:w-auto'
             >
@@ -334,6 +347,125 @@ export function CheckinCalendarCard({
             </Button>
           </div>
         </div>
+
+        {isError && (
+          <div className='px-4 pb-4 sm:px-6'>
+            <Alert variant='destructive'>
+              <AlertDescription>
+                {t('Failed to fetch checkin status')}
+              </AlertDescription>
+            </Alert>
+          </div>
+        )}
+        {(isError || eligibility?.allowed === false) && (
+          <div className='px-4 pb-4 sm:px-6'>
+            <Button
+              variant='outline'
+              size='sm'
+              disabled={isFetching}
+              onClick={() => void refetch()}
+            >
+              {t('Refresh')}
+            </Button>
+          </div>
+        )}
+        {eligibility?.limited && (
+          <div className='px-4 pb-4 sm:px-6'>
+            <Alert>
+              <AlertDescription>
+                <p>
+                  {t(
+                    'Purchased and legacy balances do not affect check-in limits.'
+                  )}
+                </p>
+                <p>
+                  {t('Unspent rewards: {{balance}} / {{cap}}', {
+                    balance: formatQuotaWithCurrency(
+                      eligibility.gift_remaining
+                    ),
+                    cap: formatQuotaWithCurrency(eligibility.gift_cap),
+                  })}
+                </p>
+                <p>
+                  {t('Rewards this month: {{amount}} / {{cap}}', {
+                    amount: formatQuotaWithCurrency(
+                      eligibility.monthly_awarded
+                    ),
+                    cap: formatQuotaWithCurrency(eligibility.monthly_cap),
+                  })}
+                </p>
+                <p>
+                  {t(
+                    'Spending in the last {{days}} days: {{amount}} / {{minimum}}',
+                    {
+                      days: formatNumber(eligibility.activity_days, locale),
+                      amount: formatQuotaWithCurrency(eligibility.recent_spend),
+                      minimum: formatQuotaWithCurrency(
+                        eligibility.minimum_spend
+                      ),
+                    }
+                  )}
+                </p>
+                {eligibility.reasons.includes('gift_cap') && (
+                  <p>
+                    {t(
+                      'Unspent check-in rewards have reached the cap. Use some gift quota to claim again.'
+                    )}
+                  </p>
+                )}
+                {eligibility.reasons.includes('monthly_cap') && (
+                  <p>
+                    {t(
+                      'The monthly reward cap has been reached. Rewards resume next month.'
+                    )}
+                  </p>
+                )}
+                {eligibility.reasons.includes('low_activity') && (
+                  <p>
+                    {t(
+                      'Recent spending is below the threshold. Rewards are reduced to {{percent}}%.',
+                      {
+                        percent: formatNumber(
+                          eligibility.reward_percent,
+                          locale
+                        ),
+                      }
+                    )}
+                  </p>
+                )}
+                {eligibility.reasons.includes('observation') && (
+                  <p>
+                    {t(
+                      'Activity restrictions are waived while sufficient usage history is collected.'
+                    )}
+                  </p>
+                )}
+                {eligibility.reasons.includes('accounting_pending') && (
+                  <p>
+                    {t(
+                      'Usage settlement is pending. Please retry later or contact support if this persists.'
+                    )}
+                  </p>
+                )}
+                {!checkedToday && eligibility.allowed && (
+                  <p>
+                    {t('Available reward: {{minimum}} – {{maximum}}', {
+                      minimum: formatQuotaWithCurrency(eligibility.min_quota),
+                      maximum: formatQuotaWithCurrency(eligibility.max_quota),
+                    })}
+                  </p>
+                )}
+                {!checkedToday && !eligibility.allowed && (
+                  <p>
+                    {t(
+                      'Check-in rewards are currently paused. No check-in has been used today.'
+                    )}
+                  </p>
+                )}
+              </AlertDescription>
+            </Alert>
+          </div>
+        )}
 
         {!collapsed ? (
           <>

@@ -33,6 +33,7 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { formatQuotaWithCurrency } from '@/lib/currency'
 
 import {
   SettingsForm,
@@ -43,11 +44,72 @@ import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 
-const schema = z.object({
+const limitsSchema = z.object({
   enabled: z.boolean(),
-  minQuota: z.coerce.number().int().min(0),
-  maxQuota: z.coerce.number().int().min(0),
+  gift_cap: z.coerce.number().int().min(1).max(2147483647),
+  monthly_cap: z.coerce.number().int().min(1).max(2147483647),
+  activity_days: z.coerce.number().int().min(1).max(365),
+  minimum_spend: z.coerce.number().int().min(0).max(2147483647),
+  reduced_percent: z.coerce.number().int().min(0).max(100),
+  new_user_days: z.coerce.number().int().min(0).max(365),
 })
+
+const limitFields = [
+  {
+    name: 'gift_cap',
+    label: 'Unspent check-in reward cap',
+    quota: true,
+    min: 1,
+    max: 2147483647,
+  },
+  {
+    name: 'monthly_cap',
+    label: 'Monthly check-in reward cap',
+    quota: true,
+    min: 1,
+    max: 2147483647,
+  },
+  {
+    name: 'activity_days',
+    label: 'Activity window (days)',
+    quota: false,
+    min: 1,
+    max: 365,
+  },
+  {
+    name: 'minimum_spend',
+    label: 'Minimum spending in the activity window',
+    quota: true,
+    min: 0,
+    max: 2147483647,
+  },
+  {
+    name: 'reduced_percent',
+    label: 'Low-activity reward percentage',
+    quota: false,
+    min: 0,
+    max: 100,
+  },
+  {
+    name: 'new_user_days',
+    label: 'New user grace period (days)',
+    quota: false,
+    min: 0,
+    max: 365,
+  },
+] as const
+
+const schema = z
+  .object({
+    limits: limitsSchema,
+    enabled: z.boolean(),
+    minQuota: z.coerce.number().int().min(0).max(2147483647),
+    maxQuota: z.coerce.number().int().min(0).max(2147483647),
+  })
+  .refine((values) => values.maxQuota >= values.minQuota, {
+    path: ['maxQuota'],
+    message: 'Maximum must be at least the minimum',
+  })
 
 type Values = z.infer<typeof schema>
 
@@ -56,6 +118,7 @@ export function CheckinSettingsSection({
 }: {
   defaultValues: {
     enabled: boolean
+    limits: string
     minQuota: number
     maxQuota: number
   }
@@ -63,10 +126,29 @@ export function CheckinSettingsSection({
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
 
+  let parsedLimits: unknown
+  try {
+    parsedLimits = JSON.parse(defaultValues.limits)
+  } catch {
+    parsedLimits = null
+  }
+  const limitsResult = limitsSchema.safeParse(parsedLimits)
+  const limits = limitsResult.success
+    ? limitsResult.data
+    : {
+        enabled: false,
+        gift_cap: 500000,
+        monthly_cap: 300000,
+        activity_days: 30,
+        minimum_spend: 50000,
+        reduced_percent: 20,
+        new_user_days: 7,
+      }
   const form = useForm<Values>({
     resolver: zodResolver(schema) as unknown as Resolver<Values>,
     defaultValues: {
       enabled: defaultValues.enabled,
+      limits,
       minQuota: defaultValues.minQuota,
       maxQuota: defaultValues.maxQuota,
     },
@@ -74,6 +156,7 @@ export function CheckinSettingsSection({
 
   const { isDirty, isSubmitting } = form.formState
   const enabled = form.watch('enabled')
+  const limitsEnabled = form.watch('limits.enabled')
 
   async function onSubmit(values: Values) {
     const updates: Array<{ key: string; value: string }> = []
@@ -99,6 +182,12 @@ export function CheckinSettingsSection({
       })
     }
 
+    if (JSON.stringify(values.limits) !== JSON.stringify(limits)) {
+      updates.push({
+        key: 'checkin_setting.limits',
+        value: JSON.stringify(values.limits),
+      })
+    }
     if (updates.length === 0) {
       toast.info(t('No changes to save'))
       return
@@ -146,51 +235,125 @@ export function CheckinSettingsSection({
           />
 
           {enabled && (
-            <div className='grid gap-6 sm:grid-cols-2'>
-              <FormField
-                control={form.control}
-                name='minQuota'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('Minimum check-in quota')}</FormLabel>
-                    <FormControl>
-                      <Input
-                        type='number'
-                        min={0}
-                        placeholder={t('1000')}
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      {t('Minimum quota amount awarded for check-in')}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+            <>
+              <div className='grid gap-6 sm:grid-cols-2'>
+                <FormField
+                  control={form.control}
+                  name='minQuota'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Minimum check-in quota')}</FormLabel>
+                      <FormControl>
+                        <Input
+                          type='number'
+                          min={0}
+                          placeholder={t('1000')}
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        {t('Minimum quota amount awarded for check-in')}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
 
+                <FormField
+                  control={form.control}
+                  name='maxQuota'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Maximum check-in quota')}</FormLabel>
+                      <FormControl>
+                        <Input
+                          type='number'
+                          min={0}
+                          placeholder={t('10000')}
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        {t('Maximum quota amount awarded for check-in')}
+                      </FormDescription>
+                      <FormMessage>
+                        {form.formState.errors.maxQuota?.type === 'custom'
+                          ? t('Maximum must be at least the minimum')
+                          : undefined}
+                      </FormMessage>
+                    </FormItem>
+                  )}
+                />
+              </div>
               <FormField
                 control={form.control}
-                name='maxQuota'
+                name='limits.enabled'
                 render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('Maximum check-in quota')}</FormLabel>
+                  <SettingsSwitchItem>
+                    <SettingsSwitchContent>
+                      <FormLabel>{t('Limit check-in rewards')}</FormLabel>
+                      <FormDescription>
+                        {t(
+                          'Purchased and legacy balances do not affect check-in limits. Only newly tracked check-in rewards count toward the gift cap.'
+                        )}
+                      </FormDescription>
+                    </SettingsSwitchContent>
                     <FormControl>
-                      <Input
-                        type='number'
-                        min={0}
-                        placeholder={t('10000')}
-                        {...field}
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                        disabled={isSubmitting}
                       />
                     </FormControl>
-                    <FormDescription>
-                      {t('Maximum quota amount awarded for check-in')}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
+                  </SettingsSwitchItem>
                 )}
               />
-            </div>
+              {limitsEnabled && (
+                <>
+                  <p className='text-muted-foreground text-sm'>
+                    {t(
+                      'Settled wallet and subscription spending counts as activity. Gifts are used first for wallet spending. Incomplete history gets an observation window; monthly limits still apply. All quota inputs use internal quota units.'
+                    )}
+                  </p>
+                  <div className='grid gap-6 sm:grid-cols-2'>
+                    {limitFields.map((item) => (
+                      <FormField
+                        key={item.name}
+                        control={form.control}
+                        name={`limits.${item.name}`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>{t(item.label)}</FormLabel>
+                            <FormControl>
+                              <Input
+                                type='number'
+                                min={item.min}
+                                max={item.max}
+                                step={1}
+                                {...field}
+                              />
+                            </FormControl>
+                            {item.quota && (
+                              <FormDescription>
+                                {formatQuotaWithCurrency(
+                                  Number(field.value) || 0
+                                )}
+                              </FormDescription>
+                            )}
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    ))}
+                  </div>
+                  <p className='text-muted-foreground text-sm'>
+                    {t(
+                      'A reward percentage of 0 pauses rewards for low activity. Monthly rewards reset on the first day of each month in the server time zone.'
+                    )}
+                  </p>
+                </>
+              )}
+            </>
           )}
         </SettingsForm>
       </Form>
