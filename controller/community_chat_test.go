@@ -887,3 +887,140 @@ func TestCommunityHistoryVisibilityAndSoftDeletion(t *testing.T) {
 		})
 	}
 }
+
+type communityConfigBeforeHistory struct {
+	ID            int    `gorm:"primaryKey"`
+	Name          string `gorm:"type:varchar(80)"`
+	Enabled       bool
+	BotEnabled    bool
+	BotName       string `gorm:"type:varchar(32)"`
+	BotReply      string `gorm:"type:text"`
+	AppID         string `gorm:"type:varchar(128)"`
+	AppSecret     string `gorm:"type:text"`
+	TemplateID    string `gorm:"type:varchar(128)"`
+	Receiver      string `gorm:"type:varchar(128)"`
+	CallbackToken string `gorm:"type:text"`
+}
+
+func TestCommunityHistoryWindowSettings(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			if dialect != "sqlite" && os.Getenv("TEST_"+strings.ToUpper(dialect)+"_DSN") == "" {
+				t.Skip("database DSN not configured")
+			}
+			t.Setenv("TEST_SECURITY_DIALECT", dialect)
+			for _, upgrade := range []bool{false, true} {
+				t.Run(fmt.Sprintf("upgrade=%t", upgrade), func(t *testing.T) {
+					user, _ := setupSecurityEnrollmentTest(t)
+					if upgrade {
+						require.NoError(t, model.DB.Table("community_configs").AutoMigrate(&communityConfigBeforeHistory{}))
+						require.NoError(t, model.DB.Table("community_configs").Create(&communityConfigBeforeHistory{ID: 1, Name: "Existing chat", Enabled: true, BotName: "helper", BotReply: "Existing reply"}).Error)
+					}
+					for range 2 {
+						require.NoError(t, model.DB.AutoMigrate(&model.CommunityConfig{}, &model.CommunityMessage{}, &model.CommunityProfile{}, &model.CommunityBotFeedback{}))
+					}
+					config, err := model.GetCommunityConfig()
+					require.NoError(t, err)
+					assert.Equal(t, 1, config.HistoryDays)
+					if upgrade {
+						assert.Equal(t, "Existing chat", config.Name)
+						assert.Equal(t, "Existing reply", config.BotReply)
+					}
+					router := gin.New()
+					router.Use(func(c *gin.Context) {
+						c.Set("id", user.Id)
+						c.Set("role", common.RoleRootUser)
+						c.Next()
+					})
+					router.PUT("/settings", UpdateCommunitySettings)
+					router.GET("/status", GetCommunityStatus)
+					for _, days := range []int{0, -1, 366, 7, 365} {
+						rr := httptest.NewRecorder()
+						router.ServeHTTP(rr, httptest.NewRequest("PUT", "/settings", strings.NewReader(fmt.Sprintf(`{"enabled":true,"bot_name":"helper","history_days":%d}`, days))))
+						if days < 1 || days > 365 {
+							assert.Equal(t, 400, rr.Code, rr.Body.String())
+							continue
+						}
+						require.Equal(t, 200, rr.Code, rr.Body.String())
+						config, err = model.GetCommunityConfig()
+						require.NoError(t, err)
+						assert.Equal(t, days, config.HistoryDays)
+						rr = httptest.NewRecorder()
+						router.ServeHTTP(rr, httptest.NewRequest("GET", "/status", nil))
+						var status struct {
+							Data struct {
+								HistoryDays int `json:"history_days"`
+							} `json:"data"`
+						}
+						require.NoError(t, common.Unmarshal(rr.Body.Bytes(), &status))
+						assert.Equal(t, days, status.Data.HistoryDays)
+					}
+					// Older clients that omit this setting must preserve the saved range.
+					rr := httptest.NewRecorder()
+					router.ServeHTTP(rr, httptest.NewRequest("PUT", "/settings", strings.NewReader(`{"enabled":true,"bot_name":"helper"}`)))
+					require.Equal(t, 200, rr.Code)
+					config, err = model.GetCommunityConfig()
+					require.NoError(t, err)
+					assert.Equal(t, 365, config.HistoryDays)
+					config.HistoryDays = 7
+					require.NoError(t, model.SaveCommunityConfig(config))
+					start, end := config.HistoryBounds(time.Now())
+					outside := model.CommunityMessage{UserID: user.Id, Kind: "text", Text: "Outside range", CreatedAt: start.Unix() - 1}
+					original := model.CommunityMessage{UserID: user.Id, Kind: "text", Text: "Earlier question", CreatedAt: start.Unix()}
+					require.NoError(t, model.DB.Create(&outside).Error)
+					require.NoError(t, model.DB.Create(&original).Error)
+					answer := model.CommunityMessage{Kind: "text", Text: "Reply across days", ReplyToID: &original.ID}
+					require.NoError(t, model.CreateCommunityMessage(user.Id, &answer))
+					page, err := model.CommunityMessageHistory(0, 1, false)
+					require.NoError(t, err)
+					require.Len(t, page.Items, 1)
+					assert.True(t, page.HasMore)
+					require.NotNil(t, page.Items[0].Reply)
+					assert.Equal(t, original.Text, page.Items[0].Reply.Text)
+					assert.Equal(t, end.Unix(), page.Items[0].Reply.ExpiresAt)
+					page, err = model.CommunityMessageHistory(answer.ID, 1, false)
+					require.NoError(t, err)
+					require.Len(t, page.Items, 1)
+					assert.Equal(t, original.ID, page.Items[0].ID)
+					assert.False(t, page.HasMore)
+					require.ErrorIs(t, model.ValidateCommunityReply(&outside.ID), model.ErrCommunityReplyUnavailable)
+					config.HistoryDays = 1
+					require.NoError(t, model.SaveCommunityConfig(config))
+					page, err = model.CommunityMessageHistory(0, 50, false)
+					require.NoError(t, err)
+					require.Len(t, page.Items, 1)
+					assert.Nil(t, page.Items[0].Reply)
+					require.ErrorIs(t, model.ValidateCommunityReply(&original.ID), model.ErrCommunityReplyUnavailable)
+					for range 2 {
+						require.NoError(t, model.DB.AutoMigrate(&model.CommunityConfig{}))
+					}
+					config, err = model.GetCommunityConfig()
+					require.NoError(t, err)
+					assert.Equal(t, 1, config.HistoryDays)
+					var preserved model.CommunityMessage
+					require.NoError(t, model.DB.First(&preserved, original.ID).Error)
+					assert.Equal(t, original.Text, preserved.Text)
+				})
+			}
+		})
+	}
+}
+
+func TestCommunityHistoryBoundsAcrossDaylightSaving(t *testing.T) {
+	location, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		date  time.Time
+		hours int
+	}{
+		{time.Date(2026, 3, 8, 12, 0, 0, 0, location), 23},
+		{time.Date(2026, 11, 1, 12, 0, 0, 0, location), 25},
+	} {
+		start, end := (model.CommunityConfig{HistoryDays: 1}).HistoryBounds(tc.date)
+		assert.Equal(t, time.Duration(tc.hours)*time.Hour, end.Sub(start))
+		assert.Equal(t, 0, start.Hour())
+		assert.Equal(t, 0, end.Hour())
+		start, end = (model.CommunityConfig{HistoryDays: 7}).HistoryBounds(tc.date)
+		assert.Equal(t, time.Duration(tc.hours+6*24)*time.Hour, end.Sub(start))
+	}
+}

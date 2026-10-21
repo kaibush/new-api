@@ -6,6 +6,7 @@ export type ChatMessage = {
   client_id?: string
   is_bot?: boolean
   sending?: boolean
+  expires_at?: number
   reply_to_id?: number
   reply?: {
     id: number
@@ -13,6 +14,7 @@ export type ChatMessage = {
     text: string
     filename: string
     deleted: boolean
+    expires_at?: number
   }
   id: number
   user_id: number
@@ -32,6 +34,7 @@ export type ChatStatus = {
   enabled: boolean
   bot_enabled: boolean
   bot_name: string
+  history_days: number
 }
 export type ChatSettings = ChatStatus & {
   bot_reply: string
@@ -146,6 +149,7 @@ export type ChatHistory = {
   day_start: number
   day_end: number
   deleted_ids: number[]
+  history_days?: number
 }
 
 export async function getChatHistory(beforeId = 0, archive = false) {

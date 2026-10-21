@@ -254,18 +254,42 @@ test('administrator can enable chat while preserving a stored secret', async () 
     screen.getByRole('textbox', { name: 'Bot reply' }),
     'We received your message.'
   )
+  const days = screen.getByRole('spinbutton', { name: 'Chat history (days)' })
+  expect(days).toHaveValue(1)
+  await user.clear(days)
+  await user.type(days, '7')
   await user.click(screen.getByRole('button', { name: 'Save' }))
   await waitFor(() =>
     expect(api.put).toHaveBeenCalledWith(
       '/api/option/community',
       expect.objectContaining({
         enabled: true,
+        history_days: 7,
         name: 'My lounge',
         bot_reply: 'We received your message.',
         app_secret: '',
       })
     )
   )
+})
+
+test('invalid history days show an error and cannot be saved', async () => {
+  vi.spyOn(api, 'put').mockResolvedValue({ data: { success: true } })
+  show(<SettingsHarness />)
+  const days = await screen.findByRole('spinbutton', {
+    name: 'Chat history (days)',
+  })
+  const form = days.closest('form')
+  if (!form) throw new Error('History setting must be in a form')
+  for (const value of ['', '0', '366', '1.5']) {
+    fireEvent.change(days, { target: { value } })
+    fireEvent.submit(form)
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Enter a whole number from 1 to 365.'
+    )
+    expect(days).toHaveAttribute('aria-invalid', 'true')
+    expect(api.put).not.toHaveBeenCalled()
+  }
 })
 
 test('empty history disables blank messages and a failed send preserves the draft', async () => {
@@ -1237,6 +1261,197 @@ function historyMessage(id: number, text: string) {
   }
 }
 
+test('a history window moving forward preserves loaded messages that are still in range', async () => {
+  const user = userEvent.setup()
+  show(<CommunityChat />)
+  await screen.findByRole('textbox', { name: 'Message' })
+  const socket = FakeSocket.instances[0]
+  const start = 1700000000
+  const latest = {
+    ...historyMessage(60, 'Recent question'),
+    created_at: start + 86400,
+  }
+  act(() =>
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: 'history',
+        messages: [latest],
+        has_more: true,
+        day_start: start,
+        day_end: 0,
+        history_days: 7,
+      }),
+    })
+  )
+  vi.mocked(api.get).mockResolvedValueOnce({
+    data: {
+      success: true,
+      data: {
+        items: [
+          { ...historyMessage(1, 'Expired question'), created_at: start },
+          {
+            ...historyMessage(2, 'Earlier conversation'),
+            created_at: start + 86400,
+          },
+        ],
+        has_more: false,
+        day_start: start,
+        day_end: 0,
+        history_days: 7,
+        deleted_ids: [],
+      },
+    },
+  })
+  await user.click(
+    screen.getByRole('button', { name: 'Load earlier messages' })
+  )
+  expect(await screen.findByText('Earlier conversation')).toBeInTheDocument()
+  act(() =>
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: 'history',
+        messages: [latest],
+        has_more: true,
+        day_start: start + 86400,
+        day_end: 0,
+        history_days: 7,
+      }),
+    })
+  )
+  expect(screen.getByText('Earlier conversation')).toBeInTheDocument()
+  expect(screen.queryByText('Expired question')).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: 'Load earlier messages' })
+  ).not.toBeInTheDocument()
+})
+
+test('message expiry removes only expired history and quotes while keeping the current draft', async () => {
+  show(<CommunityChat />)
+  const editor = await screen.findByRole('textbox', { name: 'Message' })
+  vi.useFakeTimers()
+  try {
+    const end = Math.floor(Date.now() / 1000) + 2
+    act(() =>
+      FakeSocket.instances[0].onmessage?.({
+        data: JSON.stringify({
+          type: 'history',
+          history_days: 7,
+          day_start: end - 7 * 86400,
+          day_end: end,
+          messages: [
+            {
+              ...historyMessage(1, 'Expired original'),
+              created_at: end - 7 * 86400,
+              expires_at: end,
+            },
+            {
+              ...historyMessage(2, 'Continued discussion'),
+              created_at: end - 86400,
+              expires_at: end + 86400,
+              reply_to_id: 1,
+              reply: {
+                id: 1,
+                name: 'Bob',
+                text: 'Expired original',
+                filename: '',
+                deleted: false,
+                expires_at: end,
+              },
+            },
+          ],
+        }),
+      })
+    )
+    fireEvent.change(editor, { target: { value: 'My unfinished reply' } })
+    act(() => FakeSocket.instances[0].onclose?.())
+    await act(async () => vi.advanceTimersByTime(2000))
+    expect(screen.getByText('Continued discussion')).toBeInTheDocument()
+    expect(screen.queryByText('Expired original')).not.toBeInTheDocument()
+    expect(editor).toHaveValue('My unfinished reply')
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+test('changing the configured range discards stale pagination and allows loading the expanded history', async () => {
+  const user = userEvent.setup()
+  show(<CommunityChat />)
+  await screen.findByRole('textbox', { name: 'Message' })
+  const socket = FakeSocket.instances[0]
+  const latest = historyMessage(60, 'Latest message')
+  act(() =>
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: 'history',
+        messages: [latest],
+        has_more: true,
+        day_start: 1700000000,
+        history_days: 1,
+      }),
+    })
+  )
+  let resolve: ((value: unknown) => void) | undefined
+  vi.mocked(api.get).mockImplementationOnce(
+    () =>
+      new Promise((done) => {
+        resolve = done
+      })
+  )
+  await user.click(
+    screen.getByRole('button', { name: 'Load earlier messages' })
+  )
+  act(() =>
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: 'history',
+        messages: [latest],
+        has_more: true,
+        day_start: 1699400000,
+        history_days: 7,
+      }),
+    })
+  )
+  await act(async () =>
+    resolve?.({
+      data: {
+        success: true,
+        data: {
+          items: [historyMessage(1, 'Stale page')],
+          has_more: false,
+          day_start: 1700000000,
+          day_end: 0,
+          history_days: 1,
+          deleted_ids: [],
+        },
+      },
+    })
+  )
+  expect(screen.queryByText('Stale page')).not.toBeInTheDocument()
+  vi.mocked(api.get).mockResolvedValueOnce({
+    data: {
+      success: true,
+      data: {
+        items: [
+          {
+            ...historyMessage(2, 'Earlier in the week'),
+            created_at: 1699500000,
+          },
+        ],
+        has_more: false,
+        day_start: 1699400000,
+        day_end: 0,
+        history_days: 7,
+        deleted_ids: [],
+      },
+    },
+  })
+  await user.click(
+    screen.getByRole('button', { name: 'Load earlier messages' })
+  )
+  expect(await screen.findByText('Earlier in the week')).toBeInTheDocument()
+  expect(screen.getByText('Latest message')).toBeInTheDocument()
+})
+
 test('loading today’s older messages preserves the scroll position and survives live refresh and deletion', async () => {
   const user = userEvent.setup()
   show(<CommunityChat />)
@@ -1326,7 +1541,7 @@ test('a failed history page can be retried and a new day clears previously loade
     FakeSocket.instances[0].onmessage?.({
       data: JSON.stringify({
         type: 'history',
-        messages: [historyMessage(60, 'Previous day')],
+        messages: [{ ...historyMessage(60, 'Previous day'), created_at: 1 }],
         has_more: true,
         day_start: 1,
       }),
@@ -1338,7 +1553,7 @@ test('a failed history page can be retried and a new day clears previously loade
       data: {
         success: true,
         data: {
-          items: [historyMessage(1, 'Old morning')],
+          items: [{ ...historyMessage(1, 'Old morning'), created_at: 1 }],
           has_more: false,
           day_start: 1,
           day_end: 0,
@@ -1425,7 +1640,7 @@ test('a late history response cannot bring back messages from the previous day',
     FakeSocket.instances[0].onmessage?.({
       data: JSON.stringify({
         type: 'history',
-        messages: [historyMessage(60, 'Before midnight')],
+        messages: [{ ...historyMessage(60, 'Before midnight'), created_at: 1 }],
         has_more: true,
         day_start: 1,
       }),
@@ -1480,7 +1695,12 @@ test('the server day boundary clears visible history even when the socket is dis
       FakeSocket.instances[0].onmessage?.({
         data: JSON.stringify({
           type: 'history',
-          messages: [historyMessage(1, 'Expires at midnight')],
+          messages: [
+            {
+              ...historyMessage(1, 'Expires at midnight'),
+              created_at: end - 1,
+            },
+          ],
           day_start: end - 86400,
           day_end: end,
         }),

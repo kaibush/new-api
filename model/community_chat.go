@@ -21,6 +21,7 @@ type CommunityConfig struct {
 	ID            int    `json:"-" gorm:"primaryKey"`
 	Name          string `json:"name" gorm:"type:varchar(80)"`
 	Enabled       bool   `json:"enabled"`
+	HistoryDays   int    `json:"history_days"`
 	BotEnabled    bool   `json:"bot_enabled"`
 	BotName       string `json:"bot_name" gorm:"type:varchar(32)"`
 	BotReply      string `json:"bot_reply" gorm:"type:text"`
@@ -32,11 +33,12 @@ type CommunityConfig struct {
 }
 
 type CommunityReply struct {
-	ID       int64  `json:"id"`
-	Name     string `json:"name"`
-	Text     string `json:"text"`
-	Filename string `json:"filename"`
-	Deleted  bool   `json:"deleted"`
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	Text      string `json:"text"`
+	Filename  string `json:"filename"`
+	Deleted   bool   `json:"deleted"`
+	ExpiresAt int64  `json:"expires_at,omitempty"`
 }
 
 type CommunityMessage struct {
@@ -56,6 +58,7 @@ type CommunityMessage struct {
 	Size      int64           `json:"size"`
 	CreatedAt int64           `json:"created_at" gorm:"index"`
 	Deleted   bool            `json:"deleted"`
+	ExpiresAt int64           `json:"expires_at,omitempty" gorm:"-"`
 }
 
 // Snapshots preserve the feedback history when chat messages are moderated.
@@ -84,6 +87,9 @@ func GetCommunityConfig() (CommunityConfig, error) {
 	err := DB.First(&config, 1).Error
 	if strings.TrimSpace(config.BotReply) == "" {
 		config.BotReply = DefaultCommunityBotReply
+	}
+	if config.HistoryDays == 0 {
+		config.HistoryDays = 1
 	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return config, nil
@@ -114,6 +120,12 @@ func GetCommunityConfig() (CommunityConfig, error) {
 
 func SaveCommunityConfig(config CommunityConfig) error {
 	config.ID = 1
+	if config.HistoryDays == 0 {
+		config.HistoryDays = 1
+	}
+	if config.HistoryDays < 1 || config.HistoryDays > 365 {
+		return errors.New("Chat history must be between 1 and 365 days")
+	}
 	aead, err := communitySecretAEAD()
 	if err != nil {
 		return err
@@ -127,11 +139,12 @@ func SaveCommunityConfig(config CommunityConfig) error {
 }
 
 type CommunityHistory struct {
-	Items      []CommunityMessage `json:"items"`
-	HasMore    bool               `json:"has_more"`
-	DayStart   int64              `json:"day_start"`
-	DayEnd     int64              `json:"day_end"`
-	DeletedIDs []int64            `json:"deleted_ids"`
+	Items       []CommunityMessage `json:"items"`
+	HasMore     bool               `json:"has_more"`
+	DayStart    int64              `json:"day_start"`
+	DayEnd      int64              `json:"day_end"`
+	HistoryDays int                `json:"history_days"`
+	DeletedIDs  []int64            `json:"deleted_ids"`
 }
 
 func RecentCommunityMessages() ([]CommunityMessage, error) {
@@ -154,9 +167,13 @@ func (message *CommunityMessage) RedactDeletedContent() {
 // CommunityMessageHistory uses a stable ID cursor. Only the administrator route
 // may request the archive, which includes previous days and moderated content.
 func CommunityMessageHistory(beforeID int64, limit int, archive bool) (CommunityHistory, error) {
+	config, err := GetCommunityConfig()
+	if err != nil {
+		return CommunityHistory{}, err
+	}
 	now := time.Now()
-	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	page := CommunityHistory{Items: make([]CommunityMessage, 0, limit+1), DayStart: start.Unix(), DayEnd: start.AddDate(0, 0, 1).Unix(), DeletedIDs: []int64{}}
+	start, end := config.HistoryBounds(now)
+	page := CommunityHistory{Items: make([]CommunityMessage, 0, limit+1), DayStart: start.Unix(), DayEnd: end.Unix(), HistoryDays: config.HistoryDays, DeletedIDs: []int64{}}
 	query := DB.Order("id DESC").Limit(limit + 1)
 	if !archive {
 		query = query.Where("created_at >= ? AND created_at < ?", page.DayStart, page.DayEnd)
@@ -178,20 +195,21 @@ func CommunityMessageHistory(beforeID int64, limit int, archive bool) (Community
 		}
 		for i := range page.Items {
 			page.Items[i].RedactDeletedContent()
+			page.Items[i].ExpiresAt = communityMessageExpiry(page.Items[i].CreatedAt, config.HistoryDays)
 		}
 	}
 	replyStart := int64(0)
 	if !archive {
 		replyStart = page.DayStart
 	}
-	if err := loadCommunityReplies(page.Items, archive, replyStart, page.DayEnd); err != nil {
+	if err := loadCommunityReplies(page.Items, archive, replyStart, page.DayEnd, config.HistoryDays); err != nil {
 		return page, err
 	}
 	slices.Reverse(page.Items)
 	return page, nil
 }
 
-func loadCommunityReplies(rows []CommunityMessage, includeDeleted bool, dayStart, dayEnd int64) error {
+func loadCommunityReplies(rows []CommunityMessage, includeDeleted bool, dayStart, dayEnd int64, historyDays int) error {
 	ids := make([]int64, 0)
 	for _, row := range rows {
 		if row.ReplyToID != nil {
@@ -210,6 +228,9 @@ func loadCommunityReplies(rows []CommunityMessage, includeDeleted bool, dayStart
 		byID := make(map[int64]*CommunityReply, len(replies))
 		for _, reply := range replies {
 			preview := &CommunityReply{ID: reply.ID, Name: reply.Name, Deleted: reply.Deleted}
+			if !includeDeleted {
+				preview.ExpiresAt = communityMessageExpiry(reply.CreatedAt, historyDays)
+			}
 			if includeDeleted || !reply.Deleted {
 				preview.Text = reply.Text
 				preview.Filename = reply.Filename
@@ -227,6 +248,18 @@ func loadCommunityReplies(rows []CommunityMessage, includeDeleted bool, dayStart
 
 var ErrCommunityReplyUnavailable = errors.New("Reply target is unavailable")
 
+// HistoryBounds includes today and the configured preceding calendar days in the site time zone.
+func (config CommunityConfig) HistoryBounds(now time.Time) (time.Time, time.Time) {
+	days := max(1, config.HistoryDays)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	return today.AddDate(0, 0, 1-days), today.AddDate(0, 0, 1)
+}
+
+func communityMessageExpiry(createdAt int64, historyDays int) int64 {
+	created := time.Unix(createdAt, 0).In(time.Local)
+	return time.Date(created.Year(), created.Month(), created.Day()+max(1, historyDays), 0, 0, 0, 0, created.Location()).Unix()
+}
+
 func ValidateCommunityReply(id *int64) error {
 	if id == nil {
 		return nil
@@ -234,11 +267,14 @@ func ValidateCommunityReply(id *int64) error {
 	if *id <= 0 {
 		return ErrCommunityReplyUnavailable
 	}
+	config, err := GetCommunityConfig()
+	if err != nil {
+		return err
+	}
 	var target CommunityMessage
-	err := DB.First(&target, *id).Error
-	now := time.Now()
-	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	if errors.Is(err, gorm.ErrRecordNotFound) || target.Deleted || target.CreatedAt < start.Unix() || target.CreatedAt >= start.AddDate(0, 0, 1).Unix() {
+	err = DB.First(&target, *id).Error
+	start, end := config.HistoryBounds(time.Now())
+	if errors.Is(err, gorm.ErrRecordNotFound) || target.Deleted || target.CreatedAt < start.Unix() || target.CreatedAt >= end.Unix() {
 		return ErrCommunityReplyUnavailable
 	}
 	return err
@@ -268,6 +304,7 @@ func CreateCommunityMessage(userID int, message *CommunityMessage) error {
 	if err != nil {
 		return err
 	}
+	message.ExpiresAt = communityMessageExpiry(message.CreatedAt, config.HistoryDays)
 	return DB.Transaction(func(tx *gorm.DB) error {
 		result := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "user_id"}, {Name: "client_id"}}, DoNothing: true}).Create(message)
 		if result.Error != nil {
@@ -278,6 +315,7 @@ func CreateCommunityMessage(userID int, message *CommunityMessage) error {
 				return err
 			}
 			message.Replayed = true
+			message.ExpiresAt = communityMessageExpiry(message.CreatedAt, config.HistoryDays)
 			return nil
 		}
 		if message.ReplyToID != nil {
@@ -285,7 +323,7 @@ func CreateCommunityMessage(userID int, message *CommunityMessage) error {
 			if err := tx.First(&target, *message.ReplyToID).Error; err != nil {
 				return err
 			}
-			message.Reply = &CommunityReply{ID: target.ID, Name: target.Name, Text: target.Text, Filename: target.Filename, Deleted: target.Deleted}
+			message.Reply = &CommunityReply{ID: target.ID, Name: target.Name, Text: target.Text, Filename: target.Filename, Deleted: target.Deleted, ExpiresAt: communityMessageExpiry(target.CreatedAt, config.HistoryDays)}
 		}
 		if !config.Enabled || !config.BotEnabled || !CommunityMentionsBot(message.Text, config.BotName) {
 			return nil

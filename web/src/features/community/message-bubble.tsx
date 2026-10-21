@@ -24,6 +24,13 @@ export function ChatMessageBubble(props: {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const message = props.message
+  let replyText = t('Referenced message is unavailable')
+  if (message.reply) {
+    replyText = message.reply.text || message.reply.filename
+    if (message.reply.deleted && !props.showDeletedContent) {
+      replyText = t('Message deleted')
+    }
+  }
   return (
     <article
       id={`message-${message.id}`}
@@ -87,12 +94,7 @@ export function ChatMessageBubble(props: {
                 </p>
                 <p className='line-clamp-2 break-words'>
                   <MessageText
-                    text={
-                      message.reply &&
-                      (!message.reply.deleted || props.showDeletedContent)
-                        ? message.reply.text || message.reply.filename
-                        : t('Message deleted')
-                    }
+                    text={replyText}
                     currentUserId={props.currentUserId}
                   />
                 </p>

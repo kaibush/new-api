@@ -18,26 +18,49 @@ const emptyHistory: ChatHistory = {
   deleted_ids: [],
 }
 
+function pruneChatHistory(history: ChatHistory): ChatHistory {
+  const now = Date.now() / 1000
+  return {
+    ...history,
+    items: history.items
+      .filter(
+        (message) =>
+          message.created_at >= history.day_start &&
+          (!history.day_end || message.created_at < history.day_end) &&
+          !(message.expires_at && message.expires_at <= now)
+      )
+      .map((message) => {
+        if (message.reply?.expires_at && message.reply.expires_at <= now) {
+          return { ...message, reply: undefined }
+        }
+        return message
+      }),
+  }
+}
+
 function mergeChatHistory(
   current: ChatHistory,
   next: ChatHistory,
   older: boolean
 ): ChatHistory {
-  const sameDay = current.day_start === next.day_start
-  if (older && !sameDay) return current
+  const samePolicy = current.history_days === next.history_days
+  if (older && (!samePolicy || current.day_start !== next.day_start)) {
+    return current
+  }
+  const retained = pruneChatHistory({ ...next, items: current.items }).items
   const keepCurrent =
-    sameDay &&
+    samePolicy &&
     (older ||
       !current.items.length ||
       !next.items.length ||
       (current.items.at(-1)?.id ?? 0) >= next.items[0].id)
   const byId = new Map(
-    (keepCurrent ? current.items : []).map((message) => [message.id, message])
+    (keepCurrent ? retained : []).map((message) => [message.id, message])
   )
   for (const message of next.items) byId.set(message.id, message)
   const deleted = new Set([
     ...next.deleted_ids,
-    ...(sameDay ? current.deleted_ids : []),
+    ...(samePolicy ? current.deleted_ids : []),
   ])
   const items = [...byId.values()]
     .sort((a, b) => a.id - b.id)
@@ -64,15 +87,21 @@ function mergeChatHistory(
     })
   const retainedOlder =
     keepCurrent &&
-    current.items.length > 0 &&
+    retained.length > 0 &&
     next.items.length > 0 &&
-    current.items[0].id < next.items[0].id
-  return {
+    retained[0].id < next.items[0].id
+  const reachedBoundary = current.items.some(
+    (message) => message.created_at < next.day_start
+  )
+  return pruneChatHistory({
     ...next,
     items,
     deleted_ids: [...deleted],
-    has_more: !older && retainedOlder ? current.has_more : next.has_more,
-  }
+    has_more:
+      !older && retainedOlder && next.day_start >= current.day_start
+        ? current.has_more && !reachedBoundary
+        : next.has_more,
+  })
 }
 
 export function useChat(enabled: boolean) {
@@ -85,29 +114,55 @@ export function useChat(enabled: boolean) {
     mutationFn: (request: {
       before: number
       day: number
+      days?: number
       generation: number
     }) => getChatHistory(request.before),
     onSuccess: (page, request) => {
       if (request.generation !== sessionGeneration.current) return
       setHistory((current) => {
-        if (current.day_start !== request.day) return current
-        if (page.day_start > current.day_start) return page
+        if (
+          current.day_start !== request.day ||
+          current.history_days !== request.days
+        ) {
+          return current
+        }
+        if (
+          page.day_start !== current.day_start ||
+          page.history_days !== current.history_days
+        ) {
+          return current
+        }
         return mergeChatHistory(current, page, true)
       })
     },
     meta: { errorToast: false },
   })
   useEffect(() => {
-    if (!history.day_end) return
+    let nextExpiry = Infinity
+    for (const message of history.items) {
+      const expiresAt = message.expires_at || history.day_end
+      if (expiresAt > 0) nextExpiry = Math.min(nextExpiry, expiresAt)
+      if (message.reply?.expires_at) {
+        nextExpiry = Math.min(nextExpiry, message.reply.expires_at)
+      }
+    }
+    if (!Number.isFinite(nextExpiry)) return
     const timer = setTimeout(
       () => {
-        setHistory(emptyHistory)
-        setOutgoing([])
+        setHistory((current) =>
+          pruneChatHistory({
+            ...current,
+            items: current.items.filter(
+              (message) =>
+                (message.expires_at || current.day_end) > Date.now() / 1000
+            ),
+          })
+        )
       },
-      Math.max(0, history.day_end * 1000 - Date.now())
+      Math.min(2147483647, Math.max(0, nextExpiry * 1000 - Date.now()))
     )
     return () => clearTimeout(timer)
-  }, [history.day_end])
+  }, [history])
   const [outgoing, setOutgoing] = useState<ChatMessage[]>([])
   const acknowledged = useRef(
     new Map<string, { userId: number; confirmed: boolean }>()
@@ -163,6 +218,7 @@ export function useChat(enabled: boolean) {
               day_start: data.day_start ?? 0,
               day_end: data.day_end ?? 0,
               deleted_ids: data.deleted_ids ?? [],
+              history_days: data.history_days,
             }
             setHistory((current) => mergeChatHistory(current, page, false))
             const history = data.messages as ChatMessage[]
@@ -224,6 +280,7 @@ export function useChat(enabled: boolean) {
         earlier.mutate({
           before: messages[0]?.id || 0,
           day: history.day_start,
+          days: history.history_days,
           generation: sessionGeneration.current,
         })
       }

@@ -40,6 +40,7 @@ import { CommunityHistory } from './history'
 const schema = z.object({
   name: z.string().trim().max(80),
   enabled: z.boolean(),
+  history_days: z.number().int().min(1).max(365),
   bot_enabled: z.boolean(),
   bot_reply: z.string().trim().max(2000),
   bot_name: z
@@ -69,6 +70,7 @@ export function CommunitySettings() {
     defaultValues: {
       name: '',
       enabled: false,
+      history_days: 1,
       bot_enabled: false,
       bot_name: '助手',
       bot_reply: '',
@@ -84,6 +86,7 @@ export function CommunitySettings() {
       form.reset({
         ...settings.data.data,
         name: settings.data.data.name || '',
+        history_days: settings.data.data.history_days || 1,
         bot_reply: settings.data.data.bot_reply || '',
         app_secret: '',
         callback_token: '',
@@ -195,6 +198,31 @@ export function CommunitySettings() {
                     'The latest 50 messages are shown. All signed-in users can read this chat.'
                   )}
                 </FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor='community-history-days'>
+                  {t('Chat history (days)')}
+                </FieldLabel>
+                <Input
+                  id='community-history-days'
+                  type='number'
+                  min={1}
+                  max={365}
+                  step={1}
+                  {...form.register('history_days', { valueAsNumber: true })}
+                  aria-invalid={Boolean(form.formState.errors.history_days)}
+                  aria-describedby='community-history-days-description'
+                />
+                <FieldDescription id='community-history-days-description'>
+                  {t(
+                    'Include today and the preceding days in the site’s time zone. This changes what users can load, without deleting stored messages.'
+                  )}
+                </FieldDescription>
+                {form.formState.errors.history_days && (
+                  <FieldDescription role='alert'>
+                    {t('Enter a whole number from 1 to 365.')}
+                  </FieldDescription>
+                )}
               </Field>
               <Field>
                 <FieldLabel htmlFor='community-bot'>

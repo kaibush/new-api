@@ -11,6 +11,8 @@ import { Main } from '@/components/layout'
 import { LoadingState } from '@/components/loading-state'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatNumber } from '@/lib/format'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
@@ -26,7 +28,8 @@ import { OnlineUsers } from './online-users'
 import { useChat } from './use-chat'
 
 export function CommunityChat() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const user = useAuthStore((s) => s.auth.user)
   const status = useQuery({
     queryKey: ['community-status'],
@@ -105,7 +108,10 @@ export function CommunityChat() {
           </Button>
         </header>
         <p className='text-muted-foreground text-sm'>
-          {t('You can load today’s messages, based on the site’s time zone.')}
+          {t(
+            'You can load messages from the last {{days}} days, including today, in the site’s time zone.',
+            { days: formatNumber(status.data.history_days || 1, locale) }
+          )}
         </p>
         <div
           ref={scroll}

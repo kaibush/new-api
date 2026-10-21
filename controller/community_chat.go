@@ -66,7 +66,7 @@ func GetCommunityStatus(c *gin.Context) {
 		communityError(c, 500, "Could not load community settings")
 		return
 	}
-	c.JSON(200, gin.H{"success": true, "data": gin.H{"enabled": config.Enabled, "name": config.Name, "bot_enabled": config.BotEnabled, "bot_name": config.BotName}})
+	c.JSON(200, gin.H{"success": true, "data": gin.H{"enabled": config.Enabled, "name": config.Name, "bot_enabled": config.BotEnabled, "bot_name": config.BotName, "history_days": config.HistoryDays}})
 }
 
 func GetCommunitySettings(c *gin.Context) {
@@ -103,8 +103,9 @@ func UpdateCommunitySettings(c *gin.Context) {
 	markAuditLogged(c)
 	var req struct {
 		model.CommunityConfig
-		Secret string `json:"app_secret"`
-		Token  string `json:"callback_token"`
+		Secret      string `json:"app_secret"`
+		Token       string `json:"callback_token"`
+		HistoryDays *int   `json:"history_days"`
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 20<<10)
 	if common.DecodeJson(c.Request.Body, &req) != nil {
@@ -112,6 +113,10 @@ func UpdateCommunitySettings(c *gin.Context) {
 		return
 	}
 	config := req.CommunityConfig
+	if req.HistoryDays != nil && (*req.HistoryDays < 1 || *req.HistoryDays > 365) {
+		communityError(c, 400, "Chat history must be between 1 and 365 days")
+		return
+	}
 	config.Name = strings.TrimSpace(config.Name)
 	config.BotReply = strings.TrimSpace(config.BotReply)
 	if utf8.RuneCountInString(config.BotReply) > 2000 {
@@ -137,6 +142,10 @@ func UpdateCommunitySettings(c *gin.Context) {
 	}
 	config.AppSecret = old.AppSecret
 	config.CallbackToken = old.CallbackToken
+	config.HistoryDays = old.HistoryDays
+	if req.HistoryDays != nil {
+		config.HistoryDays = *req.HistoryDays
+	}
 	if req.Secret != "" {
 		config.AppSecret = req.Secret
 	}
@@ -413,7 +422,7 @@ func CommunityWebSocket(c *gin.Context) {
 		if e != nil {
 			return
 		}
-		data, e = common.Marshal(gin.H{"type": "history", "messages": page.Items, "has_more": page.HasMore, "day_start": page.DayStart, "day_end": page.DayEnd, "deleted_ids": page.DeletedIDs})
+		data, e = common.Marshal(gin.H{"type": "history", "messages": page.Items, "has_more": page.HasMore, "day_start": page.DayStart, "day_end": page.DayEnd, "history_days": page.HistoryDays, "deleted_ids": page.DeletedIDs})
 		if e != nil {
 			return
 		}
