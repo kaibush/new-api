@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
@@ -113,6 +114,10 @@ describe('channel status page', () => {
       await screen.findByText('No requests in this time range')
     ).toBeInTheDocument()
     expect(screen.getAllByText('—')).toHaveLength(2)
+    for (const marker of screen.getAllByText('—')) {
+      expect(marker).toHaveClass('text-muted-foreground')
+      expect(marker).not.toHaveClass('text-rose-700')
+    }
     const empty = screen.getByText('No requests in this time range')
     expect(empty.closest('[data-slot="card"]')).not.toBeNull()
     expect(empty.closest('[data-slot="empty"]')).toHaveClass('min-h-0')
@@ -333,6 +338,90 @@ describe('channel status page', () => {
       expect(screen.queryByText('Risk accounts')).not.toBeInTheDocument()
     )
     await waitFor(() => expect(getChannelStatus).toHaveBeenCalledTimes(2))
+  })
+  it('colors quality and HTTP rates with the shared five-band scale', async () => {
+    vi.mocked(getChannelStatus).mockResolvedValue({
+      configured: true,
+      summary: {
+        name: 'GrokIQ',
+        requestCount: 20,
+        thinkingRequests: 19,
+        thinkingSampleRequests: 20,
+        httpSuccessRequests: 16,
+      },
+      clients: [
+        {
+          name: 'steady',
+          requestCount: 10,
+          thinkingRequests: 6,
+          thinkingSampleRequests: 10,
+          httpSuccessRequests: 4,
+        },
+        {
+          name: 'weak',
+          requestCount: 5,
+          thinkingRequests: 1,
+          thinkingSampleRequests: 5,
+          httpSuccessRequests: 0,
+        },
+      ],
+    })
+    renderPage()
+    const summary = (await screen.findByText('Request quality')).closest(
+      '[data-slot="card"]'
+    )
+    expect(summary).not.toBeNull()
+    const summaryCard = within(summary as HTMLElement)
+    expect(summaryCard.getByText('95%')).toHaveClass(
+      'bg-emerald-500/10',
+      'text-emerald-700'
+    )
+    expect(summaryCard.getByText('80%')).toHaveClass(
+      'bg-sky-500/10',
+      'text-sky-700'
+    )
+    expect(
+      summaryCard.getByRole('progressbar', { name: 'Quality pass rate' })
+    ).toHaveClass('[&_[data-slot=progress-indicator]]:bg-emerald-500')
+    expect(
+      summaryCard.getByRole('progressbar', { name: 'HTTP success rate' })
+    ).toHaveClass('[&_[data-slot=progress-indicator]]:bg-sky-500')
+    for (const label of ['≥95%', '≥80%', '≥60%', '≥40%', '<40%']) {
+      expect(summaryCard.getByText(label)).toBeInTheDocument()
+    }
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Active clients' }))
+    const steady = (await screen.findByText('steady')).closest(
+      '[data-slot="card"]'
+    )
+    const weak = screen.getByText('weak').closest('[data-slot="card"]')
+    expect(steady).not.toBeNull()
+    expect(weak).not.toBeNull()
+    const steadyCard = within(steady as HTMLElement)
+    const weakCard = within(weak as HTMLElement)
+    expect(steadyCard.getByText('60%')).toHaveClass(
+      'bg-amber-500/10',
+      'text-amber-800'
+    )
+    expect(steadyCard.getByText('40%')).toHaveClass(
+      'bg-orange-500/12',
+      'text-orange-700'
+    )
+    expect(weakCard.getByText('20%')).toHaveClass(
+      'bg-rose-500/10',
+      'text-rose-700'
+    )
+    expect(weakCard.getByText('0%')).toHaveClass(
+      'bg-rose-500/10',
+      'text-rose-700'
+    )
+    expect(steadyCard.queryByText('≥95%')).not.toBeInTheDocument()
+    expect(
+      steadyCard.getByRole('progressbar', { name: 'Quality pass rate' })
+    ).toHaveClass(
+      '[&_[data-slot=progress-indicator]]:bg-amber-500',
+      '[&_[data-slot=progress-track]]:bg-muted'
+    )
   })
   it('does not invent percentages for missing or inconsistent counts', () => {
     expect(auditRate(1, 0)).toBeNull()
