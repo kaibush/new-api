@@ -82,6 +82,10 @@ describe('channel status page', () => {
     vi.mocked(getChannelStatus).mockResolvedValue(populated)
     renderPage()
     expect(await screen.findByText('87.5%')).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Time range' })).toHaveValue(
+      '1h'
+    )
+    expect(getChannelStatus).toHaveBeenCalledWith('1h', expect.any(AbortSignal))
     expect(screen.getByText('90%')).toBeInTheDocument()
     expect(screen.queryByText('alice')).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('tab', { name: 'Active clients' }))

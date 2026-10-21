@@ -25,7 +25,7 @@ export function ChannelStatus() {
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const user = useAuthStore((state) => state.auth.user)
   const [tab, setTab] = useState('availability')
-  const [window, setWindow] = useState('24h')
+  const [window, setWindow] = useState('1h')
   const query = useQuery({
     queryKey: ['channel-status', user?.id, user?.username, user?.role, window],
     queryFn: ({ signal }) => getChannelStatus(window, signal),
