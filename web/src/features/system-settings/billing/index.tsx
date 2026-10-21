@@ -106,7 +106,6 @@ const defaultBillingSettings: BillingSettings = {
   WaffoPancakeProductID: '',
   'checkin_setting.limits': JSON.stringify({
     enabled: false,
-    gift_cap: 500000,
     monthly_cap: 300000,
     activity_days: 30,
     minimum_spend: 50000,

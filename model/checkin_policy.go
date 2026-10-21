@@ -42,7 +42,7 @@ type CheckinEligibility struct {
 	MaxQuota         int      `json:"max_quota"`
 	RewardPercent    int      `json:"reward_percent"`
 	GiftRemaining    int64    `json:"gift_remaining"`
-	GiftCap          int      `json:"gift_cap"`
+	GiftCap          int      `json:"gift_cap"` // Deprecated: always zero; gifts no longer cap rewards.
 	MonthlyAwarded   int64    `json:"monthly_awarded"`
 	MonthlyCap       int      `json:"monthly_cap"`
 	RecentSpend      int64    `json:"recent_spend"`
@@ -73,7 +73,7 @@ func checkinAccount(tx *gorm.DB, userID int, now time.Time) (*CheckinAccount, er
 }
 
 // BeginCheckinUsage must run before final settlement. Users who have never
-// opened check-in have no account and receive a full observation window later.
+// opened check-in have no account. Registration grace is independent of this journal.
 func BeginCheckinUsage(userID int, source string, wallet bool) error {
 	if source == "" {
 		return errors.New("missing check-in settlement identifier")
@@ -143,7 +143,7 @@ func CompleteCheckinUsage(userID int, source string, quota int) error {
 func evaluateCheckin(tx *gorm.DB, user *User, account *CheckinAccount, settings operation_setting.CheckinSetting, limits operation_setting.CheckinLimits, now time.Time) (*CheckinEligibility, error) {
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 	nextMonth := monthStart.AddDate(0, 1, 0)
-	result := &CheckinEligibility{Limited: limits.Enabled, Allowed: true, Reasons: []string{}, MinQuota: settings.MinQuota, MaxQuota: settings.MaxQuota, RewardPercent: 100, GiftRemaining: account.GiftRemaining, GiftCap: limits.GiftCap, MonthlyCap: limits.MonthlyCap, MinimumSpend: limits.MinimumSpend, ActivityDays: limits.ActivityDays, NextMonthAt: nextMonth.Unix(), Today: now.Format("2006-01-02")}
+	result := &CheckinEligibility{Limited: limits.Enabled, Allowed: true, Reasons: []string{}, MinQuota: settings.MinQuota, MaxQuota: settings.MaxQuota, RewardPercent: 100, GiftRemaining: account.GiftRemaining, GiftCap: 0, MonthlyCap: limits.MonthlyCap, MinimumSpend: limits.MinimumSpend, ActivityDays: limits.ActivityDays, NextMonthAt: nextMonth.Unix(), Today: now.Format("2006-01-02")}
 	if settings.MinQuota < 0 || settings.MaxQuota < settings.MinQuota || settings.MaxQuota > common.MaxQuota {
 		return nil, errors.New("invalid check-in reward range")
 	}
@@ -157,7 +157,9 @@ func evaluateCheckin(tx *gorm.DB, user *User, account *CheckinAccount, settings 
 	if err := tx.Model(&CheckinUsage{}).Where("user_id = ? AND pending = ?", user.Id, true).Count(&pending).Error; err != nil {
 		return nil, err
 	}
-	if pending > 0 {
+	result.ObservationUntil = time.Unix(user.CreatedAt, 0).In(now.Location()).AddDate(0, 0, limits.NewUserDays).Unix()
+	inGrace := now.Unix() < result.ObservationUntil
+	if pending > 0 && !inGrace {
 		result.Reasons = append(result.Reasons, "accounting_pending")
 		result.Allowed = false
 	}
@@ -165,9 +167,8 @@ func evaluateCheckin(tx *gorm.DB, user *User, account *CheckinAccount, settings 
 	if err := tx.Model(&CheckinUsage{}).Where("user_id = ? AND created_at >= ? AND created_at <= ? AND pending = ?", user.Id, start, now.Unix(), false).Select("COALESCE(SUM(quota), 0)").Scan(&result.RecentSpend).Error; err != nil {
 		return nil, err
 	}
-	result.ObservationUntil = max(time.Unix(account.ObservedSince, 0).AddDate(0, 0, limits.ActivityDays).Unix(), time.Unix(user.CreatedAt, 0).AddDate(0, 0, limits.NewUserDays).Unix())
-	if now.Unix() < result.ObservationUntil {
-		result.Reasons = append(result.Reasons, "observation")
+	if inGrace {
+		result.Reasons = append(result.Reasons, "new_user_grace")
 	} else if result.RecentSpend < int64(limits.MinimumSpend) {
 		result.Reasons = append(result.Reasons, "low_activity")
 		result.RewardPercent = limits.ReducedPercent
@@ -175,17 +176,12 @@ func evaluateCheckin(tx *gorm.DB, user *User, account *CheckinAccount, settings 
 		result.MinQuota = int(int64(result.MinQuota) * int64(limits.ReducedPercent) / 100)
 		result.MaxQuota = int(int64(result.MaxQuota) * int64(limits.ReducedPercent) / 100)
 	}
-	giftRoom := max(int64(limits.GiftCap)-account.GiftRemaining, 0)
 	monthRoom := max(int64(limits.MonthlyCap)-result.MonthlyAwarded, 0)
-	if giftRoom == 0 {
-		result.Reasons = append(result.Reasons, "gift_cap")
-	}
 	if monthRoom == 0 {
 		result.Reasons = append(result.Reasons, "monthly_cap")
 	}
-	room := min(giftRoom, monthRoom)
-	result.MinQuota = int(min(int64(result.MinQuota), room))
-	result.MaxQuota = int(min(int64(result.MaxQuota), room))
+	result.MinQuota = int(min(int64(result.MinQuota), monthRoom))
+	result.MaxQuota = int(min(int64(result.MaxQuota), monthRoom))
 	if result.MaxQuota == 0 {
 		result.Allowed = false
 	} else {

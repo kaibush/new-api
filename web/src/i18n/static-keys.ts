@@ -22,7 +22,6 @@ export const STATIC_I18N_KEYS = [
   'Check-in reward is currently restricted',
   'Unable to verify check-in eligibility',
   'Limit check-in rewards',
-  'Unspent check-in reward cap',
   'Monthly check-in reward cap',
   'Activity window (days)',
   'Minimum spending in the activity window',

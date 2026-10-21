@@ -375,16 +375,8 @@ export function CheckinCalendarCard({
               <AlertDescription>
                 <p>
                   {t(
-                    'Purchased and legacy balances do not affect check-in limits.'
+                    'Account balances do not limit check-in rewards. The monthly reward cap still applies.'
                   )}
-                </p>
-                <p>
-                  {t('Unspent rewards: {{balance}} / {{cap}}', {
-                    balance: formatQuotaWithCurrency(
-                      eligibility.gift_remaining
-                    ),
-                    cap: formatQuotaWithCurrency(eligibility.gift_cap),
-                  })}
                 </p>
                 <p>
                   {t('Rewards this month: {{amount}} / {{cap}}', {
@@ -406,13 +398,6 @@ export function CheckinCalendarCard({
                     }
                   )}
                 </p>
-                {eligibility.reasons.includes('gift_cap') && (
-                  <p>
-                    {t(
-                      'Unspent check-in rewards have reached the cap. Use some gift quota to claim again.'
-                    )}
-                  </p>
-                )}
                 {eligibility.reasons.includes('monthly_cap') && (
                   <p>
                     {t(
@@ -433,10 +418,10 @@ export function CheckinCalendarCard({
                     )}
                   </p>
                 )}
-                {eligibility.reasons.includes('observation') && (
+                {eligibility.reasons.includes('new_user_grace') && (
                   <p>
                     {t(
-                      'Activity restrictions are waived while sufficient usage history is collected.'
+                      'During your registration grace period, daily rewards are paid normally, subject to the monthly cap.'
                     )}
                   </p>
                 )}

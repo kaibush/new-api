@@ -54,7 +54,6 @@ const eligibility: CheckinEligibility = {
 }
 const limits = {
   enabled: false,
-  gift_cap: 100,
   monthly_cap: 200,
   activity_days: 30,
   minimum_spend: 100,
@@ -92,7 +91,7 @@ function renderCheckin(decision: CheckinEligibility) {
     </QueryClientProvider>
   )
   return screen.findByText(
-    'Purchased and legacy balances do not affect check-in limits.'
+    'Account balances do not limit check-in rewards. The monthly reward cap still applies.'
   )
 }
 
@@ -103,7 +102,7 @@ beforeEach(() => {
   vi.spyOn(api, 'put').mockResolvedValue({ data: { success: true } })
 })
 
-test.each(['gift_cap', 'monthly_cap', 'accounting_pending'])(
+test.each(['monthly_cap', 'accounting_pending'])(
   'a %s restriction explains why and prevents a claim',
   async (reason) => {
     await renderCheckin({ ...eligibility, allowed: false, reasons: [reason] })
@@ -179,17 +178,38 @@ test('the limits toggle reveals controls and saves one complete policy', async (
     screen.queryByRole('spinbutton', { name: 'Monthly check-in reward cap' })
   ).not.toBeInTheDocument()
   fireEvent.click(toggle)
+  expect(
+    screen.queryByRole('spinbutton', { name: 'Unspent check-in reward cap' })
+  ).not.toBeInTheDocument()
   fireEvent.change(
     screen.getByRole('spinbutton', { name: 'Monthly check-in reward cap' }),
     { target: { value: '300' } }
   )
+  for (const [name, value] of [
+    ['Activity window (days)', '15'],
+    ['Minimum spending in the activity window', '1000'],
+    ['Low-activity reward percentage', '10'],
+    ['New user grace period (days)', '5'],
+  ]) {
+    fireEvent.change(screen.getByRole('spinbutton', { name }), {
+      target: { value },
+    })
+  }
   fireEvent.click(
     screen.getByRole('button', { name: 'Save check-in settings' })
   )
   await waitFor(() =>
     expect(api.put).toHaveBeenCalledWith('/api/option/', {
       key: 'checkin_setting.limits',
-      value: JSON.stringify({ ...limits, enabled: true, monthly_cap: 300 }),
+      value: JSON.stringify({
+        ...limits,
+        enabled: true,
+        monthly_cap: 300,
+        activity_days: 15,
+        minimum_spend: 1000,
+        reduced_percent: 10,
+        new_user_days: 5,
+      }),
     })
   )
   expect(api.put).toHaveBeenCalledTimes(1)
@@ -206,4 +226,24 @@ test('out-of-range percentages cannot be saved', async () => {
   )
   await waitFor(() => expect(input).toHaveAttribute('aria-invalid', 'true'))
   expect(api.put).not.toHaveBeenCalled()
+})
+
+test('registration grace allows accumulated rewards without a gift cap', async () => {
+  await renderCheckin({
+    ...eligibility,
+    gift_remaining: 500,
+    reasons: ['new_user_grace'],
+  })
+  expect(
+    screen.getByText(
+      'During your registration grace period, daily rewards are paid normally, subject to the monthly cap.'
+    )
+  ).toBeInTheDocument()
+  expect(screen.queryByText(/Unspent rewards:/)).not.toBeInTheDocument()
+  const button = screen.getByRole('button', { name: 'Check in now' })
+  expect(button).toBeEnabled()
+  fireEvent.click(button)
+  await waitFor(() =>
+    expect(api.post).toHaveBeenCalledWith('/api/user/checkin')
+  )
 })

@@ -46,7 +46,6 @@ import { useUpdateOption } from '../hooks/use-update-option'
 
 const limitsSchema = z.object({
   enabled: z.boolean(),
-  gift_cap: z.coerce.number().int().min(1).max(2147483647),
   monthly_cap: z.coerce.number().int().min(1).max(2147483647),
   activity_days: z.coerce.number().int().min(1).max(365),
   minimum_spend: z.coerce.number().int().min(0).max(2147483647),
@@ -55,13 +54,6 @@ const limitsSchema = z.object({
 })
 
 const limitFields = [
-  {
-    name: 'gift_cap',
-    label: 'Unspent check-in reward cap',
-    quota: true,
-    min: 1,
-    max: 2147483647,
-  },
   {
     name: 'monthly_cap',
     label: 'Monthly check-in reward cap',
@@ -137,7 +129,6 @@ export function CheckinSettingsSection({
     ? limitsResult.data
     : {
         enabled: false,
-        gift_cap: 500000,
         monthly_cap: 300000,
         activity_days: 30,
         minimum_spend: 50000,
@@ -294,7 +285,7 @@ export function CheckinSettingsSection({
                       <FormLabel>{t('Limit check-in rewards')}</FormLabel>
                       <FormDescription>
                         {t(
-                          'Purchased and legacy balances do not affect check-in limits. Only newly tracked check-in rewards count toward the gift cap.'
+                          'Daily rewards are paid normally during registration grace. After grace, low activity reduces rewards by the configured percentage. The monthly cap always applies; account balances do not limit rewards.'
                         )}
                       </FormDescription>
                     </SettingsSwitchContent>
@@ -310,9 +301,12 @@ export function CheckinSettingsSection({
               />
               {limitsEnabled && (
                 <>
+                  <h3 className='text-sm font-medium'>
+                    {t('Activity assessment and reward limits')}
+                  </h3>
                   <p className='text-muted-foreground text-sm'>
                     {t(
-                      'Settled wallet and subscription spending counts as activity. Gifts are used first for wallet spending. Incomplete history gets an observation window; monthly limits still apply. All quota inputs use internal quota units.'
+                      'Activity is measured by settled API spending from wallet and subscriptions in the last configured number of days. Refunds are deducted. Recharges, logins and check-ins do not count. At or above the spending threshold, rewards remain normal. All quota inputs use internal quota units; the converted amount is shown below.'
                     )}
                   </p>
                   <div className='grid gap-6 sm:grid-cols-2'>
@@ -348,7 +342,7 @@ export function CheckinSettingsSection({
                   </div>
                   <p className='text-muted-foreground text-sm'>
                     {t(
-                      'A reward percentage of 0 pauses rewards for low activity. Monthly rewards reset on the first day of each month in the server time zone.'
+                      'The grace period starts at registration and is not extended by the activity window. A reward percentage of 0 pauses rewards for low activity. Monthly rewards reset on the first day of each month in the server time zone.'
                     )}
                   </p>
                 </>
