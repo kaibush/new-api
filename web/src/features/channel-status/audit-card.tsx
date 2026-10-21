@@ -56,21 +56,30 @@ export function AuditCard(props: {
           {[
             { label: t('Quality pass rate'), value: quality },
             { label: t('HTTP success rate'), value: http },
-          ].map((metric) => (
-            <div key={metric.label}>
-              <p className='text-muted-foreground text-sm'>{metric.label}</p>
-              <p className='mt-1 text-2xl font-semibold tabular-nums'>
-                {metric.value == null
-                  ? '—'
-                  : `${formatNumber(metric.value, locale)}%`}
-              </p>
-              <Progress
-                className='mt-2'
-                value={metric.value ?? 0}
-                aria-label={metric.label}
-              />
-            </div>
-          ))}
+          ].map((metric) => {
+            // Health rates share thresholds; activity is a neutral volume comparison.
+            let tone = 'text-muted-foreground'
+            if (metric.value != null) {
+              tone = 'text-destructive'
+              if (metric.value >= 99) tone = 'text-success'
+              else if (metric.value >= 95) tone = 'text-warning'
+            }
+            return (
+              <div key={metric.label} className={tone}>
+                <p className='text-muted-foreground text-sm'>{metric.label}</p>
+                <p className='mt-1 text-2xl font-semibold tabular-nums'>
+                  {metric.value == null
+                    ? '—'
+                    : `${formatNumber(metric.value, locale)}%`}
+                </p>
+                <Progress
+                  className='mt-2 [&_[data-slot=progress-indicator]]:bg-current [&_[data-slot=progress-track]]:bg-current/10'
+                  value={metric.value ?? 0}
+                  aria-label={metric.label}
+                />
+              </div>
+            )
+          })}
         </div>
         {props.summary && props.client.requestCount === 0 && (
           <EmptyState
@@ -87,6 +96,7 @@ export function AuditCard(props: {
               </span>
             </div>
             <Progress
+              className='text-primary [&_[data-slot=progress-indicator]]:bg-current [&_[data-slot=progress-track]]:bg-current/10'
               value={activity ?? 0}
               aria-label={t('Relative activity')}
             />
