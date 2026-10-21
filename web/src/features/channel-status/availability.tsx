@@ -28,13 +28,19 @@ export function Availability(props: {
       ] as const)
     : []
   return (
-    <section aria-label={t('Channel availability')} className='space-y-4'>
+    <section
+      aria-label={t('Channel availability')}
+      className='flex min-w-0 flex-col gap-4'
+    >
       {props.error && (
         <ErrorState description={props.error} onRetry={props.onRetry} />
       )}
       {inventory && (
         <>
-          <Badge variant={inventory.reachable ? 'outline' : 'destructive'}>
+          <Badge
+            className='max-w-full self-start whitespace-normal'
+            variant={inventory.reachable ? 'outline' : 'destructive'}
+          >
             {inventory.reachable
               ? t('Current snapshot')
               : t('Upstream is currently unreachable')}
@@ -53,11 +59,11 @@ export function Availability(props: {
               ))}
             </div>
           )}
-          <div className='grid gap-4 md:grid-cols-3'>
+          <div className='grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3'>
             {Object.entries(inventory.providers).map(([provider, counts]) => (
-              <Card key={provider}>
+              <Card key={provider} className='min-w-0'>
                 <CardHeader>
-                  <CardTitle>
+                  <CardTitle className='wrap-anywhere'>
                     {{
                       grok_build: 'Grok Build',
                       grok_web: 'Grok Web',
@@ -124,12 +130,6 @@ export function Availability(props: {
                 </CardContent>
               </Card>
             </div>
-          )}
-          {inventory.updatedAt && (
-            <p className='text-muted-foreground text-xs'>
-              {t('Last updated')}:{' '}
-              {new Date(inventory.updatedAt).toLocaleString(locale)}
-            </p>
           )}
         </>
       )}

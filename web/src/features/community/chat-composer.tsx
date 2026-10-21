@@ -21,6 +21,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
+import { handleServerError } from '@/lib/handle-server-error'
 
 import {
   sendChatMessage,
@@ -38,6 +39,10 @@ export function ChatComposer(props: {
   users: ChatMember[]
   reply: ChatMessage | null
   onCancelReply: () => void
+  currentUser: ChatMember
+  onSending: (message: ChatMessage) => void
+  onDelivered: (clientId: string, message: ChatMessage) => void
+  onFailed: (clientId: string) => boolean
   onSent: (sentReplyId?: number) => void
 }) {
   const { t } = useTranslation()
@@ -49,10 +54,16 @@ export function ChatComposer(props: {
   const [preview, setPreview] = useState('')
   const [mentions, setMentions] = useState<Record<string, ChatMember>>({})
   const [mentionOpen, setMentionOpen] = useState(false)
-  const [feedback, setFeedback] = useState('')
+  const retry = useRef<{
+    clientId: string
+    text: string
+    file?: File
+    replyId?: number
+  } | null>(null)
   const input = useRef<HTMLInputElement>(null)
   const editor = useRef<HTMLTextAreaElement>(null)
   const composing = useRef(false)
+  const inFlight = useRef(false)
   const kind = useRef<'image' | 'file'>('image')
   const selection = useRef({ start: 0, end: 0 })
   useEffect(() => {
@@ -65,30 +76,68 @@ export function ChatComposer(props: {
     return () => URL.revokeObjectURL(url)
   }, [pending])
   const send = useMutation({
-    onMutate: () => setFeedback(''),
-    mutationFn: (replyToId: number | undefined) => {
-      const labels = Object.keys(mentions).sort((a, b) => b.length - a.length)
-      let outgoing = text
-      if (labels.length) {
-        const pattern = labels
-          .map((label) => label.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-          .join('|')
-        outgoing = text.replaceAll(
-          new RegExp(`(^|\\s)(${pattern})(?=$|\\s|[.,!?，。！？])`, 'g'),
-          (_, prefix: string, label: string) =>
-            `${prefix}@[${mentions[label].name.replaceAll(/[\]\r\n]/g, '')}](user:${mentions[label].user_id})`
-        )
-      }
-      return pending
-        ? uploadChatFile(pending.file, pending.kind, outgoing, replyToId)
-        : sendChatMessage(outgoing, replyToId)
-    },
-    onSuccess: (result, sentReplyId) => {
+    mutationFn: (submission: {
+      clientId: string
+      outgoing: string
+      draft: string
+      mentions: Record<string, ChatMember>
+      attachment: typeof pending
+      reply: ChatMessage | null
+    }) =>
+      submission.attachment
+        ? uploadChatFile(
+            submission.attachment.file,
+            submission.attachment.kind,
+            submission.outgoing,
+            submission.reply?.id,
+            submission.clientId
+          )
+        : sendChatMessage(
+            submission.outgoing,
+            submission.reply?.id,
+            submission.clientId
+          ),
+    onMutate: (submission) => {
+      const attachment = submission.attachment
+      props.onSending({
+        id: -Date.now(),
+        client_id: submission.clientId,
+        sending: true,
+        user_id: props.currentUser.user_id,
+        name: props.currentUser.name,
+        avatar: props.currentUser.avatar,
+        text: submission.outgoing,
+        kind: attachment?.kind || 'text',
+        url: attachment ? URL.createObjectURL(attachment.file) : '',
+        filename: attachment?.file.name || '',
+        size: attachment?.file.size || 0,
+        created_at: Math.floor(Date.now() / 1000),
+        deleted: false,
+        reply_to_id: submission.reply?.id,
+        reply: submission.reply || undefined,
+      })
       setText('')
-      setMentions({})
       setPending(null)
-      props.onSent(sentReplyId)
-      setFeedback(result.bot_status || 'sent')
+      setMentions({})
+    },
+    onSuccess: (result, submission) => {
+      props.onDelivered(submission.clientId, result.data)
+      props.onSent(submission.reply?.id)
+      retry.current = null
+    },
+    onError: (error, submission) => {
+      if (!props.onFailed(submission.clientId)) {
+        props.onSent(submission.reply?.id)
+        retry.current = null
+        return
+      }
+      setText(submission.draft)
+      setPending(submission.attachment)
+      setMentions(submission.mentions)
+      handleServerError(error)
+    },
+    onSettled: () => {
+      inFlight.current = false
     },
   })
   function stage(file: File, fileKind: 'image' | 'file') {
@@ -110,7 +159,6 @@ export function ChatComposer(props: {
       return
     }
     setPending({ file, kind: fileKind })
-    setFeedback('')
   }
   function insert(value: string) {
     const { start, end } = selection.current
@@ -129,34 +177,54 @@ export function ChatComposer(props: {
       )
     })
   }
-  let feedbackText = t('Message sent')
-  if (feedback === 'accepted') {
-    feedbackText = t(
-      'The assistant notification was accepted by WeChat. Delivery is not confirmed.'
-    )
-  }
-  if (feedback === 'failed') {
-    feedbackText = t(
-      'Message sent, but the assistant notification failed. Please contact an administrator.'
-    )
-  }
-  if (feedback === 'busy') {
-    feedbackText = t(
-      'Message sent, but the assistant is busy and was not notified.'
-    )
-  }
   return (
     <form
       className='space-y-2 rounded-lg border p-2'
       onSubmit={(event) => {
         event.preventDefault()
         if (
-          !send.isPending &&
+          !inFlight.current &&
           !props.reply?.deleted &&
           props.connected &&
           (text.trim() || pending)
         ) {
-          send.mutate(props.reply?.id)
+          const labels = Object.keys(mentions).sort(
+            (a, b) => b.length - a.length
+          )
+          let outgoing = text
+          if (labels.length) {
+            const pattern = labels
+              .map((label) => label.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+              .join('|')
+            outgoing = text.replaceAll(
+              new RegExp(`(^|\\s)(${pattern})(?=$|\\s|[.,!?，。！？])`, 'g'),
+              (_, prefix: string, label: string) =>
+                `${prefix}@[${mentions[label].name.replaceAll(/[\]\r\n]/g, '')}](user:${mentions[label].user_id})`
+            )
+          }
+          const previous = retry.current
+          const clientId =
+            previous &&
+            previous.text === outgoing &&
+            previous.file === pending?.file &&
+            previous.replyId === props.reply?.id
+              ? previous.clientId
+              : crypto.randomUUID()
+          retry.current = {
+            clientId,
+            text: outgoing,
+            file: pending?.file,
+            replyId: props.reply?.id,
+          }
+          inFlight.current = true
+          send.mutate({
+            clientId,
+            outgoing,
+            draft: text,
+            mentions,
+            attachment: pending,
+            reply: props.reply,
+          })
         }
       }}
     >
@@ -380,11 +448,6 @@ export function ChatComposer(props: {
       <p id='community-send-hint' className='text-muted-foreground text-xs'>
         {t('Enter to send, Shift+Enter for a new line')}
       </p>
-      {feedback && (
-        <p role='status' className='text-sm'>
-          {feedbackText}
-        </p>
-      )}
       <Input
         ref={input}
         type='file'

@@ -42,6 +42,9 @@ func accessTokenScopeRule(scope string) accessTokenRouteRule {
 // DeclareAccessTokenPermissionRoute when they are registered.
 var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/community/status":              accessTokenSessionRule,
+	"GET /api/community/bot-feedback":        accessTokenSessionRule,
+	"GET /api/community/history":             accessTokenSessionRule,
+	"GET /api/community/messages":            accessTokenSessionRule,
 	"POST /api/community/messages":           accessTokenSessionRule,
 	"POST /api/community/attachments":        accessTokenSessionRule,
 	"DELETE /api/community/messages/:id":     accessTokenSessionRule,

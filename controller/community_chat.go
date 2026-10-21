@@ -25,6 +25,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
@@ -105,13 +106,21 @@ func UpdateCommunitySettings(c *gin.Context) {
 		Secret string `json:"app_secret"`
 		Token  string `json:"callback_token"`
 	}
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<10)
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 20<<10)
 	if common.DecodeJson(c.Request.Body, &req) != nil {
 		communityError(c, 400, "Invalid community settings")
 		return
 	}
 	config := req.CommunityConfig
 	config.Name = strings.TrimSpace(config.Name)
+	config.BotReply = strings.TrimSpace(config.BotReply)
+	if utf8.RuneCountInString(config.BotReply) > 2000 {
+		communityError(c, 400, "Bot reply must contain at most 2000 characters")
+		return
+	}
+	if config.BotReply == "" {
+		config.BotReply = model.DefaultCommunityBotReply
+	}
 	if utf8.RuneCountInString(config.Name) > 80 || strings.ContainsFunc(config.Name, unicode.IsControl) {
 		communityError(c, 400, "Invalid community settings")
 		return
@@ -133,10 +142,6 @@ func UpdateCommunitySettings(c *gin.Context) {
 	}
 	if req.Token != "" {
 		config.CallbackToken = req.Token
-	}
-	if config.BotEnabled && (config.AppID == "" || config.AppSecret == "" || config.TemplateID == "" || config.Receiver == "") {
-		communityError(c, 400, "Complete the WeChat bot settings first")
-		return
 	}
 	if err = model.SaveCommunityConfig(config); err != nil {
 		communityError(c, 500, "Could not save community settings")
@@ -194,15 +199,23 @@ func TestCommunityWeChat(c *gin.Context) {
 
 func SendCommunityMessage(c *gin.Context) {
 	var req struct {
-		Text      string `json:"text"`
-		ReplyToID *int64 `json:"reply_to_id"`
+		Text      string  `json:"text"`
+		ReplyToID *int64  `json:"reply_to_id"`
+		ClientID  *string `json:"client_id"`
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 12<<10)
 	if common.DecodeJson(c.Request.Body, &req) != nil || strings.TrimSpace(req.Text) == "" || utf8.RuneCountInString(req.Text) > 2000 {
 		communityError(c, 400, "Message must contain 1 to 2000 characters")
 		return
 	}
-	message := model.CommunityMessage{Text: strings.TrimSpace(req.Text), Kind: "text", ReplyToID: req.ReplyToID}
+	if req.ClientID != nil {
+		id, err := uuid.Parse(*req.ClientID)
+		if err != nil || id.String() != *req.ClientID {
+			communityError(c, 400, "Invalid message identifier")
+			return
+		}
+	}
+	message := model.CommunityMessage{Text: strings.TrimSpace(req.Text), Kind: "text", ReplyToID: req.ReplyToID, ClientID: req.ClientID}
 	if err := model.CreateCommunityMessage(c.GetInt("id"), &message); err != nil {
 		if errors.Is(err, model.ErrCommunityReplyUnavailable) {
 			communityError(c, 400, "Reply target is unavailable")
@@ -211,32 +224,88 @@ func SendCommunityMessage(c *gin.Context) {
 		communityError(c, 500, "Could not send message")
 		return
 	}
-	botStatus := notifyCommunityBot(message)
-	c.JSON(200, gin.H{"success": true, "data": message, "bot_status": botStatus})
+	notifyCommunityBot(message)
+	message.RedactDeletedContent()
+	c.JSON(200, gin.H{"success": true, "data": message})
 }
 
-// notifyCommunityBot reports API acceptance, not end-user delivery or reading.
-func notifyCommunityBot(message model.CommunityMessage) string {
+// Optional external notifications must not delay the persisted chat reply.
+func notifyCommunityBot(message model.CommunityMessage) {
+	if message.Replayed {
+		return
+	}
 	config, err := model.GetCommunityConfig()
 	if err != nil {
-		return "failed"
+		return
 	}
-	if !config.Enabled || !config.BotEnabled || !service.CommunityMentionsBot(message.Text, config.BotName) {
-		return ""
+	if !config.Enabled || !config.BotEnabled || !model.CommunityMentionsBot(message.Text, config.BotName) || config.AppID == "" || config.AppSecret == "" || config.TemplateID == "" || config.Receiver == "" {
+		return
 	}
 	select {
 	case communityBotSlots <- struct{}{}:
 	default:
-		return "busy"
+		return
 	}
-	defer func() { <-communityBotSlots }()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	if err := service.SendCommunityWeChat(ctx, config, message); err != nil {
-		common.SysError(fmt.Sprintf("community notification failed: message=%d %s", message.ID, err))
-		return "failed"
+	go func() {
+		defer func() { <-communityBotSlots }()
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := service.SendCommunityWeChat(ctx, config, message); err != nil {
+			common.SysError(fmt.Sprintf("community notification failed: message=%d %s", message.ID, err))
+		}
+	}()
+}
+
+func GetCommunityBotFeedback(c *gin.Context) {
+	page, err := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if err != nil || page < 1 || page > 1000000 {
+		communityError(c, 400, "Invalid page")
+		return
 	}
-	return "accepted"
+	limit, err := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if err != nil || limit < 1 || limit > 100 {
+		communityError(c, 400, "Invalid page size")
+		return
+	}
+	rows, total, err := model.ListCommunityBotFeedback((page-1)*limit, limit)
+	if err != nil {
+		communityError(c, 500, "Could not load bot feedback")
+		return
+	}
+	c.JSON(200, gin.H{"success": true, "data": gin.H{"items": rows, "total": total}})
+}
+
+func GetCommunityHistory(c *gin.Context) {
+	getCommunityHistory(c, true)
+}
+
+func GetCommunityMessages(c *gin.Context) {
+	config, err := model.GetCommunityConfig()
+	if err != nil || !config.Enabled {
+		communityError(c, 403, "Community chat is disabled")
+		return
+	}
+	getCommunityHistory(c, false)
+}
+
+func getCommunityHistory(c *gin.Context, archive bool) {
+	before, err := strconv.ParseInt(c.DefaultQuery("before_id", "0"), 10, 64)
+	if err != nil || before < 0 {
+		communityError(c, 400, "Invalid message identifier")
+		return
+	}
+	limit, err := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	if err != nil || limit < 1 || limit > 100 {
+		communityError(c, 400, "Invalid page size")
+		return
+	}
+	page, err := model.CommunityMessageHistory(before, limit, archive)
+	if err != nil {
+		communityError(c, 500, "Could not load chat history")
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.JSON(200, gin.H{"success": true, "data": page})
 }
 
 func DeleteCommunityMessage(c *gin.Context) {
@@ -245,7 +314,7 @@ func DeleteCommunityMessage(c *gin.Context) {
 		communityError(c, 400, "Invalid message")
 		return
 	}
-	result := model.DB.Model(&model.CommunityMessage{}).Where("id = ?", id).Updates(map[string]any{"deleted": true, "text": "", "url": "", "filename": "", "size": 0, "reply_to_id": nil})
+	result := model.DB.Model(&model.CommunityMessage{}).Where("id = ?", id).Update("deleted", true)
 	if result.Error != nil {
 		communityError(c, 500, "Could not delete message")
 		return
@@ -340,11 +409,11 @@ func CommunityWebSocket(c *gin.Context) {
 		if _, _, e = service.ValidateLoginSession(identity); e != nil {
 			return
 		}
-		rows, e := model.RecentCommunityMessages()
+		page, e := model.CommunityMessageHistory(0, 50, false)
 		if e != nil {
 			return
 		}
-		data, e = common.Marshal(gin.H{"type": "history", "messages": rows})
+		data, e = common.Marshal(gin.H{"type": "history", "messages": page.Items, "has_more": page.HasMore, "day_start": page.DayStart, "day_end": page.DayEnd, "deleted_ids": page.DeletedIDs})
 		if e != nil {
 			return
 		}

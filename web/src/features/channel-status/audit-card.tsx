@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 
+import { EmptyState } from '@/components/empty-state'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
@@ -25,7 +26,7 @@ export function AuditCard(props: {
   )
   const activity = auditRate(props.client.requestCount, props.maxRequests)
   return (
-    <Card className={props.summary ? 'border-primary/25 bg-primary/5' : ''}>
+    <Card className='min-w-0'>
       <CardHeader className='flex flex-row flex-wrap items-start justify-between gap-3'>
         <div className='min-w-0 flex-1'>
           <CardTitle className='break-words'>
@@ -71,6 +72,12 @@ export function AuditCard(props: {
             </div>
           ))}
         </div>
+        {props.summary && props.client.requestCount === 0 && (
+          <EmptyState
+            title={t('No requests in this time range')}
+            className='min-h-0 p-3 [&_[data-slot=empty-header]]:max-w-none [&_[data-slot=empty-header]]:flex-row [&_[data-slot=empty-icon]]:mb-0'
+          />
+        )}
         {!props.summary && (
           <div>
             <div className='text-muted-foreground mb-2 flex justify-between gap-2 text-xs'>

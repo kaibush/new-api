@@ -33,6 +33,10 @@ export function ChannelStatus() {
     staleTime: 30_000,
   })
   const data = query.data
+  const updatedAt =
+    tab === 'availability'
+      ? data?.inventory?.updatedAt || data?.checkedAt
+      : data?.checkedAt
   const clients = [...(data?.clients ?? [])].sort(
     (a, b) => b.requestCount - a.requestCount
   )
@@ -65,7 +69,7 @@ export function ChannelStatus() {
         </Button>
       </SectionPageLayout.Actions>
       <SectionPageLayout.Content>
-        <div className='space-y-6 pb-6'>
+        <div className='mx-auto flex w-full max-w-7xl min-w-0 flex-col gap-5 pb-6'>
           <p className='text-muted-foreground text-sm'>
             {t(
               'Channel availability and request quality from GrokIQ. Refreshes every minute.'
@@ -99,33 +103,32 @@ export function ChannelStatus() {
                   />
                 </div>
               )}
-              {data.summary?.requestCount === 0 && (
-                <EmptyState title={t('No requests in this time range')} />
-              )}
               <Tabs
+                className='min-w-0 gap-4'
                 value={tab}
                 onValueChange={(value) => setTab(String(value))}
               >
-                <div className='overflow-x-auto'>
-                  <TabsList aria-label={t('Channel status')}>
-                    <TabsTrigger value='availability'>
-                      {t('Channel availability')}
-                    </TabsTrigger>
-                    <TabsTrigger value='health'>
-                      {t('Request health')}
-                    </TabsTrigger>
-                    <TabsTrigger value='usage'>
-                      {t('Usage statistics')}
-                    </TabsTrigger>
-                    <TabsTrigger value='clients'>
-                      {t('Active clients')}
-                    </TabsTrigger>
-                    <TabsTrigger value='metrics'>
-                      {t('How these metrics are calculated')}
-                    </TabsTrigger>
-                  </TabsList>
-                </div>
-                <TabsContent value='clients' className='space-y-4 pt-4'>
+                <TabsList
+                  aria-label={t('Channel status')}
+                  className='max-w-full flex-wrap justify-start gap-1 group-data-horizontal/tabs:h-auto [&>[role=tab]]:h-auto [&>[role=tab]]:min-h-9 [&>[role=tab]]:max-w-full [&>[role=tab]]:flex-none [&>[role=tab]]:px-3 [&>[role=tab]]:whitespace-normal'
+                >
+                  <TabsTrigger value='availability'>
+                    {t('Channel availability')}
+                  </TabsTrigger>
+                  <TabsTrigger value='health'>
+                    {t('Request health')}
+                  </TabsTrigger>
+                  <TabsTrigger value='usage'>
+                    {t('Usage statistics')}
+                  </TabsTrigger>
+                  <TabsTrigger value='clients'>
+                    {t('Active clients')}
+                  </TabsTrigger>
+                  <TabsTrigger value='metrics'>
+                    {t('How these metrics are calculated')}
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent value='clients' className='min-w-0 space-y-4'>
                   {data.summary && clients.length === 0 && (
                     <EmptyState
                       title={t('No matching client activity')}
@@ -157,7 +160,7 @@ export function ChannelStatus() {
                     </section>
                   )}
                 </TabsContent>
-                <TabsContent value='availability' className='pt-4'>
+                <TabsContent value='availability' className='min-w-0'>
                   <Availability
                     inventory={data.inventory}
                     error={data.inventoryError}
@@ -165,7 +168,7 @@ export function ChannelStatus() {
                   />
                 </TabsContent>
                 {['health', 'usage'].map((name) => (
-                  <TabsContent key={name} value={name} className='pt-4'>
+                  <TabsContent key={name} value={name} className='min-w-0'>
                     {tab === name && (
                       <Suspense fallback={<LoadingState />}>
                         <Dashboard dataset={name as 'health' | 'usage'} />
@@ -173,7 +176,7 @@ export function ChannelStatus() {
                     )}
                   </TabsContent>
                 ))}
-                <TabsContent value='metrics' className='pt-4'>
+                <TabsContent value='metrics' className='min-w-0'>
                   {data.summary && (
                     <Card>
                       <CardHeader>
@@ -202,10 +205,12 @@ export function ChannelStatus() {
                   )}
                 </TabsContent>
               </Tabs>
-              {data.checkedAt && (
+              {updatedAt && tab !== 'health' && tab !== 'usage' && (
                 <p className='text-muted-foreground text-xs'>
                   {t('Last updated')}:{' '}
-                  {new Date(data.checkedAt).toLocaleString(locale)}
+                  <time dateTime={updatedAt}>
+                    {new Date(updatedAt).toLocaleString(locale)}
+                  </time>
                 </p>
               )}
             </>

@@ -164,6 +164,15 @@ func UploadCommunityAttachment(c *gin.Context) {
 		return
 	}
 	text := strings.TrimSpace(c.PostForm("text"))
+	var clientID *string
+	if raw := c.PostForm("client_id"); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil || id.String() != raw {
+			communityError(c, 400, "Invalid message identifier")
+			return
+		}
+		clientID = &raw
+	}
 	if utf8.RuneCountInString(text) > 2000 {
 		communityError(c, 400, "Message must contain 1 to 2000 characters")
 		return
@@ -235,7 +244,7 @@ func UploadCommunityAttachment(c *gin.Context) {
 		return
 	}
 
-	message := model.CommunityMessage{ReplyToID: replyToID, Text: text, Kind: kind, URL: link, Filename: name, Size: int64(len(data))}
+	message := model.CommunityMessage{ClientID: clientID, ReplyToID: replyToID, Text: text, Kind: kind, URL: link, Filename: name, Size: int64(len(data))}
 	if err = model.CreateCommunityMessage(c.GetInt("id"), &message); err != nil {
 		if errors.Is(err, model.ErrCommunityReplyUnavailable) {
 			communityError(c, 400, "Reply target is unavailable")
@@ -244,6 +253,7 @@ func UploadCommunityAttachment(c *gin.Context) {
 		communityError(c, 500, "Could not send message")
 		return
 	}
-	botStatus := notifyCommunityBot(message)
-	c.JSON(200, gin.H{"success": true, "data": message, "bot_status": botStatus})
+	notifyCommunityBot(message)
+	message.RedactDeletedContent()
+	c.JSON(200, gin.H{"success": true, "data": message})
 }

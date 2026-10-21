@@ -6,7 +6,9 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -21,6 +23,7 @@ type CommunityConfig struct {
 	Enabled       bool   `json:"enabled"`
 	BotEnabled    bool   `json:"bot_enabled"`
 	BotName       string `json:"bot_name" gorm:"type:varchar(32)"`
+	BotReply      string `json:"bot_reply" gorm:"type:text"`
 	AppID         string `json:"app_id" gorm:"type:varchar(128)"`
 	AppSecret     string `json:"-" gorm:"type:text"`
 	TemplateID    string `json:"template_id" gorm:"type:varchar(128)"`
@@ -37,10 +40,13 @@ type CommunityReply struct {
 }
 
 type CommunityMessage struct {
+	Replayed  bool            `json:"-" gorm:"-"`
+	ClientID  *string         `json:"client_id,omitempty" gorm:"type:varchar(36);uniqueIndex:idx_community_sender_request,priority:2"`
+	IsBot     bool            `json:"is_bot"`
 	ReplyToID *int64          `json:"reply_to_id,omitempty"`
 	Reply     *CommunityReply `json:"reply,omitempty" gorm:"-"`
 	ID        int64           `json:"id" gorm:"primaryKey"`
-	UserID    int             `json:"user_id" gorm:"index"`
+	UserID    int             `json:"user_id" gorm:"index;uniqueIndex:idx_community_sender_request,priority:1"`
 	Name      string          `json:"name" gorm:"type:varchar(80)"`
 	Avatar    string          `json:"avatar" gorm:"type:text"`
 	Text      string          `json:"text" gorm:"type:text"`
@@ -48,9 +54,25 @@ type CommunityMessage struct {
 	URL       string          `json:"url" gorm:"type:text"`
 	Filename  string          `json:"filename" gorm:"type:varchar(255)"`
 	Size      int64           `json:"size"`
-	CreatedAt int64           `json:"created_at"`
+	CreatedAt int64           `json:"created_at" gorm:"index"`
 	Deleted   bool            `json:"deleted"`
 }
+
+// Snapshots preserve the feedback history when chat messages are moderated.
+type CommunityBotFeedback struct {
+	ID        int64  `json:"id" gorm:"primaryKey"`
+	MessageID int64  `json:"message_id" gorm:"uniqueIndex"`
+	ReplyID   int64  `json:"reply_id"`
+	UserID    int    `json:"user_id" gorm:"index"`
+	Name      string `json:"name" gorm:"type:varchar(80)"`
+	Text      string `json:"text" gorm:"type:text"`
+	Filename  string `json:"filename" gorm:"type:varchar(255)"`
+	BotName   string `json:"bot_name" gorm:"type:varchar(32)"`
+	ReplyText string `json:"reply_text" gorm:"type:text"`
+	CreatedAt int64  `json:"created_at"`
+}
+
+const DefaultCommunityBotReply = "已收到你的消息，管理员会尽快回复。"
 
 type CommunityProfile struct {
 	UserID int    `json:"user_id" gorm:"primaryKey;autoIncrement:false"`
@@ -58,8 +80,11 @@ type CommunityProfile struct {
 }
 
 func GetCommunityConfig() (CommunityConfig, error) {
-	config := CommunityConfig{ID: 1, BotName: "助手"}
+	config := CommunityConfig{ID: 1, BotName: "助手", BotReply: DefaultCommunityBotReply}
 	err := DB.First(&config, 1).Error
+	if strings.TrimSpace(config.BotReply) == "" {
+		config.BotReply = DefaultCommunityBotReply
+	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return config, nil
 	}
@@ -101,12 +126,72 @@ func SaveCommunityConfig(config CommunityConfig) error {
 	return DB.Clauses(clause.OnConflict{UpdateAll: true}).Create(&config).Error
 }
 
+type CommunityHistory struct {
+	Items      []CommunityMessage `json:"items"`
+	HasMore    bool               `json:"has_more"`
+	DayStart   int64              `json:"day_start"`
+	DayEnd     int64              `json:"day_end"`
+	DeletedIDs []int64            `json:"deleted_ids"`
+}
+
 func RecentCommunityMessages() ([]CommunityMessage, error) {
-	rows := make([]CommunityMessage, 0, 50)
-	err := DB.Order("id DESC").Limit(50).Find(&rows).Error
-	if err != nil {
-		return nil, err
+	page, err := CommunityMessageHistory(0, 50, false)
+	return page.Items, err
+}
+
+// RedactDeletedContent must run before returning messages to public chat clients.
+func (message *CommunityMessage) RedactDeletedContent() {
+	if message.Reply != nil && message.Reply.Deleted {
+		message.Reply.Text, message.Reply.Filename = "", ""
 	}
+	if !message.Deleted {
+		return
+	}
+	message.Text, message.URL, message.Filename, message.Size = "", "", "", 0
+	message.ReplyToID, message.Reply = nil, nil
+}
+
+// CommunityMessageHistory uses a stable ID cursor. Only the administrator route
+// may request the archive, which includes previous days and moderated content.
+func CommunityMessageHistory(beforeID int64, limit int, archive bool) (CommunityHistory, error) {
+	now := time.Now()
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	page := CommunityHistory{Items: make([]CommunityMessage, 0, limit+1), DayStart: start.Unix(), DayEnd: start.AddDate(0, 0, 1).Unix(), DeletedIDs: []int64{}}
+	query := DB.Order("id DESC").Limit(limit + 1)
+	if !archive {
+		query = query.Where("created_at >= ? AND created_at < ?", page.DayStart, page.DayEnd)
+	}
+	if beforeID > 0 {
+		query = query.Where("id < ?", beforeID)
+	}
+	if err := query.Find(&page.Items).Error; err != nil {
+		return page, err
+	}
+	page.HasMore = len(page.Items) > limit
+	if page.HasMore {
+		page.Items = page.Items[:limit]
+	}
+	if !archive {
+		// Synchronize moderation even for older pages already loaded by a client.
+		if err := DB.Model(&CommunityMessage{}).Where("created_at >= ? AND created_at < ? AND deleted = ?", page.DayStart, page.DayEnd, true).Order("id").Pluck("id", &page.DeletedIDs).Error; err != nil {
+			return page, err
+		}
+		for i := range page.Items {
+			page.Items[i].RedactDeletedContent()
+		}
+	}
+	replyStart := int64(0)
+	if !archive {
+		replyStart = page.DayStart
+	}
+	if err := loadCommunityReplies(page.Items, archive, replyStart, page.DayEnd); err != nil {
+		return page, err
+	}
+	slices.Reverse(page.Items)
+	return page, nil
+}
+
+func loadCommunityReplies(rows []CommunityMessage, includeDeleted bool, dayStart, dayEnd int64) error {
 	ids := make([]int64, 0)
 	for _, row := range rows {
 		if row.ReplyToID != nil {
@@ -115,13 +200,17 @@ func RecentCommunityMessages() ([]CommunityMessage, error) {
 	}
 	if len(ids) > 0 {
 		var replies []CommunityMessage
-		if err = DB.Where("id IN ?", ids).Find(&replies).Error; err != nil {
-			return nil, err
+		query := DB.Where("id IN ?", ids)
+		if !includeDeleted {
+			query = query.Where("created_at >= ? AND created_at < ?", dayStart, dayEnd)
+		}
+		if err := query.Find(&replies).Error; err != nil {
+			return err
 		}
 		byID := make(map[int64]*CommunityReply, len(replies))
 		for _, reply := range replies {
 			preview := &CommunityReply{ID: reply.ID, Name: reply.Name, Deleted: reply.Deleted}
-			if !reply.Deleted {
+			if includeDeleted || !reply.Deleted {
 				preview.Text = reply.Text
 				preview.Filename = reply.Filename
 			}
@@ -133,8 +222,7 @@ func RecentCommunityMessages() ([]CommunityMessage, error) {
 			}
 		}
 	}
-	slices.Reverse(rows)
-	return rows, nil
+	return nil
 }
 
 var ErrCommunityReplyUnavailable = errors.New("Reply target is unavailable")
@@ -148,7 +236,9 @@ func ValidateCommunityReply(id *int64) error {
 	}
 	var target CommunityMessage
 	err := DB.First(&target, *id).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) || target.Deleted {
+	now := time.Now()
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	if errors.Is(err, gorm.ErrRecordNotFound) || target.Deleted || target.CreatedAt < start.Unix() || target.CreatedAt >= start.AddDate(0, 0, 1).Unix() {
 		return ErrCommunityReplyUnavailable
 	}
 	return err
@@ -174,7 +264,69 @@ func CreateCommunityMessage(userID int, message *CommunityMessage) error {
 	}
 	message.Avatar = profile.Avatar
 	message.CreatedAt = time.Now().Unix()
-	return DB.Create(message).Error
+	config, err := GetCommunityConfig()
+	if err != nil {
+		return err
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		result := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "user_id"}, {Name: "client_id"}}, DoNothing: true}).Create(message)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			if err := tx.Where("user_id = ? AND client_id = ?", userID, message.ClientID).First(message).Error; err != nil {
+				return err
+			}
+			message.Replayed = true
+			return nil
+		}
+		if message.ReplyToID != nil {
+			var target CommunityMessage
+			if err := tx.First(&target, *message.ReplyToID).Error; err != nil {
+				return err
+			}
+			message.Reply = &CommunityReply{ID: target.ID, Name: target.Name, Text: target.Text, Filename: target.Filename, Deleted: target.Deleted}
+		}
+		if !config.Enabled || !config.BotEnabled || !CommunityMentionsBot(message.Text, config.BotName) {
+			return nil
+		}
+		name := strings.NewReplacer("]", "", "\r", "", "\n", "").Replace(message.Name)
+		reply := CommunityMessage{
+			IsBot: true, Name: config.BotName, Kind: "text", ReplyToID: &message.ID,
+			Text: fmt.Sprintf("@[%s](user:%d) %s", name, userID, config.BotReply), CreatedAt: message.CreatedAt,
+		}
+		if err := tx.Create(&reply).Error; err != nil {
+			return err
+		}
+		feedback := CommunityBotFeedback{
+			MessageID: message.ID, ReplyID: reply.ID, UserID: userID, Name: message.Name,
+			Text: message.Text, Filename: message.Filename, BotName: config.BotName,
+			ReplyText: reply.Text, CreatedAt: message.CreatedAt,
+		}
+		return tx.Create(&feedback).Error
+	})
+}
+
+func CommunityMentionsBot(text, name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, part := range strings.Fields(text) {
+		if strings.TrimRight(part, "，。！？,!?;；:") == "@"+name {
+			return true
+		}
+	}
+	return false
+}
+
+func ListCommunityBotFeedback(offset, limit int) ([]CommunityBotFeedback, int64, error) {
+	rows := make([]CommunityBotFeedback, 0, limit)
+	var total int64
+	if err := DB.Model(&CommunityBotFeedback{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	err := DB.Order("id DESC").Offset(offset).Limit(limit).Find(&rows).Error
+	return rows, total, err
 }
 
 func communitySecretAEAD() (cipher.AEAD, error) {

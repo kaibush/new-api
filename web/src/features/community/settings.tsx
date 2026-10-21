@@ -18,6 +18,8 @@ import {
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Textarea } from '@/components/ui/textarea'
 import {
   SecureVerificationDialog,
   useSecureVerification,
@@ -32,11 +34,14 @@ import {
   saveChatSettings,
   testChatWeChat,
 } from './api'
+import { CommunityBotFeedback } from './bot-feedback'
+import { CommunityHistory } from './history'
 
 const schema = z.object({
   name: z.string().trim().max(80),
   enabled: z.boolean(),
   bot_enabled: z.boolean(),
+  bot_reply: z.string().trim().max(2000),
   bot_name: z
     .string()
     .min(1)
@@ -66,6 +71,7 @@ export function CommunitySettings() {
       enabled: false,
       bot_enabled: false,
       bot_name: '助手',
+      bot_reply: '',
       app_id: '',
       app_secret: '',
       template_id: '',
@@ -78,6 +84,7 @@ export function CommunitySettings() {
       form.reset({
         ...settings.data.data,
         name: settings.data.data.name || '',
+        bot_reply: settings.data.data.bot_reply || '',
         app_secret: '',
         callback_token: '',
       })
@@ -130,186 +137,242 @@ export function CommunitySettings() {
   }
   return (
     <SettingsSection title={t('Community chat')}>
-      <SettingsForm
-        className='max-w-2xl'
-        onSubmit={form.handleSubmit((values) => save.mutate(values))}
-      >
-        <FieldGroup>
-          <Field>
-            <FieldLabel htmlFor='community-name'>
-              {t('Chat display name')}
-            </FieldLabel>
-            <Input
-              id='community-name'
-              maxLength={80}
-              placeholder={t('Community chat')}
-              {...form.register('name')}
-              aria-invalid={Boolean(form.formState.errors.name)}
-            />
-            <FieldDescription>
-              {t(
-                'Shown in the sidebar and chat header. Leave blank to use the default name.'
-              )}
-            </FieldDescription>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor='community-enabled'>
-              {t('Enable community chat')}
-            </FieldLabel>
-            <Controller
-              control={form.control}
-              name='enabled'
-              render={({ field }) => (
-                <Switch
-                  id='community-enabled'
-                  checked={field.value}
-                  onCheckedChange={field.onChange}
+      <Tabs defaultValue='settings' className='min-w-0 gap-6'>
+        <TabsList
+          className='max-w-full justify-start overflow-x-auto'
+          aria-label={t('Community chat')}
+        >
+          <TabsTrigger value='settings' className='flex-none'>
+            {t('Settings')}
+          </TabsTrigger>
+          <TabsTrigger value='feedback' className='flex-none'>
+            {t('Bot feedback records')}
+          </TabsTrigger>
+          <TabsTrigger className='flex-none' value='history'>
+            {t('Chat history')}
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value='settings'>
+          <SettingsForm
+            className='max-w-2xl'
+            onSubmit={form.handleSubmit((values) => save.mutate(values))}
+          >
+            <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor='community-name'>
+                  {t('Chat display name')}
+                </FieldLabel>
+                <Input
+                  id='community-name'
+                  maxLength={80}
+                  placeholder={t('Community chat')}
+                  {...form.register('name')}
+                  aria-invalid={Boolean(form.formState.errors.name)}
                 />
-              )}
-            />
-            <FieldDescription>
-              {t(
-                'The latest 50 messages are shown. All signed-in users can read this chat.'
-              )}
-            </FieldDescription>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor='community-bot'>
-              {t('Enable WeChat bot notifications')}
-            </FieldLabel>
-            <Controller
-              control={form.control}
-              name='bot_enabled'
-              render={({ field }) => (
-                <Switch
-                  id='community-bot'
-                  checked={field.value}
-                  onCheckedChange={field.onChange}
+                <FieldDescription>
+                  {t(
+                    'Shown in the sidebar and chat header. Leave blank to use the default name.'
+                  )}
+                </FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor='community-enabled'>
+                  {t('Enable community chat')}
+                </FieldLabel>
+                <Controller
+                  control={form.control}
+                  name='enabled'
+                  render={({ field }) => (
+                    <Switch
+                      id='community-enabled'
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  )}
                 />
-              )}
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor='bot-name'>{t('Bot name')}</FieldLabel>
-            <Input
-              id='bot-name'
-              {...form.register('bot_name')}
-              aria-invalid={Boolean(form.formState.errors.bot_name)}
-            />
-            {form.formState.errors.bot_name && (
-              <FieldDescription>
-                {t('Use 1 to 24 characters without spaces or @.')}
-              </FieldDescription>
-            )}
-          </Field>
-          <Field>
-            <FieldLabel htmlFor='wechat-app-id'>WeChat AppID</FieldLabel>
-            <Input id='wechat-app-id' {...form.register('app_id')} />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor='wechat-secret'>WeChat AppSecret</FieldLabel>
-            <PasswordInput
-              id='wechat-secret'
-              autoComplete='new-password'
-              {...form.register('app_secret')}
-            />
-            <FieldDescription>
-              {settings.data.has_secret
-                ? t('Secret saved. Leave blank to keep it.')
-                : t('Enter the test account credentials.')}
-            </FieldDescription>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor='wechat-template'>
-              {t('WeChat template ID')}
-            </FieldLabel>
-            <Input id='wechat-template' {...form.register('template_id')} />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor='wechat-receiver'>
-              {t('Recipient OpenID')}
-            </FieldLabel>
-            <Input id='wechat-receiver' {...form.register('receiver')} />
-            <FieldDescription>
-              {t('The recipient must follow this WeChat test account.')}
-            </FieldDescription>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor='wechat-callback'>
-              {t('WeChat callback token')}
-            </FieldLabel>
-            <PasswordInput
-              id='wechat-callback'
-              autoComplete='new-password'
-              {...form.register('callback_token')}
-            />
-            <FieldDescription>
-              {settings.data.has_callback_token
-                ? t('Secret saved. Leave blank to keep it.')
-                : t('Enter the test account credentials.')}
-            </FieldDescription>
-          </Field>
-          <Field>
-            <Button
-              type='button'
-              variant='outline'
-              disabled={
-                reveal.isPending ||
-                save.isPending ||
-                (!settings.data.has_secret && !settings.data.has_callback_token)
-              }
-              onClick={() => reveal.mutate()}
-            >
-              {t('Load saved credentials')}
-            </Button>
-            <FieldDescription>
-              {t(
-                'Verify your identity to load saved credentials, then use the eye buttons to view them.'
-              )}
-            </FieldDescription>
-          </Field>
-          <p className='text-muted-foreground text-sm'>
-            {t(
-              'Set the test account callback URL to {{url}} and use the same callback token.',
-              { url: `${window.location.origin}/api/community/wechat/callback` }
-            )}
-          </p>
-          <p className='text-muted-foreground text-sm'>
-            {t(
-              'Create a template with these fields: sender, content, time. Add this server IP to the WeChat API allowlist.'
-            )}
-          </p>
-          <pre className='overflow-auto rounded-md border p-3 text-sm'>
-            {'{{sender.DATA}}\n{{content.DATA}}\n{{time.DATA}}'}
-          </pre>
-          <p className='text-muted-foreground text-sm'>
-            {t(
-              'Images and stickers: 5 MiB. Files: 10 MiB. Attachment links can be shared outside this chat.'
-            )}
-          </p>
-          <p className='text-muted-foreground text-sm'>
-            {t('Chat uploads reuse the help center R2 storage configuration.')}
-          </p>
-          <div className='flex gap-2'>
-            <SettingsPageFormActions
-              onSave={form.handleSubmit((values) => save.mutate(values))}
-              isSaving={save.isPending}
-              isSaveDisabled={!form.formState.isDirty}
-              saveLabel='Save'
-            />
-            <Button
-              type='button'
-              variant='outline'
-              disabled={
-                test.isPending || save.isPending || form.formState.isDirty
-              }
-              onClick={() => test.mutate()}
-            >
-              {t('Send test message')}
-            </Button>
-          </div>
-        </FieldGroup>
-      </SettingsForm>
+                <FieldDescription>
+                  {t(
+                    'The latest 50 messages are shown. All signed-in users can read this chat.'
+                  )}
+                </FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor='community-bot'>
+                  {t('Enable bot replies')}
+                </FieldLabel>
+                <Controller
+                  control={form.control}
+                  name='bot_enabled'
+                  render={({ field }) => (
+                    <Switch
+                      id='community-bot'
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  )}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor='bot-name'>{t('Bot name')}</FieldLabel>
+                <Input
+                  id='bot-name'
+                  {...form.register('bot_name')}
+                  aria-invalid={Boolean(form.formState.errors.bot_name)}
+                />
+                {form.formState.errors.bot_name && (
+                  <FieldDescription>
+                    {t('Use 1 to 24 characters without spaces or @.')}
+                  </FieldDescription>
+                )}
+              </Field>
+              <Field>
+                <FieldLabel htmlFor='bot-reply'>{t('Bot reply')}</FieldLabel>
+                <Textarea
+                  id='bot-reply'
+                  rows={4}
+                  maxLength={2000}
+                  {...form.register('bot_reply')}
+                  aria-invalid={Boolean(form.formState.errors.bot_reply)}
+                />
+                <FieldDescription>
+                  {t(
+                    'The bot quotes the mention message and automatically mentions its author. Leave blank to use the default reply.'
+                  )}
+                </FieldDescription>
+              </Field>
+              <div className='border-t pt-4'>
+                <h4 className='font-medium'>
+                  {t('WeChat notifications (optional)')}
+                </h4>
+                <p className='text-muted-foreground mt-1 text-sm'>
+                  {t(
+                    'Configured WeChat notifications run in the background without delaying chat replies.'
+                  )}
+                </p>
+              </div>
+              <Field>
+                <FieldLabel htmlFor='wechat-app-id'>WeChat AppID</FieldLabel>
+                <Input id='wechat-app-id' {...form.register('app_id')} />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor='wechat-secret'>
+                  WeChat AppSecret
+                </FieldLabel>
+                <PasswordInput
+                  id='wechat-secret'
+                  autoComplete='new-password'
+                  {...form.register('app_secret')}
+                />
+                <FieldDescription>
+                  {settings.data.has_secret
+                    ? t('Secret saved. Leave blank to keep it.')
+                    : t('Enter the test account credentials.')}
+                </FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor='wechat-template'>
+                  {t('WeChat template ID')}
+                </FieldLabel>
+                <Input id='wechat-template' {...form.register('template_id')} />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor='wechat-receiver'>
+                  {t('Recipient OpenID')}
+                </FieldLabel>
+                <Input id='wechat-receiver' {...form.register('receiver')} />
+                <FieldDescription>
+                  {t('The recipient must follow this WeChat test account.')}
+                </FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor='wechat-callback'>
+                  {t('WeChat callback token')}
+                </FieldLabel>
+                <PasswordInput
+                  id='wechat-callback'
+                  autoComplete='new-password'
+                  {...form.register('callback_token')}
+                />
+                <FieldDescription>
+                  {settings.data.has_callback_token
+                    ? t('Secret saved. Leave blank to keep it.')
+                    : t('Enter the test account credentials.')}
+                </FieldDescription>
+              </Field>
+              <Field>
+                <Button
+                  type='button'
+                  variant='outline'
+                  disabled={
+                    reveal.isPending ||
+                    save.isPending ||
+                    (!settings.data.has_secret &&
+                      !settings.data.has_callback_token)
+                  }
+                  onClick={() => reveal.mutate()}
+                >
+                  {t('Load saved credentials')}
+                </Button>
+                <FieldDescription>
+                  {t(
+                    'Verify your identity to load saved credentials, then use the eye buttons to view them.'
+                  )}
+                </FieldDescription>
+              </Field>
+              <p className='text-muted-foreground text-sm'>
+                {t(
+                  'Set the test account callback URL to {{url}} and use the same callback token.',
+                  {
+                    url: `${window.location.origin}/api/community/wechat/callback`,
+                  }
+                )}
+              </p>
+              <p className='text-muted-foreground text-sm'>
+                {t(
+                  'Create a template with these fields: sender, content, time. Add this server IP to the WeChat API allowlist.'
+                )}
+              </p>
+              <pre className='overflow-auto rounded-md border p-3 text-sm'>
+                {'{{sender.DATA}}\n{{content.DATA}}\n{{time.DATA}}'}
+              </pre>
+              <p className='text-muted-foreground text-sm'>
+                {t(
+                  'Images and stickers: 5 MiB. Files: 10 MiB. Attachment links can be shared outside this chat.'
+                )}
+              </p>
+              <p className='text-muted-foreground text-sm'>
+                {t(
+                  'Chat uploads reuse the help center R2 storage configuration.'
+                )}
+              </p>
+              <div className='flex gap-2'>
+                <SettingsPageFormActions
+                  onSave={form.handleSubmit((values) => save.mutate(values))}
+                  isSaving={save.isPending}
+                  isSaveDisabled={!form.formState.isDirty}
+                  saveLabel='Save'
+                />
+                <Button
+                  type='button'
+                  variant='outline'
+                  disabled={
+                    test.isPending || save.isPending || form.formState.isDirty
+                  }
+                  onClick={() => test.mutate()}
+                >
+                  {t('Send test message')}
+                </Button>
+              </div>
+            </FieldGroup>
+          </SettingsForm>
+        </TabsContent>
+        <TabsContent value='feedback' className='min-w-0'>
+          <CommunityBotFeedback />
+        </TabsContent>
+        <TabsContent value='history' className='min-w-0'>
+          <CommunityHistory />
+        </TabsContent>
+      </Tabs>
       <SecureVerificationDialog {...verification.dialogProps} />
     </SettingsSection>
   )

@@ -3,6 +3,9 @@ import { authResult } from '@/lib/secure-verification'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
 export type ChatMessage = {
+  client_id?: string
+  is_bot?: boolean
+  sending?: boolean
   reply_to_id?: number
   reply?: {
     id: number
@@ -31,6 +34,7 @@ export type ChatStatus = {
   bot_name: string
 }
 export type ChatSettings = ChatStatus & {
+  bot_reply: string
   app_id: string
   template_id: string
   receiver: string
@@ -74,13 +78,17 @@ export async function testChatWeChat() {
 export type ChatSendResult = {
   success: boolean
   data: ChatMessage
-  bot_status?: 'accepted' | 'failed' | 'busy' | ''
 }
-export async function sendChatMessage(text: string, replyToId?: number) {
+export async function sendChatMessage(
+  text: string,
+  replyToId?: number,
+  clientId?: string
+) {
   return requireServerSuccess(
     (
       await api.post<ChatSendResult>('/api/community/messages', {
         text,
+        ...(clientId ? { client_id: clientId } : {}),
         ...(replyToId ? { reply_to_id: replyToId } : {}),
       })
     ).data
@@ -90,19 +98,60 @@ export async function uploadChatFile(
   file: File,
   kind: string,
   text = '',
-  replyToId?: number
+  replyToId?: number,
+  clientId?: string
 ) {
   const data = new FormData()
   data.append('file', file)
   data.append('kind', kind)
   data.append('text', text)
   if (replyToId) data.append('reply_to_id', String(replyToId))
+  if (clientId) data.append('client_id', clientId)
   return requireServerSuccess(
     (await api.post<ChatSendResult>('/api/community/attachments', data)).data
   )
+}
+
+export type BotFeedback = {
+  id: number
+  message_id: number
+  reply_id: number
+  user_id: number
+  name: string
+  text: string
+  filename: string
+  bot_name: string
+  reply_text: string
+  created_at: number
+}
+
+export async function getBotFeedback(page: number, pageSize: number) {
+  const res = await api.get<{
+    success: boolean
+    data: { items: BotFeedback[]; total: number }
+  }>('/api/community/bot-feedback', {
+    params: { page, page_size: pageSize },
+  })
+  return requireServerSuccess(res.data).data
 }
 export async function deleteChatMessage(id: number) {
   return requireServerSuccess(
     (await api.delete(`/api/community/messages/${id}`)).data
   )
+}
+
+export type ChatHistory = {
+  items: ChatMessage[]
+  has_more: boolean
+  day_start: number
+  day_end: number
+  deleted_ids: number[]
+}
+
+export async function getChatHistory(beforeId = 0, archive = false) {
+  const res = await api.get<{ success: boolean; data: ChatHistory }>(
+    archive ? '/api/community/history' : '/api/community/messages',
+    { params: { before_id: beforeId, limit: 50 } }
+  )
+  return requireServerSuccess(res.data).data
 }

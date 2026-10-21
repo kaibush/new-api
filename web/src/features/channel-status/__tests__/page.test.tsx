@@ -113,10 +113,52 @@ describe('channel status page', () => {
       await screen.findByText('No requests in this time range')
     ).toBeInTheDocument()
     expect(screen.getAllByText('—')).toHaveLength(2)
+    const empty = screen.getByText('No requests in this time range')
+    expect(empty.closest('[data-slot="card"]')).not.toBeNull()
+    expect(empty.closest('[data-slot="empty"]')).toHaveClass('min-h-0')
     await userEvent.click(screen.getByRole('tab', { name: 'Active clients' }))
     expect(
       await screen.findByText('No matching client activity')
     ).toBeInTheDocument()
+  })
+  it.each(['2026-10-21T08:35:00Z', null])(
+    'shows one snapshot timestamp with a check-time fallback when updatedAt is %s',
+    async (updatedAt) => {
+      vi.mocked(getChannelStatus).mockResolvedValue({
+        ...populated,
+        checkedAt: '2026-10-21T08:36:10Z',
+        inventory: {
+          reachable: true,
+          updatedAt,
+          providers: { grok_build: { capacity: 97 } },
+        },
+      })
+      renderPage()
+      await screen.findByText('97%')
+      expect(screen.getAllByText(/Last updated/)).toHaveLength(1)
+      expect(
+        screen.getByText(/Last updated/).querySelector('time')
+      ).toHaveAttribute('dateTime', updatedAt ?? '2026-10-21T08:36:10Z')
+      await userEvent.click(screen.getByRole('tab', { name: 'Active clients' }))
+      expect(screen.getAllByText(/Last updated/)).toHaveLength(1)
+      expect(
+        screen.getByText(/Last updated/).querySelector('time')
+      ).toHaveAttribute('dateTime', '2026-10-21T08:36:10Z')
+    }
+  )
+  it('wraps navigation within the page and keeps keyboard tab selection available', async () => {
+    vi.mocked(getChannelStatus).mockResolvedValue(populated)
+    renderPage()
+    const tabs = await screen.findByRole('tablist')
+    expect(tabs).toHaveClass(
+      'max-w-full',
+      'flex-wrap',
+      'group-data-horizontal/tabs:h-auto',
+      '[&>[role=tab]]:flex-none'
+    )
+    screen.getByRole('tab', { name: 'Channel availability' }).focus()
+    await userEvent.keyboard('{ArrowRight}')
+    expect(screen.getByRole('tab', { name: 'Request health' })).toHaveFocus()
   })
   it('retains audit cards when inventory fails and supports retry', async () => {
     vi.mocked(getChannelStatus).mockResolvedValue({
@@ -193,10 +235,13 @@ describe('channel status page', () => {
     expect(screen.getByText('87.5%')).toBeInTheDocument()
   })
   it('loads usage periods and converts a custom Shanghai range to UTC', async () => {
-    vi.mocked(getChannelStatus).mockResolvedValue(populated)
+    vi.mocked(getChannelStatus).mockResolvedValue({
+      ...populated,
+      checkedAt: '2026-10-21T08:36:10Z',
+    })
     vi.mocked(getStatusDashboard).mockResolvedValue({
       reachable: true,
-      generatedAt: null,
+      generatedAt: '2026-10-21T08:35:00Z',
       range: { start: null, end: null },
       usage: {
         requests: 0,
@@ -227,6 +272,7 @@ describe('channel status page', () => {
       name: 'Statistics period',
     })
     await screen.findByText('First token latency (ms)')
+    expect(screen.getAllByText(/Last updated/)).toHaveLength(1)
     await userEvent.selectOptions(period, '30d')
     await waitFor(() =>
       expect(getStatusDashboard).toHaveBeenLastCalledWith(

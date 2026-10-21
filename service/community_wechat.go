@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync"
 	"time"
 
@@ -97,16 +96,4 @@ func SendCommunityWeChat(ctx context.Context, config model.CommunityConfig, mess
 		return errors.New("WeChat did not confirm delivery")
 	}
 	return nil
-}
-
-func CommunityMentionsBot(text, name string) bool {
-	if name == "" {
-		return false
-	}
-	for _, part := range strings.Fields(text) {
-		if strings.TrimRight(part, "，。！？,!?;；:") == "@"+name {
-			return true
-		}
-	}
-	return false
 }
