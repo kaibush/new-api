@@ -1,5 +1,5 @@
 import { useInfiniteQuery } from '@tanstack/react-query'
-import { useLayoutEffect, useRef } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/empty-state'
@@ -9,13 +9,21 @@ import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { getChatHistory } from './api'
+import { getChatHistory, type ChatMessage } from './api'
 import { CommunityBotFeedback } from './bot-feedback'
 import { ChatMessageBubble } from './message-bubble'
+import { ChatModerationDialog } from './moderation-dialog'
 
-export function CommunityHistory() {
+type ModerationCallbacks = {
+  onCleared?: (throughId: number) => void
+  onDeleted?: (id: number) => void
+}
+
+export function CommunityHistory(props: ModerationCallbacks) {
   const { t } = useTranslation()
   const userId = useAuthStore((s) => s.auth.user?.id)
+  const canModerate = useAuthStore((s) => (s.auth.user?.role ?? 0) >= 10)
+  const [target, setTarget] = useState<ChatMessage | 'all' | null>(null)
   const history = useInfiniteQuery({
     queryKey: ['community-history', userId],
     queryFn: ({ pageParam }) => getChatHistory(pageParam, true),
@@ -50,6 +58,11 @@ export function CommunityHistory() {
             'All dates are available. Deleted messages retain their original content here.'
           )}
         </p>
+        {canModerate && (
+          <Button variant='outline' onClick={() => setTarget('all')}>
+            {t('Clear all conversations')}
+          </Button>
+        )}
         <Button
           variant='outline'
           disabled={history.isFetching}
@@ -95,15 +108,22 @@ export function CommunityHistory() {
             key={message.id}
             message={message}
             currentUserId={userId}
+            onRemove={canModerate ? setTarget : undefined}
             showDeletedContent
           />
         ))}
       </div>
+      <ChatModerationDialog
+        target={target}
+        onClose={() => setTarget(null)}
+        onCleared={props.onCleared}
+        onDeleted={props.onDeleted}
+      />
     </div>
   )
 }
 
-export function CommunityRecords() {
+export function CommunityRecords(props: ModerationCallbacks) {
   const { t } = useTranslation()
   return (
     <Tabs defaultValue='history'>
@@ -116,7 +136,10 @@ export function CommunityRecords() {
         </TabsTrigger>
       </TabsList>
       <TabsContent value='history'>
-        <CommunityHistory />
+        <CommunityHistory
+          onCleared={props.onCleared}
+          onDeleted={props.onDeleted}
+        />
       </TabsContent>
       <TabsContent value='feedback'>
         <CommunityBotFeedback />

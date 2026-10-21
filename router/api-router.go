@@ -224,7 +224,8 @@ func SetApiRouter(router *gin.Engine) {
 		communityRoute.GET("/history", middleware.AdminAuth(), controller.GetCommunityHistory)
 		communityRoute.POST("/messages", controller.CommunityAccess, middleware.CommunityRateLimit(false), controller.SendCommunityMessage)
 		communityRoute.POST("/attachments", controller.CommunityAccess, middleware.CommunityRateLimit(true), controller.UploadCommunityAttachment)
-		communityRoute.DELETE("/messages/:id", middleware.RootAuth(), controller.DeleteCommunityMessage)
+		communityRoute.DELETE("/messages/:id", middleware.AdminAuth(), controller.DeleteCommunityMessage)
+		communityRoute.POST("/messages/clear", middleware.AdminAuth(), controller.ClearCommunityMessages)
 		optionRoute := apiRouter.Group("/option")
 		optionRoute.Use(middleware.RootAuth())
 		{

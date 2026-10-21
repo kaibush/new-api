@@ -910,4 +910,9 @@ export const STATIC_I18N_KEYS = [
   'Desktop',
   'Mobile',
   'Tablet',
+  'Deleted chat message (ID: {{message_id}})',
+  'Cleared {{message_count}} chat messages through ID {{cleared_through_id}}',
+  'Confirm clearing all conversations',
+  'Could not clear conversations',
+  'Message not found',
 ] as const

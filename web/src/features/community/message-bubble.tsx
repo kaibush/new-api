@@ -66,6 +66,9 @@ export function ChatMessageBubble(props: {
           {message.deleted && props.showDeletedContent && (
             <Badge variant='outline'>{t('Message deleted')}</Badge>
           )}
+          {message.cleared && props.showDeletedContent && (
+            <Badge variant='outline'>{t('Cleared from chat')}</Badge>
+          )}
           {message.is_bot && <Badge variant='secondary'>{t('Bot')}</Badge>}
           <time
             className='text-muted-foreground max-w-full shrink-0 text-xs break-words'
@@ -157,30 +160,34 @@ export function ChatMessageBubble(props: {
             <LoadingState inline size='sm' message={t('Sending...')} />
           </span>
         )}
-        {props.onReply && !message.deleted && !message.sending && (
-          <div
-            data-message-actions
-            className='text-muted-foreground flex h-6 items-center gap-1'
-          >
-            <DataTableRowActionMenu
-              ariaLabel={t('More actions')}
-              triggerSize='icon-xs'
-              contentClassName='w-36'
+        {(props.onReply || props.onRemove) &&
+          !message.deleted &&
+          !message.sending && (
+            <div
+              data-message-actions
+              className='text-muted-foreground flex h-6 items-center gap-1'
             >
-              <DropdownMenuItem onClick={() => props.onReply?.(message)}>
-                {t('Reply')}
-              </DropdownMenuItem>
-              {props.onRemove && (
-                <DropdownMenuItem
-                  variant='destructive'
-                  onClick={() => props.onRemove?.(message)}
-                >
-                  {t('Delete')}
-                </DropdownMenuItem>
-              )}
-            </DataTableRowActionMenu>
-          </div>
-        )}
+              <DataTableRowActionMenu
+                ariaLabel={t('More actions')}
+                triggerSize='icon-xs'
+                contentClassName='w-36'
+              >
+                {props.onReply && (
+                  <DropdownMenuItem onClick={() => props.onReply?.(message)}>
+                    {t('Reply')}
+                  </DropdownMenuItem>
+                )}
+                {props.onRemove && (
+                  <DropdownMenuItem
+                    variant='destructive'
+                    onClick={() => props.onRemove?.(message)}
+                  >
+                    {t('Delete')}
+                  </DropdownMenuItem>
+                )}
+              </DataTableRowActionMenu>
+            </div>
+          )}
       </div>
     </article>
   )

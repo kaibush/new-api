@@ -3,6 +3,7 @@ import { authResult } from '@/lib/secure-verification'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
 export type ChatMessage = {
+  cleared?: boolean
   client_id?: string
   is_bot?: boolean
   sending?: boolean
@@ -144,6 +145,7 @@ export async function deleteChatMessage(id: number) {
 }
 
 export type ChatHistory = {
+  cleared_through_id?: number
   items: ChatMessage[]
   has_more: boolean
   day_start: number
@@ -157,5 +159,13 @@ export async function getChatHistory(beforeId = 0, archive = false) {
     archive ? '/api/community/history' : '/api/community/messages',
     { params: { before_id: beforeId, limit: 50 } }
   )
+  return requireServerSuccess(res.data).data
+}
+
+export async function clearChatMessages() {
+  const res = await api.post<{
+    success: boolean
+    data: { cleared_through_id: number; message_count: number }
+  }>('/api/community/messages/clear', { confirm: true })
   return requireServerSuccess(res.data).data
 }

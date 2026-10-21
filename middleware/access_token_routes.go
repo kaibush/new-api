@@ -47,6 +47,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/community/messages":            accessTokenSessionRule,
 	"POST /api/community/messages":           accessTokenSessionRule,
 	"POST /api/community/attachments":        accessTokenSessionRule,
+	"POST /api/community/messages/clear":     accessTokenSessionRule,
 	"DELETE /api/community/messages/:id":     accessTokenSessionRule,
 	"GET /api/option/community":              accessTokenSessionRule,
 	"PUT /api/option/community":              accessTokenSessionRule,

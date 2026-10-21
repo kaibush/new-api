@@ -3,7 +3,6 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
-import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Dialog } from '@/components/dialog'
 import { EmptyState } from '@/components/empty-state'
 import { ErrorState } from '@/components/error-state'
@@ -15,15 +14,11 @@ import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
 import { useAuthStore } from '@/stores/auth-store'
 
-import {
-  deleteChatMessage,
-  getChatStatus,
-  uploadChatFile,
-  type ChatMessage,
-} from './api'
+import { getChatStatus, uploadChatFile, type ChatMessage } from './api'
 import { ChatComposer } from './chat-composer'
 import { CommunityRecords } from './history'
 import { ChatMessageBubble } from './message-bubble'
+import { ChatModerationDialog } from './moderation-dialog'
 import { OnlineUsers } from './online-users'
 import { useChat } from './use-chat'
 
@@ -47,6 +42,8 @@ export function CommunityChat() {
     loadEarlier,
     loadingEarlier,
     historyError,
+    clearThrough,
+    markDeleted,
   } = useChat(status.data?.enabled === true)
   const [reply, setReply] = useState<ChatMessage | null>(null)
   const [remove, setRemove] = useState<ChatMessage | null>(null)
@@ -57,10 +54,6 @@ export function CommunityChat() {
   const upload = useMutation({
     mutationFn: (file: File) => uploadChatFile(file, 'avatar'),
     onSuccess: () => toast.success(t('Upload successful')),
-  })
-  const deletion = useMutation({
-    mutationFn: deleteChatMessage,
-    onSuccess: () => setRemove(null),
   })
   const previousScroll = useRef({ firstId: 0, height: 0 })
   useLayoutEffect(() => {
@@ -155,7 +148,7 @@ export function CommunityChat() {
               message={message}
               currentUserId={user?.id}
               onReply={setReply}
-              onRemove={(user?.role ?? 0) >= 100 ? setRemove : undefined}
+              onRemove={(user?.role ?? 0) >= 10 ? setRemove : undefined}
             />
           ))}
         </div>
@@ -200,17 +193,10 @@ export function CommunityChat() {
             if (file) upload.mutate(file)
           }}
         />
-        <ConfirmDialog
-          open={remove !== null}
-          onOpenChange={(open) => {
-            if (!open) setRemove(null)
-          }}
-          title={t('Delete message')}
-          desc={t('This message will be removed from the chat.')}
-          handleConfirm={() => {
-            if (remove) deletion.mutate(remove.id)
-          }}
-          isLoading={deletion.isPending}
+        <ChatModerationDialog
+          target={remove}
+          onClose={() => setRemove(null)}
+          onDeleted={markDeleted}
         />
         {(user?.role ?? 0) >= 10 && (
           <Dialog
@@ -219,7 +205,12 @@ export function CommunityChat() {
             title={t('Chat records')}
             contentClassName='sm:max-w-5xl'
           >
-            {feedbackOpen && <CommunityRecords />}
+            {feedbackOpen && (
+              <CommunityRecords
+                onCleared={clearThrough}
+                onDeleted={markDeleted}
+              />
+            )}
           </Dialog>
         )}
       </div>

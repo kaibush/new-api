@@ -18,18 +18,19 @@ import (
 
 // CommunityConfig is separate from generic options so credentials never appear in option exports.
 type CommunityConfig struct {
-	ID            int    `json:"-" gorm:"primaryKey"`
-	Name          string `json:"name" gorm:"type:varchar(80)"`
-	Enabled       bool   `json:"enabled"`
-	HistoryDays   int    `json:"history_days"`
-	BotEnabled    bool   `json:"bot_enabled"`
-	BotName       string `json:"bot_name" gorm:"type:varchar(32)"`
-	BotReply      string `json:"bot_reply" gorm:"type:text"`
-	AppID         string `json:"app_id" gorm:"type:varchar(128)"`
-	AppSecret     string `json:"-" gorm:"type:text"`
-	TemplateID    string `json:"template_id" gorm:"type:varchar(128)"`
-	Receiver      string `json:"receiver" gorm:"type:varchar(128)"`
-	CallbackToken string `json:"-" gorm:"type:text"`
+	ClearedThroughID int64  `json:"-"`
+	ID               int    `json:"-" gorm:"primaryKey"`
+	Name             string `json:"name" gorm:"type:varchar(80)"`
+	Enabled          bool   `json:"enabled"`
+	HistoryDays      int    `json:"history_days"`
+	BotEnabled       bool   `json:"bot_enabled"`
+	BotName          string `json:"bot_name" gorm:"type:varchar(32)"`
+	BotReply         string `json:"bot_reply" gorm:"type:text"`
+	AppID            string `json:"app_id" gorm:"type:varchar(128)"`
+	AppSecret        string `json:"-" gorm:"type:text"`
+	TemplateID       string `json:"template_id" gorm:"type:varchar(128)"`
+	Receiver         string `json:"receiver" gorm:"type:varchar(128)"`
+	CallbackToken    string `json:"-" gorm:"type:text"`
 }
 
 type CommunityReply struct {
@@ -42,6 +43,7 @@ type CommunityReply struct {
 }
 
 type CommunityMessage struct {
+	Cleared   bool            `json:"cleared,omitempty" gorm:"-"`
 	Replayed  bool            `json:"-" gorm:"-"`
 	ClientID  *string         `json:"client_id,omitempty" gorm:"type:varchar(36);uniqueIndex:idx_community_sender_request,priority:2"`
 	IsBot     bool            `json:"is_bot"`
@@ -135,16 +137,18 @@ func SaveCommunityConfig(config CommunityConfig) error {
 			*value = base64.RawStdEncoding.EncodeToString(aead.Seal(nil, nil, []byte(*value), []byte(field)))
 		}
 	}
-	return DB.Clauses(clause.OnConflict{UpdateAll: true}).Create(&config).Error
+	// Settings saves must never reset a concurrently updated moderation boundary.
+	return DB.Omit("cleared_through_id").Clauses(clause.OnConflict{UpdateAll: true}).Create(&config).Error
 }
 
 type CommunityHistory struct {
-	Items       []CommunityMessage `json:"items"`
-	HasMore     bool               `json:"has_more"`
-	DayStart    int64              `json:"day_start"`
-	DayEnd      int64              `json:"day_end"`
-	HistoryDays int                `json:"history_days"`
-	DeletedIDs  []int64            `json:"deleted_ids"`
+	ClearedThroughID int64              `json:"cleared_through_id"`
+	Items            []CommunityMessage `json:"items"`
+	HasMore          bool               `json:"has_more"`
+	DayStart         int64              `json:"day_start"`
+	DayEnd           int64              `json:"day_end"`
+	HistoryDays      int                `json:"history_days"`
+	DeletedIDs       []int64            `json:"deleted_ids"`
 }
 
 func RecentCommunityMessages() ([]CommunityMessage, error) {
@@ -157,7 +161,7 @@ func (message *CommunityMessage) RedactDeletedContent() {
 	if message.Reply != nil && message.Reply.Deleted {
 		message.Reply.Text, message.Reply.Filename = "", ""
 	}
-	if !message.Deleted {
+	if !message.Deleted && !message.Cleared {
 		return
 	}
 	message.Text, message.URL, message.Filename, message.Size = "", "", "", 0
@@ -173,10 +177,10 @@ func CommunityMessageHistory(beforeID int64, limit int, archive bool) (Community
 	}
 	now := time.Now()
 	start, end := config.HistoryBounds(now)
-	page := CommunityHistory{Items: make([]CommunityMessage, 0, limit+1), DayStart: start.Unix(), DayEnd: end.Unix(), HistoryDays: config.HistoryDays, DeletedIDs: []int64{}}
+	page := CommunityHistory{Items: make([]CommunityMessage, 0, limit+1), DayStart: start.Unix(), DayEnd: end.Unix(), HistoryDays: config.HistoryDays, DeletedIDs: []int64{}, ClearedThroughID: config.ClearedThroughID}
 	query := DB.Order("id DESC").Limit(limit + 1)
 	if !archive {
-		query = query.Where("created_at >= ? AND created_at < ?", page.DayStart, page.DayEnd)
+		query = query.Where("id > ? AND created_at >= ? AND created_at < ?", config.ClearedThroughID, page.DayStart, page.DayEnd)
 	}
 	if beforeID > 0 {
 		query = query.Where("id < ?", beforeID)
@@ -190,7 +194,7 @@ func CommunityMessageHistory(beforeID int64, limit int, archive bool) (Community
 	}
 	if !archive {
 		// Synchronize moderation even for older pages already loaded by a client.
-		if err := DB.Model(&CommunityMessage{}).Where("created_at >= ? AND created_at < ? AND deleted = ?", page.DayStart, page.DayEnd, true).Order("id").Pluck("id", &page.DeletedIDs).Error; err != nil {
+		if err := DB.Model(&CommunityMessage{}).Where("id > ? AND created_at >= ? AND created_at < ? AND deleted = ?", config.ClearedThroughID, page.DayStart, page.DayEnd, true).Order("id").Pluck("id", &page.DeletedIDs).Error; err != nil {
 			return page, err
 		}
 		for i := range page.Items {
@@ -198,18 +202,21 @@ func CommunityMessageHistory(beforeID int64, limit int, archive bool) (Community
 			page.Items[i].ExpiresAt = communityMessageExpiry(page.Items[i].CreatedAt, config.HistoryDays)
 		}
 	}
+	for i := range page.Items {
+		page.Items[i].Cleared = page.Items[i].ID <= config.ClearedThroughID
+	}
 	replyStart := int64(0)
 	if !archive {
 		replyStart = page.DayStart
 	}
-	if err := loadCommunityReplies(page.Items, archive, replyStart, page.DayEnd, config.HistoryDays); err != nil {
+	if err := loadCommunityReplies(page.Items, archive, replyStart, page.DayEnd, config.HistoryDays, config.ClearedThroughID); err != nil {
 		return page, err
 	}
 	slices.Reverse(page.Items)
 	return page, nil
 }
 
-func loadCommunityReplies(rows []CommunityMessage, includeDeleted bool, dayStart, dayEnd int64, historyDays int) error {
+func loadCommunityReplies(rows []CommunityMessage, includeDeleted bool, dayStart, dayEnd int64, historyDays int, clearedThroughID int64) error {
 	ids := make([]int64, 0)
 	for _, row := range rows {
 		if row.ReplyToID != nil {
@@ -220,7 +227,7 @@ func loadCommunityReplies(rows []CommunityMessage, includeDeleted bool, dayStart
 		var replies []CommunityMessage
 		query := DB.Where("id IN ?", ids)
 		if !includeDeleted {
-			query = query.Where("created_at >= ? AND created_at < ?", dayStart, dayEnd)
+			query = query.Where("id > ? AND created_at >= ? AND created_at < ?", clearedThroughID, dayStart, dayEnd)
 		}
 		if err := query.Find(&replies).Error; err != nil {
 			return err
@@ -274,7 +281,7 @@ func ValidateCommunityReply(id *int64) error {
 	var target CommunityMessage
 	err = DB.First(&target, *id).Error
 	start, end := config.HistoryBounds(time.Now())
-	if errors.Is(err, gorm.ErrRecordNotFound) || target.Deleted || target.CreatedAt < start.Unix() || target.CreatedAt >= end.Unix() {
+	if errors.Is(err, gorm.ErrRecordNotFound) || target.Deleted || target.ID <= config.ClearedThroughID || target.CreatedAt < start.Unix() || target.CreatedAt >= end.Unix() {
 		return ErrCommunityReplyUnavailable
 	}
 	return err
@@ -315,6 +322,7 @@ func CreateCommunityMessage(userID int, message *CommunityMessage) error {
 				return err
 			}
 			message.Replayed = true
+			message.Cleared = message.ID <= config.ClearedThroughID
 			message.ExpiresAt = communityMessageExpiry(message.CreatedAt, config.HistoryDays)
 			return nil
 		}
@@ -408,4 +416,38 @@ func GetCommunityMembers(ids []int) ([]CommunityMember, error) {
 		members = append(members, CommunityMember{UserID: user.Id, Name: name, Avatar: avatars[user.Id]})
 	}
 	return members, nil
+}
+
+// ClearCommunityMessages advances a persisted boundary while retaining the archive.
+// The row lock serializes concurrent clears; messages with newer IDs remain
+// visible. No message IDs or attachment objects are deleted or reused.
+func ClearCommunityMessages() (int64, int64, error) {
+	var throughID, count int64
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		config := CommunityConfig{ID: 1, HistoryDays: 1, BotName: "助手", BotReply: DefaultCommunityBotReply}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&config).Error; err != nil {
+			return err
+		}
+		if err := lockForUpdate(tx).First(&config, 1).Error; err != nil {
+			return err
+		}
+		throughID = config.ClearedThroughID
+		var latest CommunityMessage
+		err := tx.Order("id DESC").First(&latest).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if latest.ID <= throughID {
+			return nil
+		}
+		if err := tx.Model(&CommunityMessage{}).Where("id > ? AND id <= ?", throughID, latest.ID).Count(&count).Error; err != nil {
+			return err
+		}
+		throughID = latest.ID
+		return tx.Model(&CommunityConfig{}).Where("id = ?", 1).Update("cleared_through_id", throughID).Error
+	})
+	return throughID, count, err
 }

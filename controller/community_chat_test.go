@@ -1024,3 +1024,171 @@ func TestCommunityHistoryBoundsAcrossDaylightSaving(t *testing.T) {
 		assert.Equal(t, time.Duration(tc.hours+6*24)*time.Hour, end.Sub(start))
 	}
 }
+
+func TestCommunityModerationAndClear(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			if dialect != "sqlite" && os.Getenv("TEST_"+strings.ToUpper(dialect)+"_DSN") == "" {
+				t.Skip("database DSN not configured")
+			}
+			t.Setenv("TEST_SECURITY_DIALECT", dialect)
+			user, _ := setupSecurityEnrollmentTest(t)
+			migrations := []any{&model.CommunityConfig{}, &model.CommunityMessage{}, &model.CommunityProfile{}, &model.CommunityBotFeedback{}}
+			require.NoError(t, model.DB.AutoMigrate(migrations...))
+			emptyBoundary, emptyCount, err := model.ClearCommunityMessages()
+			require.NoError(t, err)
+			assert.Zero(t, emptyBoundary)
+			assert.Zero(t, emptyCount)
+			config := model.CommunityConfig{Enabled: true, BotEnabled: true, BotName: "helper", BotReply: "Acknowledged", HistoryDays: 7}
+			require.NoError(t, model.SaveCommunityConfig(config))
+			clientID := "0954c1c6-5d13-46d4-9181-8da98b0914fd"
+			message := model.CommunityMessage{Kind: "text", Text: "@helper retained original", ClientID: &clientID}
+			require.NoError(t, model.CreateCommunityMessage(user.Id, &message))
+			archive, err := model.CommunityMessageHistory(0, 50, true)
+			require.NoError(t, err)
+			require.Len(t, archive.Items, 2)
+			botID := archive.Items[1].ID
+			old := model.CommunityMessage{UserID: user.Id + 100, Kind: "file", Text: "Other user old file", URL: "https://cdn.example/retained.txt", CreatedAt: time.Now().AddDate(0, 0, -10).Unix()}
+			require.NoError(t, model.DB.Create(&old).Error)
+			bundle, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "moderation-test")
+			require.NoError(t, err)
+			router := gin.New()
+			router.DELETE("/api/community/messages/:id", middleware.AdminAuth(), DeleteCommunityMessage)
+			router.POST("/api/community/messages/clear", middleware.AdminAuth(), ClearCommunityMessages)
+			router.GET("/api/community/ws", CommunityWebSocket)
+			request := func(method, path, body, token string) *httptest.ResponseRecorder {
+				req := httptest.NewRequest(method, path, strings.NewReader(body))
+				if token != "" {
+					req.Header.Set("Authorization", "Bearer "+token)
+				}
+				rr := httptest.NewRecorder()
+				router.ServeHTTP(rr, req)
+				return rr
+			}
+			clearPath := "/api/community/messages/clear"
+			deletePath := fmt.Sprintf("/api/community/messages/%d", old.ID)
+			for _, path := range []string{clearPath, deletePath} {
+				method := "DELETE"
+				if path == clearPath {
+					method = "POST"
+				}
+				assert.Equal(t, 401, request(method, path, `{"confirm":true}`, "").Code)
+				assert.Equal(t, 403, request(method, path, `{"confirm":true}`, bundle.AccessToken).Code)
+			}
+			require.NoError(t, model.DB.Model(user).Update("role", common.RoleAdminUser).Error)
+			require.NoError(t, model.PublishUserAuthCache(user.Id))
+			scoped, _ := createScopedAccessToken(t, user.Id, time.Now().Unix()+3600, "log:read")
+			assert.Equal(t, 403, request("POST", clearPath, `{"confirm":true}`, scoped).Code)
+			assert.Equal(t, 403, request("DELETE", deletePath, "", scoped).Code)
+			// Ambient cookies alone never authorize a moderation request.
+			cookieRequest := httptest.NewRequest("POST", clearPath, strings.NewReader(`{"confirm":true}`))
+			cookieRequest.Header.Set("Origin", "https://evil.example")
+			cookieRequest.AddCookie(&http.Cookie{Name: "session", Value: bundle.AccessToken})
+			cookieResponse := httptest.NewRecorder()
+			router.ServeHTTP(cookieResponse, cookieRequest)
+			assert.Equal(t, 401, cookieResponse.Code)
+			for _, id := range []int64{old.ID, botID} {
+				rr := request("DELETE", fmt.Sprintf("/api/community/messages/%d", id), "", bundle.AccessToken)
+				require.Equal(t, 200, rr.Code, rr.Body.String())
+			}
+			assert.Equal(t, 200, request("DELETE", deletePath, "", bundle.AccessToken).Code)
+			assert.Equal(t, 404, request("DELETE", "/api/community/messages/9999999", "", bundle.AccessToken).Code)
+			assert.Equal(t, 400, request("DELETE", "/api/community/messages/-1", "", bundle.AccessToken).Code)
+			for _, body := range []string{"", `{}`, `{"confirm":false}`, `{"confirm":"true"}`} {
+				assert.Equal(t, 400, request("POST", clearPath, body, bundle.AccessToken).Code)
+			}
+			before, err := model.CommunityMessageHistory(0, 50, false)
+			require.NoError(t, err)
+			assert.Len(t, before.Items, 2)
+			// The socket receives a persistent clear boundary, including on another node/reconnect.
+			server := httptest.NewServer(router)
+			defer server.Close()
+			conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/api/community/ws", http.Header{"Origin": {server.URL}})
+			require.NoError(t, err)
+			defer conn.Close()
+			auth, err := common.Marshal(map[string]string{"token": bundle.AccessToken})
+			require.NoError(t, err)
+			require.NoError(t, conn.WriteMessage(websocket.TextMessage, auth))
+			require.NoError(t, conn.SetReadDeadline(time.Now().Add(10*time.Second)))
+			_, _, err = conn.ReadMessage()
+			require.NoError(t, err)
+			_, _, err = conn.ReadMessage() // presence
+			require.NoError(t, err)
+			rr := request("POST", clearPath, `{"confirm":true}`, bundle.AccessToken)
+			require.Equal(t, 200, rr.Code, rr.Body.String())
+			var result struct {
+				Data struct {
+					ThroughID int64 `json:"cleared_through_id"`
+					Count     int64 `json:"message_count"`
+				} `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(rr.Body.Bytes(), &result))
+			assert.Equal(t, old.ID, result.Data.ThroughID)
+			assert.EqualValues(t, 3, result.Data.Count)
+			var audits []model.AuditLog
+			require.NoError(t, model.LOG_DB.Where("action IN ?", []string{"community.clear", "community.delete"}).Find(&audits).Error)
+			require.Len(t, audits, 4)
+			for _, audit := range audits {
+				assert.Equal(t, user.Id, audit.UserId)
+				assert.Equal(t, common.RoleAdminUser, audit.ActorRole)
+				assert.True(t, audit.Success)
+			}
+			encodedAudit, err := common.Marshal(audits)
+			require.NoError(t, err)
+			assert.NotContains(t, string(encodedAudit), message.Text)
+			assert.NotContains(t, string(encodedAudit), bundle.AccessToken)
+
+			_, frame, err := conn.ReadMessage()
+			require.NoError(t, err)
+			var snapshot struct {
+				Messages  []model.CommunityMessage `json:"messages"`
+				ThroughID int64                    `json:"cleared_through_id"`
+				HasMore   bool                     `json:"has_more"`
+			}
+			require.NoError(t, common.Unmarshal(frame, &snapshot))
+			assert.Empty(t, snapshot.Messages)
+			assert.False(t, snapshot.HasMore)
+			assert.Equal(t, old.ID, snapshot.ThroughID)
+			assert.ErrorIs(t, model.ValidateCommunityReply(&message.ID), model.ErrCommunityReplyUnavailable)
+			require.NoError(t, model.SaveCommunityConfig(config)) // a stale settings form cannot undo clear
+			for range 2 {
+				require.NoError(t, model.DB.AutoMigrate(migrations...))
+			}
+			public, err := model.CommunityMessageHistory(old.ID+1, 50, false)
+			require.NoError(t, err)
+			assert.Empty(t, public.Items)
+			assert.False(t, public.HasMore)
+			assert.Equal(t, old.ID, public.ClearedThroughID)
+			archive, err = model.CommunityMessageHistory(0, 50, true)
+			require.NoError(t, err)
+			require.Len(t, archive.Items, 3)
+			for _, row := range archive.Items {
+				assert.True(t, row.Cleared)
+				assert.Equal(t, row.ID != message.ID, row.Deleted)
+			}
+			assert.Equal(t, message.Text, archive.Items[0].Text)
+			assert.Equal(t, old.URL, archive.Items[2].URL)
+			_, count, err := model.ListCommunityBotFeedback(0, 50)
+			require.NoError(t, err)
+			assert.EqualValues(t, 1, count)
+			replay := model.CommunityMessage{Kind: "text", Text: "retry", ClientID: &clientID}
+			require.NoError(t, model.CreateCommunityMessage(user.Id, &replay))
+			replay.RedactDeletedContent()
+			assert.True(t, replay.Cleared)
+			assert.Empty(t, replay.Text)
+			rr = request("POST", clearPath, `{"confirm":true}`, bundle.AccessToken)
+			require.NoError(t, common.Unmarshal(rr.Body.Bytes(), &result))
+			assert.Zero(t, result.Data.Count)
+			next := model.CommunityMessage{Kind: "text", Text: "New conversation"}
+			require.NoError(t, model.CreateCommunityMessage(user.Id, &next))
+			public, err = model.CommunityMessageHistory(0, 50, false)
+			require.NoError(t, err)
+			require.Len(t, public.Items, 1)
+			assert.Equal(t, next.ID, public.Items[0].ID)
+			_, err = model.RevokeUserSession(user.Id, bundle.Session.SID, "test")
+			require.NoError(t, err)
+			assert.Equal(t, 401, request("POST", clearPath, `{"confirm":true}`, bundle.AccessToken).Code)
+			assert.Equal(t, 401, request("DELETE", deletePath, "", bundle.AccessToken).Code)
+		})
+	}
+}

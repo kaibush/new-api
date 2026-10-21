@@ -323,6 +323,15 @@ func DeleteCommunityMessage(c *gin.Context) {
 		communityError(c, 400, "Invalid message")
 		return
 	}
+	var count int64
+	if err := model.DB.Model(&model.CommunityMessage{}).Where("id = ?", id).Count(&count).Error; err != nil {
+		communityError(c, 500, "Could not delete message")
+		return
+	}
+	if count == 0 {
+		communityError(c, 404, "Message not found")
+		return
+	}
 	result := model.DB.Model(&model.CommunityMessage{}).Where("id = ?", id).Update("deleted", true)
 	if result.Error != nil {
 		communityError(c, 500, "Could not delete message")
@@ -330,6 +339,24 @@ func DeleteCommunityMessage(c *gin.Context) {
 	}
 	recordManageAudit(c, "community.delete", map[string]any{"message_id": id})
 	c.JSON(200, gin.H{"success": true})
+}
+
+func ClearCommunityMessages(c *gin.Context) {
+	var req struct {
+		Confirm bool `json:"confirm"`
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1024)
+	if common.DecodeJson(c.Request.Body, &req) != nil || !req.Confirm {
+		communityError(c, 400, "Confirm clearing all conversations")
+		return
+	}
+	throughID, count, err := model.ClearCommunityMessages()
+	if err != nil {
+		communityError(c, 500, "Could not clear conversations")
+		return
+	}
+	recordManageAudit(c, "community.clear", map[string]any{"cleared_through_id": throughID, "message_count": count})
+	c.JSON(200, gin.H{"success": true, "data": gin.H{"cleared_through_id": throughID, "message_count": count}})
 }
 
 // Credentials are sent only in the first encrypted frame, never in URLs or subprotocol headers.
@@ -422,7 +449,7 @@ func CommunityWebSocket(c *gin.Context) {
 		if e != nil {
 			return
 		}
-		data, e = common.Marshal(gin.H{"type": "history", "messages": page.Items, "has_more": page.HasMore, "day_start": page.DayStart, "day_end": page.DayEnd, "history_days": page.HistoryDays, "deleted_ids": page.DeletedIDs})
+		data, e = common.Marshal(gin.H{"type": "history", "messages": page.Items, "has_more": page.HasMore, "day_start": page.DayStart, "day_end": page.DayEnd, "history_days": page.HistoryDays, "deleted_ids": page.DeletedIDs, "cleared_through_id": page.ClearedThroughID})
 		if e != nil {
 			return
 		}

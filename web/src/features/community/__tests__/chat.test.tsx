@@ -874,7 +874,7 @@ test('a new reply selected during sending is preserved when the earlier send fin
   expect(screen.getByText('Replying to Bob')).toBeInTheDocument()
 })
 
-test.each([1, 100])(
+test.each([1, 10, 100])(
   'message actions are in a menu and deletion is restricted for role %i',
   async (role) => {
     const user = userEvent.setup()
@@ -928,11 +928,13 @@ test.each([1, 100])(
     expect(
       await screen.findByRole('menuitem', { name: 'Reply' })
     ).toBeInTheDocument()
-    if (role === 100) {
+    if (role >= 10) {
       await user.click(screen.getByRole('menuitem', { name: 'Delete' }))
       expect(await screen.findByRole('alertdialog')).toBeInTheDocument()
       expect(
-        screen.getByText('This message will be removed from the chat.')
+        screen.getByText(
+          'This message will be removed from the chat. Administrators can still view the original in chat records.'
+        )
       ).toBeInTheDocument()
     } else {
       expect(
@@ -1807,4 +1809,258 @@ test('mention options include only connected chat users and disappear on departu
   ).toBeInTheDocument()
   act(() => socket.onclose?.())
   expect(screen.queryByRole('option')).not.toBeInTheDocument()
+})
+
+test('an administrator can delete another user message after confirmation', async () => {
+  const user = userEvent.setup()
+  useAuthStore.setState((state) => ({
+    auth: { ...state.auth, user: { id: 1, username: 'Alice', role: 10 } },
+  }))
+  vi.spyOn(api, 'delete').mockResolvedValue({ data: { success: true } })
+  show(<CommunityChat />)
+  await screen.findByRole('textbox', { name: 'Message' })
+  act(() =>
+    FakeSocket.instances[0].onmessage?.({
+      data: JSON.stringify({
+        type: 'history',
+        messages: [historyMessage(23, 'Other user message')],
+      }),
+    })
+  )
+  await user.click(screen.getByRole('button', { name: 'More actions' }))
+  await user.click(await screen.findByRole('menuitem', { name: 'Delete' }))
+  expect(api.delete).not.toHaveBeenCalled()
+  await user.click(screen.getByRole('button', { name: 'Delete' }))
+  await waitFor(() =>
+    expect(api.delete).toHaveBeenCalledWith('/api/community/messages/23')
+  )
+})
+
+test('archive messages offer deletion without offering reply', async () => {
+  const { ChatMessageBubble } = await import('../message-bubble')
+  const user = userEvent.setup()
+  const remove = vi.fn()
+  show(
+    <ChatMessageBubble
+      message={historyMessage(1, 'Old archive message')}
+      showDeletedContent
+      onRemove={remove}
+    />
+  )
+  await user.click(screen.getByRole('button', { name: 'More actions' }))
+  expect(
+    screen.queryByRole('menuitem', { name: 'Reply' })
+  ).not.toBeInTheDocument()
+  await user.click(screen.getByRole('menuitem', { name: 'Delete' }))
+  expect(remove).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }))
+})
+
+test('clearing the chat discards loaded history and stale pages while preserving the draft and new messages', async () => {
+  const user = userEvent.setup()
+  show(<CommunityChat />)
+  const draft = await screen.findByRole('textbox', { name: 'Message' })
+  const socket = FakeSocket.instances[0]
+  act(() =>
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: 'history',
+        messages: [historyMessage(60, 'Before clear')],
+        has_more: true,
+        cleared_through_id: 0,
+      }),
+    })
+  )
+  await user.type(draft, 'Keep my draft')
+  let finish: (value: unknown) => void = () => {}
+  vi.mocked(api.get).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      })
+  )
+  await user.click(
+    screen.getByRole('button', { name: 'Load earlier messages' })
+  )
+  act(() =>
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: 'history',
+        messages: [],
+        has_more: false,
+        cleared_through_id: 60,
+      }),
+    })
+  )
+  expect(screen.queryByText('Before clear')).not.toBeInTheDocument()
+  expect(screen.getByText('No messages yet')).toBeInTheDocument()
+  await act(async () =>
+    finish({
+      data: {
+        success: true,
+        data: {
+          items: [historyMessage(1, 'Late old page')],
+          has_more: true,
+          day_start: 0,
+          day_end: 0,
+          deleted_ids: [],
+          cleared_through_id: 0,
+        },
+      },
+    })
+  )
+  act(() =>
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: 'history',
+        messages: [historyMessage(60, 'Stale snapshot')],
+        has_more: true,
+        cleared_through_id: 0,
+      }),
+    })
+  )
+  expect(screen.queryByText('Late old page')).not.toBeInTheDocument()
+  expect(screen.queryByText('Stale snapshot')).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: 'Load earlier messages' })
+  ).not.toBeInTheDocument()
+  act(() =>
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: 'history',
+        messages: [historyMessage(61, 'After clear')],
+        has_more: false,
+        cleared_through_id: 60,
+      }),
+    })
+  )
+  expect(screen.getByText('After clear')).toBeInTheDocument()
+  expect(draft).toHaveValue('Keep my draft')
+})
+
+test('clear confirmation permits cancellation, blocks repeat requests, and keeps failures retryable', async () => {
+  const { ChatModerationDialog } = await import('../moderation-dialog')
+  const user = userEvent.setup()
+  const close = vi.fn()
+  const cleared = vi.fn()
+  const rendered = show(
+    <ChatModerationDialog target='all' onClose={close} onCleared={cleared} />
+  )
+  expect(
+    screen.getByText(
+      /Administrators can still view the original messages and bot feedback/
+    )
+  ).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
+  expect(close).toHaveBeenCalledOnce()
+  expect(api.post).not.toHaveBeenCalled()
+  close.mockClear()
+  let finish: (value: unknown) => void = () => {}
+  vi.mocked(api.post).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      })
+  )
+  await user.click(
+    screen.getByRole('button', { name: 'Clear all conversations' })
+  )
+  expect(
+    screen.getByRole('button', { name: 'Clear all conversations' })
+  ).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
+  await act(async () =>
+    finish({
+      data: { success: false, message: 'Could not clear conversations' },
+    })
+  )
+  await waitFor(() =>
+    expect(
+      screen.getByRole('button', { name: 'Clear all conversations' })
+    ).toBeEnabled()
+  )
+  expect(close).not.toHaveBeenCalled()
+  expect(cleared).not.toHaveBeenCalled()
+  vi.mocked(api.post).mockResolvedValueOnce({
+    data: {
+      success: true,
+      data: { cleared_through_id: 60, message_count: 60 },
+    },
+  })
+  await user.click(
+    screen.getByRole('button', { name: 'Clear all conversations' })
+  )
+  await waitFor(() => expect(cleared).toHaveBeenCalledWith(60))
+  expect(api.post).toHaveBeenLastCalledWith('/api/community/messages/clear', {
+    confirm: true,
+  })
+  expect(close).toHaveBeenCalledOnce()
+  rendered.unmount()
+})
+
+test('administrator history exposes clear controls and marks cleared originals', async () => {
+  const { CommunityHistory } = await import('../history')
+  const user = userEvent.setup()
+  useAuthStore.setState((state) => ({
+    auth: { ...state.auth, user: { id: 1, username: 'Alice', role: 10 } },
+  }))
+  vi.mocked(api.get).mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        items: [{ ...historyMessage(1, 'Retained original'), cleared: true }],
+        has_more: false,
+      },
+    },
+  })
+  show(<CommunityHistory />)
+  expect(await screen.findByText('Retained original')).toBeInTheDocument()
+  expect(screen.getByText('Cleared from chat')).toBeInTheDocument()
+  await user.click(
+    screen.getByRole('button', { name: 'Clear all conversations' })
+  )
+  expect(await screen.findByRole('alertdialog')).toBeInTheDocument()
+  expect(api.post).not.toHaveBeenCalled()
+})
+
+test('a delayed send response cannot restore a cleared message or its quoted content', async () => {
+  const { useChat } = await import('../use-chat')
+  const client = new QueryClient()
+  const { result } = renderHook(() => useChat(true), {
+    wrapper: (props) => (
+      <QueryClientProvider client={client}>
+        {props.children}
+      </QueryClientProvider>
+    ),
+  })
+  act(() => {
+    result.current.onSending({
+      ...historyMessage(-1, 'Pending text'),
+      sending: true,
+      client_id: 'pending',
+    })
+    result.current.clearThrough(60)
+    result.current.onSent('pending', historyMessage(50, 'Late cleared message'))
+  })
+  expect(result.current.messages).toEqual([])
+  act(() => {
+    result.current.onSending({
+      ...historyMessage(-2, 'New text'),
+      sending: true,
+      client_id: 'new',
+    })
+    result.current.onSent('new', {
+      ...historyMessage(61, 'New text'),
+      reply_to_id: 50,
+      reply: {
+        id: 50,
+        text: 'Cleared quote',
+        filename: '',
+        name: 'Bob',
+        deleted: false,
+      },
+    })
+  })
+  expect(result.current.messages).toHaveLength(1)
+  expect(result.current.messages[0].text).toBe('New text')
+  expect(result.current.messages[0].reply).toBeUndefined()
 })

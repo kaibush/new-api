@@ -448,6 +448,9 @@ export function formatDuration(
  * translatable instead of being frozen to whatever language was written to DB.
  */
 const AUDIT_TEMPLATES: Record<string, string> = {
+  'community.delete': 'Deleted chat message (ID: {{message_id}})',
+  'community.clear':
+    'Cleared {{message_count}} chat messages through ID {{cleared_through_id}}',
   'token.create': 'API token creation',
   'token.update': 'API token configuration update',
   'token.status_update': 'API token status update',

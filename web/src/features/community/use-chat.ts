@@ -25,12 +25,17 @@ function pruneChatHistory(history: ChatHistory): ChatHistory {
     items: history.items
       .filter(
         (message) =>
+          message.id > (history.cleared_through_id || 0) &&
           message.created_at >= history.day_start &&
           (!history.day_end || message.created_at < history.day_end) &&
           !(message.expires_at && message.expires_at <= now)
       )
       .map((message) => {
-        if (message.reply?.expires_at && message.reply.expires_at <= now) {
+        if (
+          message.reply &&
+          (message.reply.id <= (history.cleared_through_id || 0) ||
+            (message.reply.expires_at && message.reply.expires_at <= now))
+        ) {
           return { ...message, reply: undefined }
         }
         return message
@@ -43,6 +48,9 @@ function mergeChatHistory(
   next: ChatHistory,
   older: boolean
 ): ChatHistory {
+  if ((next.cleared_through_id || 0) < (current.cleared_through_id || 0)) {
+    return current
+  }
   const samePolicy = current.history_days === next.history_days
   if (older && (!samePolicy || current.day_start !== next.day_start)) {
     return current
@@ -114,6 +122,7 @@ export function useChat(enabled: boolean) {
     mutationFn: (request: {
       before: number
       day: number
+      clearedThrough: number
       days?: number
       generation: number
     }) => getChatHistory(request.before),
@@ -121,6 +130,7 @@ export function useChat(enabled: boolean) {
       if (request.generation !== sessionGeneration.current) return
       setHistory((current) => {
         if (
+          (current.cleared_through_id || 0) !== request.clearedThrough ||
           current.day_start !== request.day ||
           current.history_days !== request.days
         ) {
@@ -184,8 +194,21 @@ export function useChat(enabled: boolean) {
     }
   }, [])
   const visibleMessages = useMemo(
-    () => [...messages, ...outgoing],
-    [messages, outgoing]
+    () => [
+      ...messages,
+      ...outgoing
+        .filter(
+          (message) =>
+            message.sending ||
+            (!message.cleared && message.id > (history.cleared_through_id || 0))
+        )
+        .map((message) =>
+          message.reply && message.reply.id <= (history.cleared_through_id || 0)
+            ? { ...message, reply: undefined }
+            : message
+        ),
+    ],
+    [messages, outgoing, history.cleared_through_id]
   )
   const [connected, setConnected] = useState(false)
   useEffect(() => {
@@ -213,6 +236,7 @@ export function useChat(enabled: boolean) {
           const data = JSON.parse(event.data)
           if (data.type === 'history' && Array.isArray(data.messages)) {
             const page: ChatHistory = {
+              cleared_through_id: data.cleared_through_id || 0,
               items: data.messages,
               has_more: data.has_more ?? false,
               day_start: data.day_start ?? 0,
@@ -265,25 +289,50 @@ export function useChat(enabled: boolean) {
       setConnected(false)
     }
   }, [enabled, token])
+  const currentHistoryRequest =
+    earlier.variables?.day === history.day_start &&
+    earlier.variables?.days === history.history_days &&
+    earlier.variables?.clearedThrough === (history.cleared_through_id || 0)
   return {
     messages: visibleMessages,
     hasMore: history.has_more,
-    loadingEarlier:
-      earlier.isPending && earlier.variables?.day === history.day_start,
-    historyError:
-      earlier.isError && earlier.variables?.day === history.day_start,
+    loadingEarlier: earlier.isPending && currentHistoryRequest,
+    historyError: earlier.isError && currentHistoryRequest,
     loadEarlier: () => {
-      if (
-        history.has_more &&
-        (!earlier.isPending || earlier.variables?.day !== history.day_start)
-      ) {
+      if (history.has_more && (!earlier.isPending || !currentHistoryRequest)) {
         earlier.mutate({
+          clearedThrough: history.cleared_through_id || 0,
           before: messages[0]?.id || 0,
           day: history.day_start,
           days: history.history_days,
           generation: sessionGeneration.current,
         })
       }
+    },
+    clearThrough: (throughId: number) => {
+      setHistory((current) =>
+        pruneChatHistory({
+          ...current,
+          cleared_through_id: Math.max(
+            current.cleared_through_id || 0,
+            throughId
+          ),
+          has_more:
+            (current.cleared_through_id || 0) >= throughId
+              ? current.has_more
+              : false,
+        })
+      )
+    },
+    markDeleted: (id: number) => {
+      setHistory((current) =>
+        mergeChatHistory(
+          current,
+          { ...current, deleted_ids: [...current.deleted_ids, id] },
+          false
+        )
+      )
+      setOutgoing((current) => current.filter((message) => message.id !== id))
     },
     connected,
     users,
