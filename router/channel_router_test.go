@@ -6,12 +6,44 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/controller"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestChannelListRoutesWithStatusAndRelayRoutes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	previousRateLimit := common.GlobalApiRateLimitEnable
+	common.GlobalApiRateLimitEnable = false
+	t.Cleanup(func() { common.GlobalApiRateLimitEnable = previousRateLimit })
+
+	engine := gin.New()
+	SetApiRouter(engine)
+	SetRelayRouter(engine)
+
+	// The status route and /:mode/mj routes together break Gin's automatic
+	// trailing-slash redirect for /api/channel. Both list URLs must match.
+	for _, routePath := range []string{"/api/channel", "/api/channel/"} {
+		t.Run(routePath, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, routePath+"?tag_mode=false&id_sort=false&p=1&page_size=20", nil)
+			engine.ServeHTTP(recorder, request)
+
+			assert.Equal(t, http.StatusUnauthorized, recorder.Code, recorder.Body.String())
+			assert.Empty(t, recorder.Header().Get("Location"))
+			assert.Contains(t, recorder.Body.String(), `"code":"AUTH_UNAUTHORIZED"`)
+
+			rule, exists := middleware.AccessTokenRouteRule(http.MethodGet + " " + routePath)
+			require.True(t, exists, "channel list must declare its access token scope")
+			assert.Equal(t, "scope", rule.Kind())
+			assert.Equal(t, "channel:read", rule.Scope())
+		})
+	}
+}
 
 func TestChannelDefaultBaseURLsRequireReadPermission(t *testing.T) {
 	assertChannelRoutePermission(t, http.MethodGet, "/default_base_urls", authz.ChannelRead, controller.GetChannelDefaultBaseURLs)
