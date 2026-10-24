@@ -29,6 +29,7 @@ import { useEffect, useState, useMemo, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Dialog } from '@/components/dialog'
 import { Turnstile } from '@/components/turnstile'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -42,10 +43,9 @@ import {
   TooltipTrigger,
   TooltipProvider,
 } from '@/components/ui/tooltip'
-import { toIntlLocale } from '@/i18n/languages'
+import { CheckinRewardDetails } from '@/features/checkin/components/reward-details'
 import { formatQuotaWithCurrency } from '@/lib/currency'
 import dayjs from '@/lib/dayjs'
-import { formatNumber } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import { createServerError } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
@@ -64,13 +64,13 @@ export function CheckinCalendarCard({
   turnstileEnabled,
   turnstileSiteKey,
 }: CheckinCalendarCardProps) {
-  const { t, i18n } = useTranslation()
-  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const { t } = useTranslation()
   const [currentMonth, setCurrentMonth] = useState(() => {
     const now = new Date()
     return new Date(now.getFullYear(), now.getMonth(), 1)
   })
   const [checkinLoading, setCheckinLoading] = useState(false)
+  const [rewardDialogOpen, setRewardDialogOpen] = useState(false)
   const [turnstileModalVisible, setTurnstileModalVisible] = useState(false)
   const [turnstileWidgetKey, setTurnstileWidgetKey] = useState(0)
   const [initialLoaded, setInitialLoaded] = useState(false)
@@ -257,10 +257,28 @@ export function CheckinCalendarCard({
     checkinButtonLabel = t('Loading...')
   } else if (checkedToday) {
     checkinButtonLabel = t('Checked in')
+  } else if (eligibility?.allowed === false) {
+    checkinButtonLabel = t('Check-in reward details')
   }
 
   return (
     <TooltipProvider delay={100}>
+      {eligibility && (
+        <ConfirmDialog
+          open={rewardDialogOpen}
+          onOpenChange={setRewardDialogOpen}
+          title={t('Check-in reward details')}
+          desc={<CheckinRewardDetails eligibility={eligibility} />}
+          confirmText={t('Claim this reward')}
+          cancelBtnText={t('Not now')}
+          disabled={!eligibility.allowed || checkedToday}
+          isLoading={checkinLoading}
+          handleConfirm={() => {
+            setRewardDialogOpen(false)
+            void doCheckin()
+          }}
+        />
+      )}
       <Dialog
         open={turnstileModalVisible}
         onOpenChange={(open) => {
@@ -333,13 +351,19 @@ export function CheckinCalendarCard({
               </div>
             </button>
             <Button
-              onClick={() => doCheckin()}
-              disabled={
-                checkinLoading ||
-                checkedToday ||
-                !checkinData ||
-                eligibility?.allowed === false
-              }
+              onClick={() => {
+                if (
+                  eligibility &&
+                  (!eligibility.allowed ||
+                    eligibility.reward_percent < 100 ||
+                    eligibility.max_quota < eligibility.base_max_quota)
+                ) {
+                  setRewardDialogOpen(true)
+                } else {
+                  void doCheckin()
+                }
+              }}
+              disabled={checkinLoading || checkedToday || !checkinData}
               size='sm'
               className='w-full shrink-0 sm:w-auto'
             >
@@ -373,80 +397,7 @@ export function CheckinCalendarCard({
           <div className='px-4 pb-4 sm:px-6'>
             <Alert>
               <AlertDescription>
-                <p>
-                  {t(
-                    'Account balances do not limit check-in rewards. The monthly reward cap still applies.'
-                  )}
-                </p>
-                <p>
-                  {t('Rewards this month: {{amount}} / {{cap}}', {
-                    amount: formatQuotaWithCurrency(
-                      eligibility.monthly_awarded
-                    ),
-                    cap: formatQuotaWithCurrency(eligibility.monthly_cap),
-                  })}
-                </p>
-                <p>
-                  {t(
-                    'Spending in the last {{days}} days: {{amount}} / {{minimum}}',
-                    {
-                      days: formatNumber(eligibility.activity_days, locale),
-                      amount: formatQuotaWithCurrency(eligibility.recent_spend),
-                      minimum: formatQuotaWithCurrency(
-                        eligibility.minimum_spend
-                      ),
-                    }
-                  )}
-                </p>
-                {eligibility.reasons.includes('monthly_cap') && (
-                  <p>
-                    {t(
-                      'The monthly reward cap has been reached. Rewards resume next month.'
-                    )}
-                  </p>
-                )}
-                {eligibility.reasons.includes('low_activity') && (
-                  <p>
-                    {t(
-                      'Recent spending is below the threshold. Rewards are reduced to {{percent}}%.',
-                      {
-                        percent: formatNumber(
-                          eligibility.reward_percent,
-                          locale
-                        ),
-                      }
-                    )}
-                  </p>
-                )}
-                {eligibility.reasons.includes('new_user_grace') && (
-                  <p>
-                    {t(
-                      'During your registration grace period, daily rewards are paid normally, subject to the monthly cap.'
-                    )}
-                  </p>
-                )}
-                {eligibility.reasons.includes('accounting_pending') && (
-                  <p>
-                    {t(
-                      'Usage settlement is pending. Please retry later or contact support if this persists.'
-                    )}
-                  </p>
-                )}
-                {!checkedToday && eligibility.allowed && (
-                  <p>
-                    {t('Available reward: {{minimum}} – {{maximum}}', {
-                      minimum: formatQuotaWithCurrency(eligibility.min_quota),
-                      maximum: formatQuotaWithCurrency(eligibility.max_quota),
-                    })}
-                  </p>
-                )}
-                {!checkedToday && !eligibility.allowed && (
-                  <p>
-                    {t(
-                      'Check-in rewards are currently paused. No check-in has been used today.'
-                    )}
-                  </p>
-                )}
+                <CheckinRewardDetails eligibility={eligibility} />
               </AlertDescription>
             </Alert>
           </div>

@@ -261,7 +261,11 @@ func validateOptionValue(key string, value string) error {
 }
 
 func UpdateOption(key string, value string) error {
-	if key == helpcenter.OptionKey || key == "checkin_setting.limits" {
+	if strings.HasPrefix(key, "checkin_setting.") {
+		_, err := updateCheckinConfiguration(nil, 0, map[string]string{key: value})
+		return err
+	}
+	if key == helpcenter.OptionKey {
 		return UpdateOptionsBulk(map[string]string{key: value})
 	}
 	if IsRequestPolicyOption(key) {
@@ -301,6 +305,12 @@ func UpdateOptionsBulk(values map[string]string) error {
 	if len(values) == 0 {
 		return nil
 	}
+	checkinValues := make(map[string]string)
+	for key, value := range values {
+		if strings.HasPrefix(key, "checkin_setting.") {
+			checkinValues[key] = value
+		}
+	}
 	for key := range values {
 		if IsPasskeyDomainOption(key) {
 			_, err := UpdatePasskeyDomainOptions(values, false, "")
@@ -333,7 +343,15 @@ func UpdateOptionsBulk(values map[string]string) error {
 	}
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		if len(checkinValues) > 0 {
+			if _, err := writeCheckinConfiguration(tx, nil, 0, checkinValues); err != nil {
+				return err
+			}
+		}
 		for k, v := range values {
+			if strings.HasPrefix(k, "checkin_setting.") {
+				continue
+			}
 			option := Option{Key: k}
 			if err := tx.FirstOrCreate(&option, Option{Key: k}).Error; err != nil {
 				return err
@@ -349,6 +367,9 @@ func UpdateOptionsBulk(values map[string]string) error {
 		return err
 	}
 	for k, v := range values {
+		if strings.HasPrefix(k, "checkin_setting.") {
+			continue
+		}
 		if err := updateOptionMap(k, v); err != nil {
 			return err
 		}

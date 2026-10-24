@@ -39,6 +39,13 @@ type CheckinSetting struct {
 	MaxQuota int           `json:"max_quota"` // 签到最大额度奖励
 }
 
+func (s CheckinSetting) Validate() error {
+	if s.MinQuota < 0 || s.MaxQuota < s.MinQuota || s.MaxQuota > common.MaxQuota {
+		return fmt.Errorf("Invalid check-in reward range")
+	}
+	return s.Limits.Validate()
+}
+
 // 默认配置
 var checkinSetting = CheckinSetting{
 	Limits:   CheckinLimits{MonthlyCap: 300000, ActivityDays: 30, MinimumSpend: 50000, ReducedPercent: 20, NewUserDays: 7},

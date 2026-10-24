@@ -27,6 +27,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
 import { beforeEach, expect, test, vi } from 'vitest'
 
+// Load the lazy panel before test timing starts; its real interactions remain tested.
+import '@/features/checkin/components/activity-panel'
 import { SettingsPageProvider } from '@/features/system-settings/components/settings-page-context'
 import { CheckinSettingsSection } from '@/features/system-settings/general/checkin-settings-section'
 import { api } from '@/lib/api'
@@ -34,7 +36,25 @@ import { api } from '@/lib/api'
 import { CheckinCalendarCard } from '../components/checkin-calendar-card'
 import type { CheckinEligibility } from '../types'
 
+vi.mock('@visactor/react-vchart', () => ({ VChart: () => null }))
+
 const eligibility: CheckinEligibility = {
+  activity_percent: 100,
+  reward_numerator: 1,
+  reward_denominator: 1,
+  base_min_quota: 10,
+  base_max_quota: 20,
+  monthly_remaining: 200,
+  spending_gap: 0,
+  history_complete: true,
+  coverage_since: 1700000000,
+  window_start: 1790000000,
+  as_of: 1792592000,
+  config_version: 1,
+  new_user_days: 7,
+  grace_day: 0,
+  grace_remaining_days: 0,
+  pending_count: 0,
   limited: true,
   allowed: true,
   reasons: [],
@@ -90,31 +110,72 @@ function renderCheckin(decision: CheckinEligibility) {
       />
     </QueryClientProvider>
   )
-  return screen.findByText(
-    'Account balances do not limit check-in rewards. The monthly reward cap still applies.'
-  )
+  return screen.findByText(/Spending in the last/)
+}
+
+const configuration = {
+  version: 1,
+  observed_since: 1700000000,
+  settings: { enabled: true, min_quota: 10, max_quota: 100, limits },
 }
 
 beforeEach(() => {
-  vi.spyOn(api, 'post').mockResolvedValue({
-    data: { success: true, data: { quota_awarded: 10 } },
+  vi.spyOn(api, 'get').mockImplementation(async (url) => ({
+    data: {
+      success: true,
+      data:
+        url === '/api/option/checkin'
+          ? configuration
+          : {
+              as_of: 1792592000,
+              config_version: 1,
+              updating: false,
+              total: 0,
+              grace: 0,
+              active: 0,
+              low_activity: 0,
+              zero_activity: 0,
+              incomplete: 0,
+              pending: 0,
+              distribution: [],
+              days: [],
+            },
+    },
+  }))
+  vi.spyOn(api, 'post').mockImplementation(async (url) => ({
+    data: {
+      success: true,
+      data:
+        url === '/api/user/checkin/users'
+          ? {
+              items: [],
+              total: 0,
+              updating: false,
+              config_version: 1,
+              as_of: 1792592000,
+            }
+          : { quota_awarded: 10 },
+    },
+  }))
+  vi.spyOn(api, 'put').mockResolvedValue({
+    data: { success: true, data: { ...configuration, version: 2 } },
   })
-  vi.spyOn(api, 'put').mockResolvedValue({ data: { success: true } })
 })
 
 test.each(['monthly_cap', 'accounting_pending'])(
   'a %s restriction explains why and prevents a claim',
   async (reason) => {
     await renderCheckin({ ...eligibility, allowed: false, reasons: [reason] })
-    const button = screen.getByRole('button', { name: 'Check in now' })
-    expect(button).toBeDisabled()
+    const button = screen.getByRole('button', {
+      name: 'Check-in reward details',
+    })
+    expect(button).toBeEnabled()
     fireEvent.click(button)
-    expect(api.post).not.toHaveBeenCalled()
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
     expect(
-      screen.getByText(
-        'Check-in rewards are currently paused. No check-in has been used today.'
-      )
-    ).toBeInTheDocument()
+      screen.getByRole('button', { name: 'Claim this reward' })
+    ).toBeDisabled()
+    expect(api.post).not.toHaveBeenCalled()
   }
 )
 
@@ -124,14 +185,15 @@ test('reduced rewards explain the percentage and remain claimable', async () => 
     reward_percent: 20,
     reasons: ['low_activity'],
   })
-  expect(
-    screen.getByText(
-      'Recent spending is below the threshold. Rewards are reduced to 20%.'
-    )
-  ).toBeInTheDocument()
   const button = screen.getByRole('button', { name: 'Check in now' })
   expect(button).toBeEnabled()
   fireEvent.click(button)
+  expect(api.post).not.toHaveBeenCalled()
+  expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Not now' }))
+  expect(api.post).not.toHaveBeenCalled()
+  fireEvent.click(button)
+  fireEvent.click(screen.getByRole('button', { name: 'Claim this reward' }))
   await waitFor(() =>
     expect(api.post).toHaveBeenCalledWith('/api/user/checkin')
   )
@@ -143,14 +205,7 @@ function SettingsFixture() {
     <>
       <div ref={setContainer} />
       <SettingsPageProvider actionsContainer={container}>
-        <CheckinSettingsSection
-          defaultValues={{
-            enabled: true,
-            minQuota: 10,
-            maxQuota: 100,
-            limits: JSON.stringify(limits),
-          }}
-        />
+        <CheckinSettingsSection />
       </SettingsPageProvider>
     </>
   )
@@ -168,6 +223,11 @@ async function renderSettings() {
     <QueryClientProvider client={client}>
       <RouterProvider router={router} />
     </QueryClientProvider>
+  )
+  await screen.findByRole(
+    'region',
+    { name: 'Check-in activity' },
+    { timeout: 10000 }
   )
   return screen.findByRole('switch', { name: 'Limit check-in rewards' })
 }
@@ -188,7 +248,7 @@ test('the limits toggle reveals controls and saves one complete policy', async (
   for (const [name, value] of [
     ['Activity window (days)', '15'],
     ['Minimum spending in the activity window', '1000'],
-    ['Low-activity reward percentage', '10'],
+    ['Minimum reward percentage', '10'],
     ['New user grace period (days)', '5'],
   ]) {
     fireEvent.change(screen.getByRole('spinbutton', { name }), {
@@ -199,17 +259,22 @@ test('the limits toggle reveals controls and saves one complete policy', async (
     screen.getByRole('button', { name: 'Save check-in settings' })
   )
   await waitFor(() =>
-    expect(api.put).toHaveBeenCalledWith('/api/option/', {
-      key: 'checkin_setting.limits',
-      value: JSON.stringify({
-        ...limits,
+    expect(api.put).toHaveBeenCalledWith('/api/option/checkin', {
+      version: 1,
+      settings: {
         enabled: true,
-        monthly_cap: 300,
-        activity_days: 15,
-        minimum_spend: 1000,
-        reduced_percent: 10,
-        new_user_days: 5,
-      }),
+        min_quota: 10,
+        max_quota: 100,
+        limits: {
+          ...limits,
+          enabled: true,
+          monthly_cap: 300,
+          activity_days: 15,
+          minimum_spend: 1000,
+          reduced_percent: 10,
+          new_user_days: 5,
+        },
+      },
     })
   )
   expect(api.put).toHaveBeenCalledTimes(1)
@@ -218,7 +283,7 @@ test('the limits toggle reveals controls and saves one complete policy', async (
 test('out-of-range percentages cannot be saved', async () => {
   fireEvent.click(await renderSettings())
   const input = screen.getByRole('spinbutton', {
-    name: 'Low-activity reward percentage',
+    name: 'Minimum reward percentage',
   })
   fireEvent.change(input, { target: { value: '101' } })
   fireEvent.click(
@@ -245,5 +310,141 @@ test('registration grace allows accumulated rewards without a gift cap', async (
   fireEvent.click(button)
   await waitFor(() =>
     expect(api.post).toHaveBeenCalledWith('/api/user/checkin')
+  )
+})
+
+test('a failed settings save keeps edits available for retry', async () => {
+  vi.mocked(api.put).mockResolvedValueOnce({
+    data: { success: false, message: 'Database unavailable' },
+  })
+  await renderSettings()
+  const input = screen.getByRole('spinbutton', {
+    name: 'Minimum check-in quota',
+  })
+  fireEvent.change(input, { target: { value: '25' } })
+  const save = screen.getByRole('button', { name: 'Save check-in settings' })
+  fireEvent.click(save)
+  await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1))
+  await waitFor(() => expect(save).toBeEnabled())
+  expect(input).toHaveValue(25)
+})
+
+test('unsaved valid settings preview the user page without updating configuration', async () => {
+  await renderSettings()
+  fireEvent.change(
+    screen.getByRole('spinbutton', { name: 'Maximum check-in quota' }),
+    { target: { value: '200' } }
+  )
+  await screen.findByText(
+    'Unsaved preview for this page. Rewards are not issued.'
+  )
+  await waitFor(() =>
+    expect(api.post).toHaveBeenCalledWith(
+      '/api/user/checkin/users',
+      expect.objectContaining({
+        preview: expect.objectContaining({ max_quota: 200 }),
+      }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    )
+  )
+  expect(api.put).not.toHaveBeenCalled()
+})
+
+test('incomplete history explains the transition and allows full rewards', async () => {
+  await renderCheckin({
+    ...eligibility,
+    history_complete: false,
+    reasons: ['history_incomplete'],
+    recent_spend: 0,
+    activity_percent: 0,
+  })
+  expect(
+    screen.getByText(/Spending history is incomplete since/)
+  ).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Check in now' }))
+  await waitFor(() =>
+    expect(api.post).toHaveBeenCalledWith('/api/user/checkin')
+  )
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+})
+
+test('disabled limits with a zero cap can be saved without exposing hidden validation errors', async () => {
+  vi.mocked(api.get).mockResolvedValueOnce({
+    data: {
+      success: true,
+      data: {
+        ...configuration,
+        settings: {
+          ...configuration.settings,
+          limits: { ...limits, monthly_cap: 0 },
+        },
+      },
+    },
+  })
+  await renderSettings()
+  fireEvent.change(
+    screen.getByRole('spinbutton', { name: 'Minimum check-in quota' }),
+    { target: { value: '25' } }
+  )
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Save check-in settings' })
+  )
+  await waitFor(() =>
+    expect(api.put).toHaveBeenCalledWith(
+      '/api/option/checkin',
+      expect.objectContaining({
+        settings: expect.objectContaining({
+          min_quota: 25,
+          limits: expect.objectContaining({ enabled: false, monthly_cap: 0 }),
+        }),
+      })
+    )
+  )
+})
+
+test('a configuration conflict preserves edits until the administrator reloads the saved version', async () => {
+  await renderSettings()
+  const input = screen.getByRole('spinbutton', {
+    name: 'Minimum check-in quota',
+  })
+  fireEvent.change(input, { target: { value: '25' } })
+  vi.mocked(api.put).mockImplementationOnce(async () => {
+    vi.mocked(api.get).mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: {
+          ...configuration,
+          version: 2,
+          settings: { ...configuration.settings, min_quota: 50 },
+        },
+      },
+    })
+    return {
+      data: {
+        success: false,
+        message: 'Check-in settings changed. Refresh before saving again.',
+      },
+    }
+  })
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Save check-in settings' })
+  )
+  const reload = await screen.findByRole('button', { name: 'Reload settings' })
+  expect(input).toHaveValue(25)
+  expect(api.put).toHaveBeenLastCalledWith(
+    '/api/option/checkin',
+    expect.objectContaining({ version: 1 })
+  )
+  fireEvent.click(reload)
+  expect(input).toHaveValue(50)
+  fireEvent.change(input, { target: { value: '75' } })
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Save check-in settings' })
+  )
+  await waitFor(() =>
+    expect(api.put).toHaveBeenLastCalledWith(
+      '/api/option/checkin',
+      expect.objectContaining({ version: 2 })
+    )
   )
 })

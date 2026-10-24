@@ -52,20 +52,20 @@ func HasCheckedInToday(userId int) (bool, error) {
 
 // UserCheckin atomically records and credits a daily reward on every dialect.
 func UserCheckin(userId int) (*Checkin, error) {
-	settings, err := CurrentCheckinSettings()
-	if err != nil {
-		return nil, err
-	}
-	if !settings.Enabled {
-		return nil, errors.New("签到功能未启用")
-	}
-	limits := settings.Limits
 	now := time.Now()
 	var record *Checkin
-	err = DB.Transaction(func(tx *gorm.DB) error {
+	err := DB.Transaction(func(tx *gorm.DB) error {
 		account, err := checkinAccount(tx, userId, now)
 		if err != nil {
 			return err
+		}
+		config, err := readCheckinConfiguration(tx)
+		if err != nil {
+			return err
+		}
+		settings := config.Settings
+		if !settings.Enabled {
+			return errors.New("签到功能未启用")
 		}
 		now = time.Now()
 		var user User
@@ -79,25 +79,26 @@ func UserCheckin(userId int) (*Checkin, error) {
 		if count != 0 {
 			return errors.New("今日已签到")
 		}
-		eligibility, err := evaluateCheckin(tx, &user, account, settings, limits, now)
+		eligibility, err := evaluateCheckin(tx, &user, account, config, now)
 		if err != nil {
 			return err
 		}
 		if !eligibility.Allowed {
 			return &CheckinRestrictedError{Eligibility: eligibility}
 		}
-		awarded := eligibility.MinQuota
-		if eligibility.MaxQuota > awarded {
-			awarded += rand.Intn(eligibility.MaxQuota - awarded + 1)
+		base := settings.MinQuota
+		if settings.MaxQuota > base {
+			base += int(rand.Int63n(int64(settings.MaxQuota) - int64(base) + 1))
 		}
-		if limits.Enabled && awarded == 0 {
+		awarded := checkinReward(base, eligibility)
+		if awarded == 0 {
 			return &CheckinRestrictedError{Eligibility: eligibility}
 		}
-		policy, err := common.Marshal(limits)
+		policy, err := common.Marshal(CheckinRewardSnapshot{Configuration: config, Eligibility: *eligibility, BaseQuota: base})
 		if err != nil {
 			return err
 		}
-		record = &Checkin{UserId: userId, CheckinDate: eligibility.Today, QuotaAwarded: awarded, CreatedAt: now.Unix(), RewardPercent: eligibility.RewardPercent, Policy: string(policy)}
+		record = &Checkin{UserId: userId, CheckinDate: eligibility.Today, QuotaAwarded: awarded, CreatedAt: now.Unix(), RewardPercent: int(eligibility.RewardPercent), Policy: string(policy)}
 		if err := tx.Create(record).Error; err != nil {
 			return err
 		}
@@ -146,13 +147,20 @@ func GetUserCheckinStats(userId int, month string) (map[string]any, error) {
 	}
 
 	// 检查今天是否已签到
-	hasCheckedToday, _ := HasCheckedInToday(userId)
+	hasCheckedToday, err := HasCheckedInToday(userId)
+	if err != nil {
+		return nil, err
+	}
 
 	// 获取用户所有时间的签到统计
 	var totalCheckins int64
 	var totalQuota int64
-	DB.Model(&Checkin{}).Where("user_id = ?", userId).Count(&totalCheckins)
-	DB.Model(&Checkin{}).Where("user_id = ?", userId).Select("COALESCE(SUM(quota_awarded), 0)").Scan(&totalQuota)
+	if err := DB.Model(&Checkin{}).Where("user_id = ?", userId).Count(&totalCheckins).Error; err != nil {
+		return nil, err
+	}
+	if err := DB.Model(&Checkin{}).Where("user_id = ?", userId).Select("COALESCE(SUM(quota_awarded), 0)").Scan(&totalQuota).Error; err != nil {
+		return nil, err
+	}
 
 	return map[string]any{
 		"total_quota":      totalQuota,      // 所有时间累计获得的额度

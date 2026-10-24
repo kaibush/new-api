@@ -43,6 +43,7 @@ func TestStatus(c *gin.Context) {
 
 func GetStatus(c *gin.Context) {
 
+	checkinSettings, checkinErr := model.CurrentCheckinSettings()
 	cs := console_setting.GetConsoleSetting()
 	passkeySetting := system_setting.PasskeySettingsSnapshot()
 	common.OptionMapRWMutex.RLock()
@@ -126,7 +127,7 @@ func GetStatus(c *gin.Context) {
 		"setup":                       constant.Setup,
 		"user_agreement_enabled":      legalSetting.UserAgreement != "",
 		"privacy_policy_enabled":      legalSetting.PrivacyPolicy != "",
-		"checkin_enabled":             operation_setting.GetCheckinSetting().Enabled,
+		"checkin_enabled":             checkinErr == nil && checkinSettings.Enabled,
 	}
 
 	// 根据启用状态注入可选内容

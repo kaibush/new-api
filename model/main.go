@@ -371,6 +371,8 @@ func migrateDB() error {
 		&Checkin{},
 		&CheckinAccount{},
 		&CheckinUsage{},
+		&CheckinUsageDay{},
+		&CheckinPolicyState{},
 		&SubscriptionOrder{},
 		&UserSubscription{},
 		&SubscriptionPreConsumeRecord{},
@@ -386,6 +388,9 @@ func migrateDB() error {
 		&SiteVisit{},
 	)
 	if err != nil {
+		return err
+	}
+	if err := InitializeCheckinAccounting(); err != nil {
 		return err
 	}
 	if err := InitializeUserAuthVersions(); err != nil {

@@ -63,7 +63,15 @@ export function useUpdateOption() {
         queryClient.invalidateQueries({ queryKey: ['system-options'] })
 
         // If updating frontend-display-related config, also refresh status
-        if (STATUS_RELATED_KEYS.has(variables.key)) {
+        if (variables.key.startsWith('checkin_setting.')) {
+          queryClient.invalidateQueries({ queryKey: ['checkin-configuration'] })
+          queryClient.invalidateQueries({ queryKey: ['checkin-admin'] })
+          queryClient.invalidateQueries({ queryKey: ['checkin-status'] })
+        }
+        if (
+          STATUS_RELATED_KEYS.has(variables.key) ||
+          variables.key.startsWith('checkin_setting.')
+        ) {
           queryClient.invalidateQueries({ queryKey: ['status'] })
           try {
             window.localStorage.removeItem('status')

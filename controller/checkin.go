@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -15,7 +16,11 @@ import (
 
 // GetCheckinStatus 获取用户签到状态和历史记录
 func GetCheckinStatus(c *gin.Context) {
-	setting := operation_setting.GetCheckinSetting()
+	setting, err := model.CurrentCheckinSettings()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	if !setting.Enabled {
 		common.ApiErrorMsg(c, "签到功能未启用")
 		return
@@ -23,6 +28,10 @@ func GetCheckinStatus(c *gin.Context) {
 	userId := c.GetInt("id")
 	// 获取月份参数，默认为当前月份
 	month := c.DefaultQuery("month", time.Now().Format("2006-01"))
+	if _, err := time.Parse("2006-01", month); err != nil {
+		common.ApiErrorMsg(c, "Invalid month")
+		return
+	}
 
 	eligibility, err := model.GetCheckinEligibility(userId)
 	if err != nil {
@@ -42,8 +51,8 @@ func GetCheckinStatus(c *gin.Context) {
 		"success": true,
 		"data": gin.H{
 			"enabled":     setting.Enabled,
-			"min_quota":   setting.MinQuota,
-			"max_quota":   setting.MaxQuota,
+			"min_quota":   eligibility.BaseMinQuota,
+			"max_quota":   eligibility.BaseMaxQuota,
 			"stats":       stats,
 			"eligibility": eligibility,
 		},
@@ -52,11 +61,6 @@ func GetCheckinStatus(c *gin.Context) {
 
 // DoCheckin 执行用户签到
 func DoCheckin(c *gin.Context) {
-	setting := operation_setting.GetCheckinSetting()
-	if !setting.Enabled {
-		common.ApiErrorMsg(c, "签到功能未启用")
-		return
-	}
 
 	userId := c.GetInt("id")
 
@@ -81,4 +85,68 @@ func DoCheckin(c *gin.Context) {
 			"quota_awarded": checkin.QuotaAwarded,
 			"checkin_date":  checkin.CheckinDate},
 	})
+}
+
+// Check-in administration uses the existing root/admin route groups.
+func GetCheckinSettings(c *gin.Context) {
+	config, err := model.CurrentCheckinConfiguration()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, config)
+}
+
+func UpdateCheckinSettings(c *gin.Context) {
+	var request struct {
+		Settings operation_setting.CheckinSetting `json:"settings"`
+		Version  int64                            `json:"version"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		common.ApiErrorMsg(c, "Invalid check-in settings")
+		return
+	}
+	config, err := model.UpdateCheckinConfiguration(request.Settings, request.Version)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, config)
+}
+
+func GetCheckinOverview(c *gin.Context) {
+	overview, err := model.GetCheckinOverview()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, overview)
+}
+
+func ListCheckinUsers(c *gin.Context) {
+	request := model.CheckinUserQuery{Page: 1, PageSize: 20}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		common.ApiErrorMsg(c, "Invalid check-in query")
+		return
+	}
+	page, err := model.ListCheckinUsers(request)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, page)
+}
+
+func GetCheckinUserDetail(c *gin.Context) {
+	userID, err := strconv.Atoi(c.Param("id"))
+	if err != nil || userID <= 0 {
+		common.ApiErrorMsg(c, "Invalid user ID")
+		return
+	}
+	detail, err := model.GetCheckinUserDetail(userID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, detail)
 }

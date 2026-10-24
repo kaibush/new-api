@@ -17,11 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { lazy, Suspense, useState } from 'react'
 import { useForm, type Resolver } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { z } from 'zod'
 
+import { ErrorState } from '@/components/error-state'
+import { LoadingState } from '@/components/loading-state'
+import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
@@ -33,7 +38,13 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import {
+  getCheckinConfiguration,
+  saveCheckinConfiguration,
+} from '@/features/checkin/api'
+import type { CheckinConfiguration } from '@/features/checkin/types'
 import { formatQuotaWithCurrency } from '@/lib/currency'
+import { handleServerError } from '@/lib/handle-server-error'
 
 import {
   SettingsForm,
@@ -42,16 +53,26 @@ import {
 } from '../components/settings-form-layout'
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
-import { useUpdateOption } from '../hooks/use-update-option'
 
-const limitsSchema = z.object({
-  enabled: z.boolean(),
-  monthly_cap: z.coerce.number().int().min(1).max(2147483647),
-  activity_days: z.coerce.number().int().min(1).max(365),
-  minimum_spend: z.coerce.number().int().min(0).max(2147483647),
-  reduced_percent: z.coerce.number().int().min(0).max(100),
-  new_user_days: z.coerce.number().int().min(0).max(365),
-})
+const ActivityPanel = lazy(() =>
+  import('@/features/checkin/components/activity-panel').then((module) => ({
+    default: module.CheckinActivityPanel,
+  }))
+)
+
+const limitsSchema = z
+  .object({
+    enabled: z.boolean(),
+    monthly_cap: z.coerce.number().int().min(0).max(2147483647),
+    activity_days: z.coerce.number().int().min(1).max(365),
+    minimum_spend: z.coerce.number().int().min(0).max(2147483647),
+    reduced_percent: z.coerce.number().int().min(0).max(100),
+    new_user_days: z.coerce.number().int().min(0).max(365),
+  })
+  .refine((limits) => !limits.enabled || limits.monthly_cap > 0, {
+    path: ['monthly_cap'],
+    message: 'Must be greater than 0',
+  })
 
 const limitFields = [
   {
@@ -77,7 +98,7 @@ const limitFields = [
   },
   {
     name: 'reduced_percent',
-    label: 'Low-activity reward percentage',
+    label: 'Minimum reward percentage',
     quota: false,
     min: 0,
     max: 100,
@@ -105,36 +126,63 @@ const schema = z
 
 type Values = z.infer<typeof schema>
 
-export function CheckinSettingsSection({
-  defaultValues,
-}: {
-  defaultValues: {
-    enabled: boolean
-    limits: string
-    minQuota: number
-    maxQuota: number
-  }
-}) {
-  const { t } = useTranslation()
-  const updateOption = useUpdateOption()
+export function CheckinSettingsSection() {
+  const query = useQuery({
+    queryKey: ['checkin-configuration'],
+    queryFn: getCheckinConfiguration,
+  })
+  if (query.isPending) return <LoadingState />
+  if (query.isError) return <ErrorState onRetry={() => void query.refetch()} />
+  return <CheckinSettingsForm configuration={query.data} />
+}
 
-  let parsedLimits: unknown
-  try {
-    parsedLimits = JSON.parse(defaultValues.limits)
-  } catch {
-    parsedLimits = null
-  }
-  const limitsResult = limitsSchema.safeParse(parsedLimits)
-  const limits = limitsResult.success
-    ? limitsResult.data
-    : {
-        enabled: false,
-        monthly_cap: 300000,
-        activity_days: 30,
-        minimum_spend: 50000,
-        reduced_percent: 20,
-        new_user_days: 7,
+function CheckinSettingsForm(props: { configuration: CheckinConfiguration }) {
+  const { t } = useTranslation()
+  const queryClient = useQueryClient()
+  const config = props.configuration
+  const [revision, setRevision] = useState(config.version)
+  const updateOption = useMutation({
+    mutationFn: (values: Values) =>
+      saveCheckinConfiguration(
+        {
+          enabled: values.enabled,
+          min_quota: values.minQuota,
+          max_quota: values.maxQuota,
+          limits: values.limits,
+        },
+        revision
+      ),
+    onSuccess: (saved) => {
+      setRevision(saved.version)
+      queryClient.setQueryData(['checkin-configuration'], saved)
+      for (const queryKey of [
+        ['system-options'],
+        ['checkin-status'],
+        ['checkin-admin'],
+        ['status'],
+      ]) {
+        void queryClient.invalidateQueries({ queryKey })
       }
+      try {
+        window.localStorage.removeItem('status')
+      } catch {
+        /* Storage may be disabled. */
+      }
+      toast.success(t('Setting updated successfully'))
+    },
+    onError: (error) => {
+      handleServerError(error)
+      void queryClient.invalidateQueries({
+        queryKey: ['checkin-configuration'],
+      })
+    },
+  })
+  const defaultValues = {
+    enabled: config.settings.enabled,
+    minQuota: config.settings.min_quota,
+    maxQuota: config.settings.max_quota,
+  }
+  const limits = config.settings.limits
   const form = useForm<Values>({
     resolver: zodResolver(schema) as unknown as Resolver<Values>,
     defaultValues: {
@@ -149,50 +197,39 @@ export function CheckinSettingsSection({
   const enabled = form.watch('enabled')
   const limitsEnabled = form.watch('limits.enabled')
 
+  const watched = form.watch()
+  const preview = schema.safeParse(watched)
+
   async function onSubmit(values: Values) {
-    const updates: Array<{ key: string; value: string }> = []
-
-    if (values.enabled !== defaultValues.enabled) {
-      updates.push({
-        key: 'checkin_setting.enabled',
-        value: String(values.enabled),
-      })
+    try {
+      await updateOption.mutateAsync(values)
+      form.reset(values)
+    } catch {
+      /* Mutation displays the server error and preserves edits. */
     }
-
-    if (values.minQuota !== defaultValues.minQuota) {
-      updates.push({
-        key: 'checkin_setting.min_quota',
-        value: String(values.minQuota),
-      })
-    }
-
-    if (values.maxQuota !== defaultValues.maxQuota) {
-      updates.push({
-        key: 'checkin_setting.max_quota',
-        value: String(values.maxQuota),
-      })
-    }
-
-    if (JSON.stringify(values.limits) !== JSON.stringify(limits)) {
-      updates.push({
-        key: 'checkin_setting.limits',
-        value: JSON.stringify(values.limits),
-      })
-    }
-    if (updates.length === 0) {
-      toast.info(t('No changes to save'))
-      return
-    }
-
-    for (const update of updates) {
-      await updateOption.mutateAsync(update)
-    }
-
-    form.reset(values)
   }
 
   return (
     <SettingsSection title={t('Check-in Settings')}>
+      {revision !== config.version && (
+        <div className='space-y-2' role='alert'>
+          <p>{t('Check-in settings changed. Refresh before saving again.')}</p>
+          <Button
+            variant='outline'
+            onClick={() => {
+              form.reset({
+                enabled: config.settings.enabled,
+                minQuota: config.settings.min_quota,
+                maxQuota: config.settings.max_quota,
+                limits: config.settings.limits,
+              })
+              setRevision(config.version)
+            }}
+          >
+            {t('Reload settings')}
+          </Button>
+        </div>
+      )}
       <Form {...form}>
         <SettingsForm onSubmit={form.handleSubmit(onSubmit)} autoComplete='off'>
           <SettingsPageFormActions
@@ -285,7 +322,7 @@ export function CheckinSettingsSection({
                       <FormLabel>{t('Limit check-in rewards')}</FormLabel>
                       <FormDescription>
                         {t(
-                          'Daily rewards are paid normally during registration grace. After grace, low activity reduces rewards by the configured percentage. The monthly cap always applies; account balances do not limit rewards.'
+                          'Reward percentage follows spending achievement, with the configured minimum as a floor. Registration grace and incomplete history receive full rewards. The monthly cap still applies.'
                         )}
                       </FormDescription>
                     </SettingsSwitchContent>
@@ -342,7 +379,7 @@ export function CheckinSettingsSection({
                   </div>
                   <p className='text-muted-foreground text-sm'>
                     {t(
-                      'The grace period starts at registration and is not extended by the activity window. A reward percentage of 0 pauses rewards for low activity. Monthly rewards reset on the first day of each month in the server time zone.'
+                      'The grace period starts at registration. Changing its length recalculates each user’s expiry. A zero floor provides no minimum reward. Rewards round down to whole quota units. Monthly rewards reset in the server time zone.'
                     )}
                   </p>
                 </>
@@ -351,6 +388,21 @@ export function CheckinSettingsSection({
           )}
         </SettingsForm>
       </Form>
+      <Suspense fallback={<LoadingState />}>
+        <ActivityPanel
+          previewInvalid={isDirty && !preview.success}
+          preview={
+            isDirty && preview.success
+              ? {
+                  enabled: preview.data.enabled,
+                  min_quota: preview.data.minQuota,
+                  max_quota: preview.data.maxQuota,
+                  limits: preview.data.limits,
+                }
+              : undefined
+          }
+        />
+      </Suspense>
     </SettingsSection>
   )
 }

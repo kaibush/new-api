@@ -25,7 +25,7 @@ export const STATIC_I18N_KEYS = [
   'Monthly check-in reward cap',
   'Activity window (days)',
   'Minimum spending in the activity window',
-  'Low-activity reward percentage',
+  'Minimum reward percentage',
   'New user grace period (days)',
   'Maximum must be at least the minimum',
   'Task usage metadata is unavailable. Pricing details cannot be displayed.',

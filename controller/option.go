@@ -86,7 +86,7 @@ func GetOptions(c *gin.Context) {
 	optionValues := make(map[string]string)
 	common.OptionMapRWMutex.Lock()
 	for k, v := range common.OptionMap {
-		if k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" {
+		if strings.HasPrefix(k, "checkin_setting.") || k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" {
 			continue
 		}
 		value := common.Interface2String(v)
@@ -107,6 +107,19 @@ func GetOptions(c *gin.Context) {
 		}
 	}
 	common.OptionMapRWMutex.Unlock()
+	// Check-in has a dedicated authoritative endpoint. Other cached settings
+	// remain readable when its storage is unavailable.
+	checkinConfig, err := model.CurrentCheckinConfiguration()
+	if err == nil {
+		for field, value := range map[string]any{"enabled": checkinConfig.Settings.Enabled, "min_quota": checkinConfig.Settings.MinQuota, "max_quota": checkinConfig.Settings.MaxQuota, "limits": checkinConfig.Settings.Limits} {
+			encoded, err := common.Marshal(value)
+			if err != nil {
+				common.ApiError(c, err)
+				return
+			}
+			options = append(options, &model.Option{Key: "checkin_setting." + field, Value: string(encoded)})
+		}
+	}
 	// Display the same effective expressions used by pricing and settlement,
 	// including built-in defaults absent from persisted administrator options.
 	for key, values := range map[string]map[string]string{

@@ -162,6 +162,9 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.GET("/topup", controller.GetAllTopUps)
 				adminRoute.POST("/topup/complete", controller.AdminCompleteTopUp)
 				adminRoute.GET("/search", controller.SearchUsers)
+				adminRoute.GET("/checkin/overview", middleware.DisableCache(), controller.GetCheckinOverview)
+				adminRoute.POST("/checkin/users", middleware.DisableCache(), controller.ListCheckinUsers)
+				adminRoute.GET("/:id/checkin", middleware.DisableCache(), controller.GetCheckinUserDetail)
 				adminRoute.GET("/:id/oauth/bindings", controller.GetUserOAuthBindingsByAdmin)
 				adminRoute.DELETE("/:id/oauth/bindings/:provider_id", controller.UnbindCustomOAuthByAdmin)
 				adminRoute.DELETE("/:id/bindings/:binding_type", controller.AdminClearUserBinding)
@@ -230,6 +233,8 @@ func SetApiRouter(router *gin.Engine) {
 		optionRoute.Use(middleware.RootAuth())
 		{
 			optionRoute.GET("/", controller.GetOptions)
+			optionRoute.GET("/checkin", middleware.DisableCache(), controller.GetCheckinSettings)
+			optionRoute.PUT("/checkin", middleware.DisableCache(), controller.UpdateCheckinSettings)
 			optionRoute.GET("/community", middleware.DisableCache(), controller.GetCommunitySettings)
 			optionRoute.POST("/community/credentials", middleware.DisableCache(), middleware.UserCriticalRateLimit("community-credentials"), controller.GetCommunityCredentials)
 			optionRoute.PUT("/community", middleware.DisableCache(), controller.UpdateCommunitySettings)

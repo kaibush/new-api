@@ -49,6 +49,7 @@ func TestMain(m *testing.M) {
 		&model.Checkin{},
 		&model.CheckinAccount{},
 		&model.CheckinUsage{},
+		&model.CheckinUsageDay{},
 		&model.Task{},
 		&model.User{},
 		&model.Token{},
@@ -73,6 +74,7 @@ func TestMain(m *testing.M) {
 func truncate(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
+		model.DB.Exec("DELETE FROM checkin_usage_days")
 		model.DB.Exec("DELETE FROM checkin_usages")
 		model.DB.Exec("DELETE FROM checkin_accounts")
 		model.DB.Exec("DELETE FROM checkins")

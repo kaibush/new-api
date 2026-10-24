@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { CheckinEligibility } from '@/features/checkin/types'
 import type { UserPermissions } from '@/stores/auth-store'
 
 // ============================================================================
@@ -219,24 +220,7 @@ export interface CheckinStats {
 /**
  * Check-in status response
  */
-export interface CheckinEligibility {
-  limited: boolean
-  allowed: boolean
-  reasons: string[]
-  min_quota: number
-  max_quota: number
-  reward_percent: number
-  gift_remaining: number
-  gift_cap: number
-  monthly_awarded: number
-  monthly_cap: number
-  recent_spend: number
-  minimum_spend: number
-  activity_days: number
-  observation_until: number
-  next_month_at: number
-  today: string
-}
+export type { CheckinEligibility } from '@/features/checkin/types'
 
 export interface CheckinStatusResponse {
   eligibility: CheckinEligibility
