@@ -158,6 +158,10 @@ export function SidebarModulesSection({
         title: t('Users'),
         description: t('Administer user accounts and roles.'),
       },
+      checkin: {
+        title: t('User activity'),
+        description: t('Check-in Rewards'),
+      },
       setting: {
         title: t('System settings'),
         description: t('Advanced platform configuration.'),

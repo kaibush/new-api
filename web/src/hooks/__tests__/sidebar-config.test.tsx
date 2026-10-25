@@ -21,6 +21,7 @@ import { cleanup, renderHook } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { resolveSidebarView } from '@/components/layout/lib/sidebar-view-registry'
 import { checkIsActive } from '@/components/layout/lib/url-utils'
 import {
   parseSidebarModulesAdmin,
@@ -199,5 +200,41 @@ describe('channel status sidebar visibility', () => {
         .flatMap((group) => group.items)
         .some((item) => 'url' in item && item.url === '/channel-status')
     ).toBe(false)
+  })
+})
+
+describe('user activity sidebar entry', () => {
+  it('legacy settings show User activity beside Users in the root admin menu', () => {
+    const { result } = sidebarFor({
+      admin: { enabled: true, user: true, setting: false },
+    })
+    const items =
+      result.current.find((group) => group.id === 'admin')?.items ?? []
+    const usersIndex = items.findIndex((item) => item.title === 'Users')
+    expect(items[usersIndex + 1]).toMatchObject({
+      title: 'User activity',
+      url: '/checkin',
+    })
+    expect(resolveSidebarView('/checkin')).toBeNull()
+    expect(
+      items
+        .filter((item) => checkIsActive('/checkin', item))
+        .map((item) => item.title)
+    ).toEqual(['User activity'])
+  })
+
+  it('saving the independent activity toggle hides its entry while keeping Users', () => {
+    const config = parseSidebarModulesAdmin(
+      '{"admin":{"enabled":true,"user":true}}'
+    )
+    expect(config.admin.checkin).toBe(true)
+    config.admin.checkin = false
+    const saved = parseSidebarModulesAdmin(serializeSidebarModulesAdmin(config))
+    const { result } = sidebarFor(saved)
+    const titles = result.current
+      .find((group) => group.id === 'admin')
+      ?.items.map((item) => item.title)
+    expect(titles).not.toContain('User activity')
+    expect(titles).toContain('Users')
   })
 })

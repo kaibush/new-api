@@ -18,6 +18,14 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterProvider,
+} from '@tanstack/react-router'
+import {
+  act,
   fireEvent,
   render,
   screen,
@@ -25,14 +33,26 @@ import {
   within,
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { ROLE } from '@/lib/roles'
+import { Route as CheckinRoute } from '@/routes/_authenticated/checkin'
+import { Route as BillingRoute } from '@/routes/_authenticated/system-settings/billing/$section'
+import { useAuthStore } from '@/stores/auth-store'
 
+import { CheckinAdmin } from '..'
 import { CheckinActivityPanel } from '../components/activity-panel'
 import type { CheckinEligibility, CheckinUserQuery } from '../types'
 
 vi.mock('@visactor/react-vchart', () => ({ VChart: () => null }))
+
+let client: QueryClient
+
+afterEach(() => {
+  client.clear()
+  useAuthStore.getState().auth.reset()
+})
 
 const eligibility: CheckinEligibility = {
   limited: true,
@@ -92,42 +112,72 @@ const inactiveUser = {
 }
 
 beforeEach(() => {
-  vi.spyOn(api, 'get').mockImplementation(async (url) => ({
-    data: {
-      success: true,
-      data:
-        url === '/api/user/2/checkin'
-          ? {
-              user: activeUser,
-              days: [],
-              records: [
-                {
-                  checkin_date: '2026-10-23',
-                  quota_awarded: 20,
-                  snapshot: {
-                    configuration: { version: 1 },
-                    base_quota: 100,
-                    eligibility: inactiveUser.eligibility,
-                  },
-                },
-              ],
-            }
-          : {
-              as_of: 1792838400,
-              config_version: 2,
-              updating: false,
-              total: 2,
-              grace: 0,
-              active: 0,
-              low_activity: 1,
-              zero_activity: 1,
-              incomplete: 0,
-              pending: 0,
-              distribution: [],
-              days: [],
+  client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined)
+  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/option/checkin') {
+      return {
+        data: {
+          success: true,
+          data: {
+            version: 2,
+            observed_since: 1700000000,
+            settings: {
+              enabled: true,
+              min_quota: 100,
+              max_quota: 100,
+              limits: {
+                enabled: true,
+                monthly_cap: 1000,
+                activity_days: 30,
+                minimum_spend: 100,
+                reduced_percent: 20,
+                new_user_days: 7,
+              },
             },
-    },
-  }))
+          },
+        },
+      }
+    }
+    return {
+      data: {
+        success: true,
+        data:
+          url === '/api/user/2/checkin'
+            ? {
+                user: activeUser,
+                days: [],
+                records: [
+                  {
+                    checkin_date: '2026-10-23',
+                    quota_awarded: 20,
+                    snapshot: {
+                      configuration: { version: 1 },
+                      base_quota: 100,
+                      eligibility: inactiveUser.eligibility,
+                    },
+                  },
+                ],
+              }
+            : {
+                as_of: 1792838400,
+                config_version: 2,
+                updating: false,
+                total: 2,
+                grace: 0,
+                active: 0,
+                low_activity: 1,
+                zero_activity: 1,
+                incomplete: 0,
+                pending: 0,
+                distribution: [],
+                days: [],
+              },
+      },
+    }
+  })
   vi.spyOn(api, 'post').mockImplementation(async (_url, query) => ({
     data: {
       success: true,
@@ -147,15 +197,81 @@ beforeEach(() => {
 })
 
 function renderActivity() {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  })
   render(
     <QueryClientProvider client={client}>
       <CheckinActivityPanel />
     </QueryClientProvider>
   )
 }
+
+async function renderAdmin(path: string, role: number) {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'operator', role })
+  const root = createRootRoute()
+  const router = createRouter({
+    routeTree: root.addChildren([
+      createRoute({
+        getParentRoute: () => root,
+        path: '/checkin',
+        beforeLoad: CheckinRoute.options.beforeLoad as () => void,
+        component: CheckinAdmin,
+      }),
+      createRoute({
+        getParentRoute: () => root,
+        path: '/system-settings/billing/$section',
+        beforeLoad: BillingRoute.options.beforeLoad as (context: {
+          params: { section: string }
+        }) => void,
+      }),
+      createRoute({ getParentRoute: () => root, path: '/403' }),
+    ]),
+    history: createMemoryHistory({ initialEntries: [path] }),
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>
+  )
+  await act(() => router.load())
+  return router
+}
+
+test('administrators can open the standalone activity page without requesting root settings', async () => {
+  await renderAdmin('/checkin', ROLE.ADMIN)
+  expect(
+    await screen.findByRole('heading', { name: 'User activity' })
+  ).toBeVisible()
+  await screen.findByRole('button', { name: 'Active user' })
+  expect(
+    screen.queryByRole('button', { name: 'Save check-in settings' })
+  ).not.toBeInTheDocument()
+  expect(api.get).not.toHaveBeenCalledWith('/api/option/checkin')
+})
+
+test('regular users visiting the activity URL are redirected before any admin data is fetched', async () => {
+  const router = await renderAdmin('/checkin', ROLE.USER)
+  await waitFor(() => expect(router.state.location.pathname).toBe('/403'))
+  expect(api.get).not.toHaveBeenCalled()
+  expect(api.post).not.toHaveBeenCalled()
+})
+
+test('the former check-in settings URL redirects to the standalone page with working save controls', async () => {
+  const router = await renderAdmin(
+    '/system-settings/billing/checkin',
+    ROLE.SUPER_ADMIN
+  )
+  await waitFor(() => expect(router.state.location.pathname).toBe('/checkin'))
+  expect(
+    await screen.findByRole('button', { name: 'Save check-in settings' })
+  ).toBeDisabled()
+  const minimum = await screen.findByRole('spinbutton', {
+    name: 'Minimum check-in quota',
+  })
+  fireEvent.change(minimum, { target: { value: '50' } })
+  expect(
+    screen.getByRole('button', { name: 'Save check-in settings' })
+  ).toBeEnabled()
+  await screen.findByRole('button', { name: 'Active user' })
+})
 
 test('selecting an activity filter requests a new server page and displays its results', async () => {
   const user = userEvent.setup()

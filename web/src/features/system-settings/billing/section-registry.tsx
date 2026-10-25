@@ -18,7 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { parseCurrencyDisplayType } from '@/lib/currency'
 
-import { CheckinSettingsSection } from '../general/checkin-settings-section'
 import { PricingSection } from '../general/pricing-section'
 import { QuotaSettingsSection } from '../general/quota-settings-section'
 import { PaymentSettingsSection } from '../integrations/payment-settings-section'
@@ -187,11 +186,6 @@ const BILLING_SECTIONS = [
         }}
       />
     ),
-  },
-  {
-    id: 'checkin',
-    titleKey: 'Check-in Rewards',
-    build: () => <CheckinSettingsSection />,
   },
 ] as const
 

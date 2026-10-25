@@ -43,16 +43,15 @@ import {
   saveCheckinConfiguration,
 } from '@/features/checkin/api'
 import type { CheckinConfiguration } from '@/features/checkin/types'
-import { formatQuotaWithCurrency } from '@/lib/currency'
-import { handleServerError } from '@/lib/handle-server-error'
-
 import {
   SettingsForm,
   SettingsSwitchContent,
   SettingsSwitchItem,
-} from '../components/settings-form-layout'
-import { SettingsPageFormActions } from '../components/settings-page-context'
-import { SettingsSection } from '../components/settings-section'
+} from '@/features/system-settings/components/settings-form-layout'
+import { SettingsPageFormActions } from '@/features/system-settings/components/settings-page-context'
+import { SettingsSection } from '@/features/system-settings/components/settings-section'
+import { formatQuotaWithCurrency } from '@/lib/currency'
+import { handleServerError } from '@/lib/handle-server-error'
 
 const ActivityPanel = lazy(() =>
   import('@/features/checkin/components/activity-panel').then((module) => ({

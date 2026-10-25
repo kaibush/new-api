@@ -24,19 +24,21 @@ import {
   RouterProvider,
 } from '@tanstack/react-router'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { useState } from 'react'
-import { beforeEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 // Load the lazy panel before test timing starts; its real interactions remain tested.
 import '@/features/checkin/components/activity-panel'
-import { SettingsPageProvider } from '@/features/system-settings/components/settings-page-context'
-import { CheckinSettingsSection } from '@/features/system-settings/general/checkin-settings-section'
+import { CheckinAdmin } from '@/features/checkin'
 import { api } from '@/lib/api'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { CheckinCalendarCard } from '../components/checkin-calendar-card'
 import type { CheckinEligibility } from '../types'
 
 vi.mock('@visactor/react-vchart', () => ({ VChart: () => null }))
+
+afterEach(() => useAuthStore.getState().auth.reset())
 
 const eligibility: CheckinEligibility = {
   activity_percent: 100,
@@ -199,24 +201,17 @@ test('reduced rewards explain the percentage and remain claimable', async () => 
   )
 })
 
-function SettingsFixture() {
-  const [container, setContainer] = useState<HTMLDivElement | null>(null)
-  return (
-    <>
-      <div ref={setContainer} />
-      <SettingsPageProvider actionsContainer={container}>
-        <CheckinSettingsSection />
-      </SettingsPageProvider>
-    </>
-  )
-}
-
 async function renderSettings() {
+  useAuthStore.getState().auth.setUser({
+    id: 1,
+    username: 'root',
+    role: ROLE.SUPER_ADMIN,
+  })
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   const router = createRouter({
-    routeTree: createRootRoute({ component: SettingsFixture }),
+    routeTree: createRootRoute({ component: CheckinAdmin }),
     history: createMemoryHistory({ initialEntries: ['/'] }),
   })
   render(

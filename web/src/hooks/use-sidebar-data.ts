@@ -177,6 +177,11 @@ export function useSidebarData(): SidebarData {
             icon: Users,
           },
           {
+            title: t('User activity'),
+            url: '/checkin',
+            icon: Activity,
+          },
+          {
             title: t('Redemption Codes'),
             url: '/redemption-codes',
             icon: Ticket,

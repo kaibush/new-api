@@ -85,6 +85,7 @@ export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
     models: true,
     redemption: true,
     user: true,
+    checkin: true,
     setting: true,
     subscription: true,
   },
