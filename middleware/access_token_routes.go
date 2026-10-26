@@ -69,6 +69,10 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"GET /api/oauth/:provider":            accessTokenSessionRule,
 	"GET /api/verify/methods":             accessTokenAnyRule,
 	"POST /api/verify":                    accessTokenAnyRule,
+	// Message bodies and collection settings require a signed-in root session.
+	"GET /api/input-audit":          accessTokenSessionRule,
+	"GET /api/input-audit/status":   accessTokenSessionRule,
+	"PUT /api/input-audit/settings": accessTokenSessionRule,
 
 	// router/api-router.go: /api/user (self)
 	"GET /api/user/sessions":                       accessTokenSessionRule,

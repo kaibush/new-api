@@ -74,6 +74,9 @@ func main() {
 	kitutil.Debug.Store(common.DebugEnabled)
 
 	defer func() {
+		auditCtx, auditCancel := context.WithTimeout(context.Background(), 11*time.Second)
+		service.StopInputAuditRecorder(auditCtx)
+		auditCancel()
 		err := model.CloseDB()
 		if err != nil {
 			common.FatalLog("failed to close database: " + err.Error())
@@ -335,6 +338,9 @@ func InitResources() error {
 		}
 	}
 	model.InitOptionMap()
+	if err := service.StartInputAuditRecorder(); err != nil {
+		common.SysError("input audit recorder unavailable: " + err.Error())
+	}
 
 	// 清理旧的磁盘缓存文件
 	common.CleanupOldCacheFiles()

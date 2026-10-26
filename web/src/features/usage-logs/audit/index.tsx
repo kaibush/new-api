@@ -17,10 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
-import { useCallback, useState } from 'react'
+import { lazy, Suspense, useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
+import { LoadingState } from '@/components/loading-state'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { getUserProfile } from '@/features/profile/api'
 import {
@@ -33,12 +34,19 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { AuditLogViewer } from './components/audit-log-viewer'
 
+const InputAuditViewer = lazy(async () => {
+  const feature = await import('../input-audit')
+  return { default: feature.InputAuditViewer }
+})
+
 export function AuditLogs() {
   const { t } = useTranslation()
   const user = useAuthStore((state) => state.auth.user)
   const queryClient = useQueryClient()
   const [scope, setScope] = useState<'all' | 'self'>('all')
   const [accessRevoked, setAccessRevoked] = useState(false)
+  const [kind, setKind] = useState('events')
+  const showInputs = kind === 'inputs' && user?.role === ROLE.SUPER_ADMIN
   const canReadAll =
     !!user &&
     user.role >= ROLE.ADMIN &&
@@ -91,7 +99,7 @@ export function AuditLogs() {
     <SectionPageLayout fixedContent>
       <SectionPageLayout.Title>{t('Audit Logs')}</SectionPageLayout.Title>
       <SectionPageLayout.Actions>
-        {canReadAll && !accessRevoked && (
+        {canReadAll && !accessRevoked && !showInputs && (
           <Tabs
             value={scope}
             onValueChange={(value) =>
@@ -107,17 +115,31 @@ export function AuditLogs() {
       </SectionPageLayout.Actions>
       <SectionPageLayout.Content>
         <div className='flex h-full min-h-0 flex-col gap-3'>
+          {user?.role === ROLE.SUPER_ADMIN && (
+            <Tabs value={kind} onValueChange={setKind}>
+              <TabsList aria-label={t('Log type')}>
+                <TabsTrigger value='events'>{t('Audit Logs')}</TabsTrigger>
+                <TabsTrigger value='inputs'>{t('Input Audits')}</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          )}
           {accessRevoked && (
             <p role='status' className='text-muted-foreground shrink-0 text-xs'>
               {t('Audit access changed. Showing only your records.')}
             </p>
           )}
           <div className='min-h-0 flex-1'>
-            <AuditLogViewer
-              key={`${userId}:${effectiveScope}`}
-              scope={effectiveScope}
-              onAccessDenied={handleAccessDenied}
-            />
+            {showInputs ? (
+              <Suspense fallback={<LoadingState />}>
+                <InputAuditViewer key={userId} />
+              </Suspense>
+            ) : (
+              <AuditLogViewer
+                key={`${userId}:${effectiveScope}`}
+                scope={effectiveScope}
+                onAccessDenied={handleAccessDenied}
+              />
+            )}
           </div>
         </div>
       </SectionPageLayout.Content>

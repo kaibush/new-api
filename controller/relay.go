@@ -118,6 +118,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 
+	if recorder := service.CurrentInputAuditRecorder(); recorder != nil {
+		recorder.Capture(c, request)
+	}
 	relayInfo, err := relaycommon.GenRelayInfo(c, relayFormat, request, ws)
 	if err != nil {
 		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)

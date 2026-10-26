@@ -351,6 +351,10 @@ func SetApiRouter(router *gin.Engine) {
 		}
 		handlePermissionRoute(apiRouter.Group("", middleware.DisableCache(), middleware.AdminAuth()), http.MethodGet, "/audit", authz.AuditRead, controller.GetAuditLogs)
 		apiRouter.GET("/audit/self", middleware.DisableCache(), middleware.UserAuth(), controller.GetAuditLogs)
+		inputAuditRoute := apiRouter.Group("/input-audit", middleware.DisableCache(), middleware.RootAuth())
+		inputAuditRoute.GET("", controller.GetInputAudits)
+		inputAuditRoute.GET("/status", controller.GetInputAuditStatus)
+		inputAuditRoute.PUT("/settings", controller.UpdateInputAuditSettings)
 		logRoute := apiRouter.Group("/log")
 		logRoute.GET("/", middleware.AdminAuth(), controller.GetAllLogs)
 		logRoute.GET("/stat", middleware.AdminAuth(), controller.GetLogsStat)
