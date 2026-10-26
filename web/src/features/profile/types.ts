@@ -16,7 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { CheckinEligibility } from '@/features/checkin/types'
+import type {
+  CheckinEligibility,
+  CheckinGrantSummary,
+} from '@/features/checkin/types'
 import type { UserPermissions } from '@/stores/auth-store'
 
 // ============================================================================
@@ -223,6 +226,7 @@ export interface CheckinStats {
 export type { CheckinEligibility } from '@/features/checkin/types'
 
 export interface CheckinStatusResponse {
+  grants?: CheckinGrantSummary
   eligibility: CheckinEligibility
   /** Whether check-in feature is enabled */
   enabled: boolean

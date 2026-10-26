@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next'
 
 import { IconBadge, type IconBadgeTone } from '@/components/ui/icon-badge'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useCheckinBalance } from '@/features/checkin/hooks/use-checkin-balance'
 import { formatQuota } from '@/lib/format'
 
 import type { UserWalletData } from '../types'
@@ -32,10 +33,11 @@ interface WalletStatsCardProps {
 
 export function WalletStatsCard(props: WalletStatsCardProps) {
   const { t } = useTranslation()
+  const balance = useCheckinBalance(props.user?.id)
   if (props.loading) {
     return (
-      <div className='grid grid-cols-3 divide-x rounded-lg border'>
-        {['balance', 'usage', 'requests'].map((key) => (
+      <div className='grid grid-cols-2 divide-x rounded-lg border sm:grid-cols-4'>
+        {['balance', 'checkin', 'usage', 'requests'].map((key) => (
           <div key={key} className='min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4'>
             <Skeleton className='h-3.5 w-full' />
             <Skeleton className='mt-2 h-6 w-full sm:h-7' />
@@ -54,11 +56,18 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
     tone: IconBadgeTone
   }[] = [
     {
-      label: t('Current Balance'),
-      value: formatQuota(props.user?.quota ?? 0),
+      label: t('Recharged quota'),
+      value: balance.data ? formatQuota(balance.data.wallet_quota) : '—',
       description: t('Remaining quota'),
       icon: WalletCards,
       tone: 'success',
+    },
+    {
+      label: t('Check-in quota'),
+      value: balance.data ? formatQuota(balance.data.checkin_quota) : '—',
+      description: t('Available check-in rewards'),
+      icon: WalletCards,
+      tone: 'info',
     },
     {
       label: t('Total Usage'),
@@ -77,9 +86,14 @@ export function WalletStatsCard(props: WalletStatsCardProps) {
   ]
 
   return (
-    <div className='grid grid-cols-3 divide-x rounded-lg border'>
+    <div className='grid grid-cols-2 divide-x rounded-lg border sm:grid-cols-4'>
       {stats.map((item) => (
-        <div key={item.label} className='min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4'>
+        <div
+          role='group'
+          aria-label={item.label}
+          key={item.label}
+          className='min-w-0 px-2.5 py-2.5 sm:px-5 sm:py-4'
+        >
           <div className='flex items-center gap-1.5 sm:gap-2.5'>
             <IconBadge tone={item.tone} size='stat'>
               <item.icon />

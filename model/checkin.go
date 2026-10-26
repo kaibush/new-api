@@ -11,6 +11,7 @@ import (
 
 // Checkin 签到记录
 type Checkin struct {
+	Mode          int    `json:"mode"`
 	RewardPercent int    `json:"reward_percent"`
 	Policy        string `json:"-" gorm:"type:text"`
 	Id            int    `json:"id" gorm:"primaryKey;autoIncrement"`
@@ -54,6 +55,7 @@ func HasCheckedInToday(userId int) (bool, error) {
 func UserCheckin(userId int) (*Checkin, error) {
 	now := time.Now()
 	var record *Checkin
+	expiring := false
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		account, err := checkinAccount(tx, userId, now)
 		if err != nil {
@@ -64,6 +66,7 @@ func UserCheckin(userId int) (*Checkin, error) {
 			return err
 		}
 		settings := config.Settings
+		expiring = settings.Mode == 2
 		if !settings.Enabled {
 			return errors.New("签到功能未启用")
 		}
@@ -99,8 +102,12 @@ func UserCheckin(userId int) (*Checkin, error) {
 			return err
 		}
 		record = &Checkin{UserId: userId, CheckinDate: eligibility.Today, QuotaAwarded: awarded, CreatedAt: now.Unix(), RewardPercent: int(eligibility.RewardPercent), Policy: string(policy)}
+		record.Mode = max(settings.Mode, 1)
 		if err := tx.Create(record).Error; err != nil {
 			return err
+		}
+		if settings.Mode == 2 {
+			return tx.Create(&CheckinGrant{CheckinID: record.Id, UserID: userId, Quota: awarded, Remaining: awarded, CreatedAt: now.Unix(), ExpiresAt: now.Unix() + int64(settings.ExpirySeconds)}).Error
 		}
 		if awarded > 0 {
 			result := tx.Model(&User{}).Where("id = ? AND quota <= ?", userId, common.MaxWalletQuota-awarded).Update("quota", gorm.Expr("quota + ?", awarded))
@@ -122,7 +129,9 @@ func UserCheckin(userId int) (*Checkin, error) {
 	if err != nil {
 		return nil, err
 	}
-	syncCreditUserQuotaCache(userId, record.QuotaAwarded, "check-in")
+	if !expiring {
+		syncCreditUserQuotaCache(userId, record.QuotaAwarded, "check-in")
+	}
 	return record, nil
 }
 

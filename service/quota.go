@@ -88,7 +88,7 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 	if relayInfo.UsePrice {
 		return nil
 	}
-	userQuota, err := model.GetUserQuota(relayInfo.UserId, false)
+	userQuota, _, err := model.CheckinFundingBalance(relayInfo.UserId)
 	if err != nil {
 		return err
 	}
@@ -145,6 +145,13 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 		return fmt.Errorf("token quota is not enough, token remain quota: %s, need quota: %s", logger.FormatQuota(token.RemainQuota), logger.FormatQuota(quota))
 	}
 
+	if relayInfo.CheckinFundingSource != "" && relayInfo.Billing != nil {
+		reserved := relayInfo.Billing.GetPreConsumedQuota()
+		if quota > common.MaxQuota-reserved {
+			return errors.New("realtime quota exceeds the request limit")
+		}
+		return relayInfo.Billing.Reserve(reserved + quota)
+	}
 	err = PostConsumeQuota(relayInfo, quota, 0, false)
 	if err != nil {
 		return err
@@ -435,6 +442,10 @@ func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, pre
 				return result, err
 			}
 			relayInfo.SubscriptionPostDelta += delta
+		}
+	} else if relayInfo.CheckinFundingSource != "" {
+		if err := model.SetCheckinFunding(relayInfo.UserId, relayInfo.CheckinFundingSource, quota+preConsumedQuota, false, false); err != nil {
+			return result, err
 		}
 	} else {
 		// Wallet

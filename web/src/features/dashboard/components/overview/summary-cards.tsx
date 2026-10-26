@@ -24,6 +24,7 @@ import { useTranslation } from 'react-i18next'
 
 import { StaggerContainer, StaggerItem } from '@/components/page-transition'
 import { Button } from '@/components/ui/button'
+import { useCheckinBalance } from '@/features/checkin/hooks/use-checkin-balance'
 import { getUserQuotaDates } from '@/features/dashboard/api'
 import { useSummaryCardsConfig } from '@/features/dashboard/hooks/use-dashboard-config'
 import type { QuotaDataItem } from '@/features/dashboard/types'
@@ -143,7 +144,8 @@ export function SummaryCards() {
   const { status, loading } = useStatus()
 
   const summaryTimeRange = useMemo(() => computeTimeRange(1), [])
-  const remainQuota = Number(user?.quota ?? 0)
+  const balance = useCheckinBalance(user?.id)
+  const remainQuota = balance.data?.wallet_quota ?? 0
   const usedQuota = Number(user?.used_quota ?? 0)
   const requestCount = Number(user?.request_count ?? 0)
 
@@ -292,7 +294,7 @@ export function SummaryCards() {
           <div className='flex flex-col gap-2 sm:gap-3'>
             <div className='flex items-center justify-between'>
               <span className='text-muted-foreground text-xs font-medium'>
-                {t('Credit remaining')}
+                {t('Recharged quota')}
               </span>
               <span className='flex items-center gap-1.5'>
                 <span
@@ -306,7 +308,16 @@ export function SummaryCards() {
             </div>
 
             <div className='font-mono text-xl font-semibold tracking-tight sm:text-2xl'>
-              {formatQuota(remainQuota)}
+              {balance.data ? formatQuota(balance.data.wallet_quota) : '—'}
+            </div>
+
+            <div className='bg-background rounded-lg border p-3'>
+              <p className='text-muted-foreground text-xs font-medium'>
+                {t('Check-in quota')}
+              </p>
+              <p className='mt-1 font-mono text-xl font-semibold'>
+                {balance.data ? formatQuota(balance.data.checkin_quota) : '—'}
+              </p>
             </div>
 
             <div className='grid grid-cols-2 gap-2'>

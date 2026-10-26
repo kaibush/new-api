@@ -23,14 +23,15 @@ type CheckinAccount struct {
 // A pending entry prevents reward issuance until settlement is reconciled.
 // SourceKey is a hash of a server request/task identifier, never an API key.
 type CheckinUsage struct {
-	ID        int64  `gorm:"primaryKey"`
-	UserID    int    `gorm:"not null;uniqueIndex:idx_checkin_usage_source;index:idx_checkin_usage_time,priority:1;index:idx_checkin_usage_pending,priority:1"`
-	SourceKey string `gorm:"type:varchar(64);not null;uniqueIndex:idx_checkin_usage_source"`
-	CreatedAt int64  `gorm:"not null;index:idx_checkin_usage_time,priority:2"`
-	Quota     int64  `gorm:"not null"`
-	GiftUsed  int64  `gorm:"not null"`
-	Wallet    bool   `gorm:"not null"`
-	Pending   bool   `gorm:"not null;index:idx_checkin_usage_pending,priority:2"`
+	ExpiringUsed int64  `json:"-"`
+	ID           int64  `gorm:"primaryKey"`
+	UserID       int    `gorm:"not null;uniqueIndex:idx_checkin_usage_source;index:idx_checkin_usage_time,priority:1;index:idx_checkin_usage_pending,priority:1"`
+	SourceKey    string `gorm:"type:varchar(64);not null;uniqueIndex:idx_checkin_usage_source"`
+	CreatedAt    int64  `gorm:"not null;index:idx_checkin_usage_time,priority:2"`
+	Quota        int64  `gorm:"not null"`
+	GiftUsed     int64  `gorm:"not null"`
+	Wallet       bool   `gorm:"not null"`
+	Pending      bool   `gorm:"not null;index:idx_checkin_usage_pending,priority:2"`
 }
 
 // CheckinUsageDay contains only settled consumption, including gift and subscription
@@ -42,6 +43,8 @@ type CheckinUsageDay struct {
 }
 
 type CheckinEligibility struct {
+	Mode               int      `json:"mode"`
+	ExpirySeconds      int      `json:"expiry_seconds"`
 	ActivityPercent    float64  `json:"activity_percent"`
 	RewardNumerator    int64    `json:"reward_numerator"`
 	RewardDenominator  int64    `json:"reward_denominator"`
@@ -137,7 +140,7 @@ func adjustCheckinUsageDay(tx *gorm.DB, entry *CheckinUsage, delta int64) error 
 // CompleteCheckinUsage attributes settled wallet spending to gifts first.
 // Absolute totals make retries idempotent and refunds restore the exact gift
 // portion of that request, rather than turning refunds into purchased funds.
-func CompleteCheckinUsage(userID int, source string, quota int) error {
+func CompleteCheckinUsage(userID int, source string, quota int, fundingSource ...string) error {
 	if source == "" || quota < 0 || quota > common.MaxQuota {
 		return errors.New("invalid check-in settlement quota")
 	}
@@ -166,10 +169,22 @@ func CompleteCheckinUsage(userID int, source string, quota int) error {
 			return nil
 		}
 		delta := int64(quota) - entry.Quota
+		expiringUsed := int64(0)
+		if len(fundingSource) > 0 && fundingSource[0] != "" {
+			var err error
+			expiringUsed, err = checkinFundingGiftUsed(tx, userID, fundingSource[0])
+			if err != nil {
+				return err
+			}
+			if expiringUsed > int64(quota) {
+				return errors.New("invalid expiring check-in attribution")
+			}
+		}
 		if entry.Wallet {
-			giftDelta := min(max(delta, 0), account.GiftRemaining)
-			if delta < 0 {
-				giftDelta = -max(entry.GiftUsed-int64(quota), 0)
+			walletDelta := delta - expiringUsed + entry.ExpiringUsed
+			giftDelta := min(max(walletDelta, 0), account.GiftRemaining)
+			if walletDelta < 0 {
+				giftDelta = -max(entry.GiftUsed-(int64(quota)-expiringUsed), 0)
 			}
 			account.GiftRemaining -= giftDelta
 			entry.GiftUsed += giftDelta
@@ -188,6 +203,7 @@ func CompleteCheckinUsage(userID int, source string, quota int) error {
 			return err
 		}
 		entry.Quota = int64(quota)
+		entry.ExpiringUsed = expiringUsed
 		entry.Pending = false
 		return tx.Save(&entry).Error
 	})
@@ -202,10 +218,13 @@ type checkinFacts struct {
 
 // evaluateCheckin uses journal facts inside the same transaction as the credit.
 func evaluateCheckin(tx *gorm.DB, user *User, account *CheckinAccount, config CheckinConfiguration, now time.Time) (*CheckinEligibility, error) {
+	if config.Settings.Mode == 2 {
+		return calculateCheckin(user, account, config, checkinFacts{}, now), nil
+	}
 	limits := config.Settings.Limits
 	facts := checkinFacts{}
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
-	if err := tx.Model(&Checkin{}).Where("user_id = ? AND checkin_date >= ? AND checkin_date < ?", user.Id, monthStart.Format("2006-01-02"), monthStart.AddDate(0, 1, 0).Format("2006-01-02")).Select("COALESCE(SUM(quota_awarded), 0)").Scan(&facts.MonthlyAwarded).Error; err != nil {
+	if err := tx.Model(&Checkin{}).Where("user_id = ? AND checkin_date >= ? AND checkin_date < ?", user.Id, monthStart.Format("2006-01-02"), monthStart.AddDate(0, 1, 0).Format("2006-01-02")).Where("mode IS NULL OR mode <> ?", 2).Select("COALESCE(SUM(quota_awarded), 0)").Scan(&facts.MonthlyAwarded).Error; err != nil {
 		return nil, err
 	}
 	if err := tx.Model(&CheckinUsage{}).Where("user_id = ? AND pending = ?", user.Id, true).Count(&facts.Pending).Error; err != nil {
@@ -229,6 +248,7 @@ func calculateCheckin(user *User, account *CheckinAccount, config CheckinConfigu
 	}
 	coverage = max(coverage, user.CreatedAt)
 	result := &CheckinEligibility{
+		Mode: max(settings.Mode, 1), ExpirySeconds: settings.ExpirySeconds,
 		Limited: limits.Enabled, Allowed: settings.Enabled, Reasons: []string{},
 		MinQuota: settings.MinQuota, MaxQuota: settings.MaxQuota, BaseMinQuota: settings.MinQuota, BaseMaxQuota: settings.MaxQuota,
 		RewardPercent: 100, RewardNumerator: 1, RewardDenominator: 1,
@@ -238,6 +258,15 @@ func calculateCheckin(user *User, account *CheckinAccount, config CheckinConfigu
 		CoverageSince: coverage, HistoryComplete: coverage <= max(start, user.CreatedAt), WindowStart: start, AsOf: now.Unix(), ConfigVersion: config.Version,
 		NewUserDays: limits.NewUserDays, SpendingGap: max(int64(limits.MinimumSpend)-facts.RecentSpend, 0),
 		MonthlyRemaining: max(int64(limits.MonthlyCap)-facts.MonthlyAwarded, 0),
+	}
+	if settings.Mode == 2 {
+		result.Limited = false
+		result.MonthlyCap, result.MonthlyRemaining = 0, 0
+		result.Allowed = settings.Enabled && settings.MaxQuota > 0
+		if !settings.Enabled {
+			result.Reasons = append(result.Reasons, "checkin_disabled")
+		}
+		return result
 	}
 	result.ActivityPercent = 100
 	if limits.MinimumSpend > 0 {

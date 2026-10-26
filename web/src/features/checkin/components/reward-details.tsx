@@ -34,8 +34,33 @@ export function CheckinRewardDetails(props: {
   const e = props.eligibility
   const date = (value: number) =>
     dayjs.unix(value).format('YYYY-MM-DD HH:mm:ss')
+  if (e.mode === 2) {
+    return (
+      <div className='flex flex-col gap-2 text-sm'>
+        <p>{t('Method 2: Expiring rewards')}</p>
+        <p>
+          {t(
+            'Daily rewards are independent of activity and monthly caps. Expiring rewards are used first; recharged quota never expires.'
+          )}
+        </p>
+        <p>
+          {t('Reward validity: {{minutes}} minutes from claim time', {
+            minutes: formatNumber((e.expiry_seconds ?? 86400) / 60, locale),
+          })}
+        </p>
+        <p>
+          {t('Available reward: {{minimum}} – {{maximum}}', {
+            minimum: formatQuotaWithCurrency(e.min_quota),
+            maximum: formatQuotaWithCurrency(e.max_quota),
+          })}
+        </p>
+        {!e.allowed && <p>{t('Check-in rewards are currently paused.')}</p>}
+      </div>
+    )
+  }
   return (
     <div className='space-y-2 text-sm'>
+      <p>{t('Method 1: Activity rewards')}</p>
       <p>
         {t('Spending in the last {{days}} days: {{amount}} / {{minimum}}', {
           days: formatNumber(e.activity_days, locale),

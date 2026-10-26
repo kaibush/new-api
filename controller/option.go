@@ -111,7 +111,7 @@ func GetOptions(c *gin.Context) {
 	// remain readable when its storage is unavailable.
 	checkinConfig, err := model.CurrentCheckinConfiguration()
 	if err == nil {
-		for field, value := range map[string]any{"enabled": checkinConfig.Settings.Enabled, "min_quota": checkinConfig.Settings.MinQuota, "max_quota": checkinConfig.Settings.MaxQuota, "limits": checkinConfig.Settings.Limits} {
+		for field, value := range map[string]any{"enabled": checkinConfig.Settings.Enabled, "min_quota": checkinConfig.Settings.MinQuota, "max_quota": checkinConfig.Settings.MaxQuota, "limits": checkinConfig.Settings.Limits, "mode": checkinConfig.Settings.Mode, "expiry_seconds": checkinConfig.Settings.ExpirySeconds} {
 			encoded, err := common.Marshal(value)
 			if err != nil {
 				common.ApiError(c, err)

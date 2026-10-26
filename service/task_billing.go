@@ -121,6 +121,9 @@ func taskAdjustFunding(task *model.Task, delta int) error {
 	if taskIsSubscription(task) {
 		return model.PostConsumeUserSubscriptionDelta(task.PrivateData.SubscriptionId, int64(delta))
 	}
+	if task.PrivateData.CheckinFundingSource != "" {
+		return model.SetCheckinFunding(task.UserId, task.PrivateData.CheckinFundingSource, task.Quota+delta, false, true)
+	}
 	if delta > 0 {
 		return model.DecreaseUserQuota(task.UserId, delta, false)
 	}
@@ -297,7 +300,7 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 		Other:     other,
 	})
 
-	if err := model.CompleteCheckinUsage(task.UserId, fmt.Sprintf("task:%d", task.ID), 0); err != nil {
+	if err := model.CompleteCheckinUsage(task.UserId, fmt.Sprintf("task:%d", task.ID), 0, task.PrivateData.CheckinFundingSource); err != nil {
 		logger.LogError(ctx, "refund task check-in accounting: "+err.Error())
 	}
 	// 5. 资金退款完成后再清除持久化标记。
@@ -458,12 +461,18 @@ func RecordCompletedTaskCheckinUsage(ctx context.Context, task *model.Task) {
 	if task.ID == 0 {
 		return
 	}
+	if task.PrivateData.CheckinFundingSource != "" {
+		if err := model.SetCheckinFunding(task.UserId, task.PrivateData.CheckinFundingSource, task.Quota, false, true); err != nil {
+			logger.LogError(ctx, "settle task check-in funding: "+err.Error())
+			return
+		}
+	}
 	source := fmt.Sprintf("task:%d", task.ID)
 	if err := model.BeginCheckinUsage(task.UserId, source, !taskIsSubscription(task)); err != nil {
 		logger.LogError(ctx, "begin task check-in accounting: "+err.Error())
 		return
 	}
-	if err := model.CompleteCheckinUsage(task.UserId, source, task.Quota); err != nil {
+	if err := model.CompleteCheckinUsage(task.UserId, source, task.Quota, task.PrivateData.CheckinFundingSource); err != nil {
 		logger.LogError(ctx, "complete task check-in accounting: "+err.Error())
 	}
 }

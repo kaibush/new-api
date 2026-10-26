@@ -36,6 +36,7 @@ import { formatNumber } from '@/lib/format'
 
 import { getCheckinUserDetail } from '../api'
 import { formatCheckinPercent } from '../format'
+import { CheckinGrantStatus } from './grant-status'
 import { CheckinRewardDetails } from './reward-details'
 
 const Chart = lazy(() =>
@@ -54,6 +55,7 @@ export function CheckinUserDetailDialog(props: {
     queryKey: ['checkin-admin', 'detail', props.userId],
     queryFn: () => getCheckinUserDetail(props.userId ?? 0),
     enabled: props.userId !== null,
+    refetchInterval: 30000,
   })
   return (
     <Dialog
@@ -73,9 +75,16 @@ export function CheckinUserDetailDialog(props: {
             {query.data.user.display_name || query.data.user.username}
           </h3>
           <CheckinRewardDetails eligibility={query.data.user.eligibility} />
-          <Suspense fallback={<LoadingState />}>
-            <Chart days={query.data.days} />
-          </Suspense>
+          {query.data.grants &&
+            (query.data.user.eligibility.mode === 2 ||
+              query.data.grants.records.length > 0) && (
+              <CheckinGrantStatus grants={query.data.grants} />
+            )}
+          {query.data.user.eligibility.mode !== 2 && (
+            <Suspense fallback={<LoadingState />}>
+              <Chart days={query.data.days} />
+            </Suspense>
+          )}
           <h4 className='text-sm font-medium'>
             {t('Recent check-in rewards')}
           </h4>

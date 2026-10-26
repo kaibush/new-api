@@ -34,7 +34,7 @@ func InitializeCheckinAccounting() error {
 		settings := *operation_setting.GetCheckinSetting()
 		common.OptionMapRWMutex.RUnlock()
 		var options []Option
-		if err := tx.Where(map[string]any{"key": []string{"checkin_setting.enabled", "checkin_setting.min_quota", "checkin_setting.max_quota", "checkin_setting.limits"}}).Find(&options).Error; err != nil {
+		if err := tx.Where(map[string]any{"key": []string{"checkin_setting.enabled", "checkin_setting.min_quota", "checkin_setting.max_quota", "checkin_setting.limits", "checkin_setting.mode", "checkin_setting.expiry_seconds"}}).Find(&options).Error; err != nil {
 			return err
 		}
 		for _, option := range options {
@@ -156,7 +156,7 @@ func writeCheckinConfiguration(tx *gorm.DB, settings *operation_setting.CheckinS
 		return CheckinConfiguration{}, err
 	}
 	// Keep legacy option exports in sync in the same transaction.
-	fields := map[string]any{"enabled": current.Settings.Enabled, "min_quota": current.Settings.MinQuota, "max_quota": current.Settings.MaxQuota, "limits": current.Settings.Limits}
+	fields := map[string]any{"enabled": current.Settings.Enabled, "min_quota": current.Settings.MinQuota, "max_quota": current.Settings.MaxQuota, "limits": current.Settings.Limits, "mode": current.Settings.Mode, "expiry_seconds": current.Settings.ExpirySeconds}
 	for field, value := range fields {
 		encoded, err := common.Marshal(value)
 		if err != nil {
@@ -172,6 +172,10 @@ func writeCheckinConfiguration(tx *gorm.DB, settings *operation_setting.CheckinS
 
 func applyCheckinOption(settings *operation_setting.CheckinSetting, key, value string) error {
 	switch key {
+	case "checkin_setting.mode":
+		return common.UnmarshalJsonStr(value, &settings.Mode)
+	case "checkin_setting.expiry_seconds":
+		return common.UnmarshalJsonStr(value, &settings.ExpirySeconds)
 	case "checkin_setting.enabled":
 		return common.UnmarshalJsonStr(value, &settings.Enabled)
 	case "checkin_setting.min_quota":

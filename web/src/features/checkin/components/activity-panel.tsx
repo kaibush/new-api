@@ -81,13 +81,27 @@ export function CheckinActivityPanel(props: {
     enabled: !props.previewInvalid,
     refetchInterval: (query) => (query.state.data?.updating ? 2000 : 30000),
   })
+  const mode =
+    props.preview?.mode ??
+    query.data?.mode ??
+    query.data?.items[0]?.eligibility.mode ??
+    1
   const overview = useQuery({
     queryKey: ['checkin-admin', 'overview'],
     queryFn: getCheckinOverview,
+    enabled: !!query.data && mode !== 2,
     refetchInterval: (query) => (query.state.data?.updating ? 2000 : 30000),
   })
   const columns = useMemo<ColumnDef<CheckinUser>[]>(
     () => [
+      {
+        id: 'method',
+        header: t('Check-in method'),
+        cell: ({ row }) =>
+          row.original.eligibility.mode === 2
+            ? t('Method 2: Expiring rewards')
+            : t('Method 1: Activity rewards'),
+      },
       {
         id: 'user',
         header: t('User'),
@@ -108,7 +122,7 @@ export function CheckinActivityPanel(props: {
         header: t('New user grace period (days)'),
         cell: ({ row }) => {
           const e = row.original.eligibility
-          return e.grace_remaining_days > 0
+          return e.mode !== 2 && e.grace_remaining_days > 0
             ? `${formatNumber(e.grace_day, locale)} / ${formatNumber(e.new_user_days, locale)} · ${t('Remaining')}: ${formatNumber(e.grace_remaining_days, locale)}`
             : '—'
         },
@@ -117,18 +131,23 @@ export function CheckinActivityPanel(props: {
         id: 'spending',
         header: t('Spending / threshold'),
         cell: ({ row }) =>
-          `${formatQuotaWithCurrency(row.original.eligibility.recent_spend)} / ${formatQuotaWithCurrency(row.original.eligibility.minimum_spend)}`,
+          row.original.eligibility.mode === 2
+            ? '—'
+            : `${formatQuotaWithCurrency(row.original.eligibility.recent_spend)} / ${formatQuotaWithCurrency(row.original.eligibility.minimum_spend)}`,
       },
       {
         id: 'activity',
         header: t('Spending achievement'),
-        cell: ({ row }) =>
-          row.original.eligibility.history_complete
-            ? formatCheckinPercent(
-                row.original.eligibility.activity_percent,
-                locale
-              )
-            : t('Incomplete history'),
+        cell: ({ row }) => {
+          if (row.original.eligibility.mode === 2) return '—'
+          if (!row.original.eligibility.history_complete) {
+            return t('Incomplete history')
+          }
+          return formatCheckinPercent(
+            row.original.eligibility.activity_percent,
+            locale
+          )
+        },
       },
       {
         id: 'percentage',
@@ -153,6 +172,11 @@ export function CheckinActivityPanel(props: {
         header: t('Status'),
         cell: ({ row }) => {
           const e = row.original.eligibility
+          if (e.mode === 2) {
+            return e.allowed
+              ? t('Method 2: Expiring rewards')
+              : t('Check-in is disabled.')
+          }
           if (e.pending_count > 0) return t('Settlement pending')
           if (e.reasons.includes('monthly_cap')) return t('Monthly cap')
           if (!e.history_complete) return t('Incomplete history')
@@ -165,8 +189,19 @@ export function CheckinActivityPanel(props: {
     [locale, t]
   )
   const previewPending = serialized !== debounced || !!props.previewInvalid
+  const visibleColumns = useMemo(
+    () =>
+      columns.filter(
+        (column) =>
+          mode !== 2 ||
+          !['grace', 'spending', 'activity', 'percentage', 'month'].includes(
+            column.id ?? ''
+          )
+      ),
+    [columns, mode]
+  )
   const { table } = useDataTable({
-    columns,
+    columns: visibleColumns,
     data: query.isError ? EMPTY_USERS : (query.data?.items ?? EMPTY_USERS),
     totalCount: query.data?.total ?? 0,
     getRowId: (row) => String(row.id),
@@ -200,26 +235,28 @@ export function CheckinActivityPanel(props: {
   return (
     <section className='space-y-5' aria-label={t('Check-in activity')}>
       <div className='flex flex-wrap items-center justify-between gap-2'>
-        <h3 className='font-medium'>{t('Check-in activity')}</h3>
+        <h3 className='font-medium'>
+          {mode === 2 ? t('Expiring check-in quota') : t('Check-in activity')}
+        </h3>
         <Button
           variant='outline'
           size='sm'
           disabled={overview.isFetching || query.isFetching}
           onClick={() => {
-            void overview.refetch()
+            if (mode !== 2) void overview.refetch()
             void query.refetch()
           }}
         >
           {t('Refresh')}
         </Button>
       </div>
-      {overview.isError && (
+      {mode !== 2 && overview.isError && (
         <ErrorState onRetry={() => void overview.refetch()} />
       )}
-      {overviewPending && !overview.isError && (
+      {mode !== 2 && overviewPending && !overview.isError && (
         <LoadingState message={t('Updating activity statistics...')} />
       )}
-      {stats && !overviewPending && (
+      {mode !== 2 && stats && !overviewPending && (
         <>
           <div className='grid grid-cols-2 gap-3 lg:grid-cols-4'>
             {[
@@ -272,52 +309,59 @@ export function CheckinActivityPanel(props: {
           value={filters.search}
           onChange={(event) => update({ search: event.target.value })}
         />
-        <Select
-          value={props.preview ? 'all' : filters.filter || 'all'}
-          disabled={!!props.preview}
-          onValueChange={(value) =>
-            update({ filter: value === 'all' ? '' : (value ?? '') })
-          }
-        >
-          <SelectTrigger className='w-44' aria-label={t('Activity filter')}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {[
-              ['all', t('All users')],
-              ['grace', t('In grace period')],
-              ['active', t('Full activity')],
-              ['low_activity', t('Low activity')],
-              ['zero_activity', t('Zero activity')],
-              ['incomplete', t('Incomplete history')],
-              ['pending', t('Settlement pending')],
-            ].map(([value, label]) => (
-              <SelectItem key={value} value={value}>
-                {label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select
-          value={props.preview ? 'id' : filters.sort || 'id'}
-          disabled={!!props.preview}
-          onValueChange={(value) =>
-            update({ sort: value === 'id' ? '' : (value ?? '') })
-          }
-        >
-          <SelectTrigger className='w-48' aria-label={t('Activity sorting')}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value='id'>{t('Newest users first')}</SelectItem>
-            <SelectItem value='activity_asc'>
-              {t('Activity: low to high')}
-            </SelectItem>
-            <SelectItem value='activity_desc'>
-              {t('Activity: high to low')}
-            </SelectItem>
-          </SelectContent>
-        </Select>
+        {mode !== 2 && (
+          <>
+            <Select
+              value={props.preview ? 'all' : filters.filter || 'all'}
+              disabled={!!props.preview}
+              onValueChange={(value) =>
+                update({ filter: value === 'all' ? '' : (value ?? '') })
+              }
+            >
+              <SelectTrigger className='w-44' aria-label={t('Activity filter')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[
+                  ['all', t('All users')],
+                  ['grace', t('In grace period')],
+                  ['active', t('Full activity')],
+                  ['low_activity', t('Low activity')],
+                  ['zero_activity', t('Zero activity')],
+                  ['incomplete', t('Incomplete history')],
+                  ['pending', t('Settlement pending')],
+                ].map(([value, label]) => (
+                  <SelectItem key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={props.preview ? 'id' : filters.sort || 'id'}
+              disabled={!!props.preview}
+              onValueChange={(value) =>
+                update({ sort: value === 'id' ? '' : (value ?? '') })
+              }
+            >
+              <SelectTrigger
+                className='w-48'
+                aria-label={t('Activity sorting')}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='id'>{t('Newest users first')}</SelectItem>
+                <SelectItem value='activity_asc'>
+                  {t('Activity: low to high')}
+                </SelectItem>
+                <SelectItem value='activity_desc'>
+                  {t('Activity: high to low')}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </>
+        )}
       </div>
       {props.preview && (
         <p role='status' className='text-sm'>
@@ -337,7 +381,7 @@ export function CheckinActivityPanel(props: {
       )}
       {query.data && query.data.as_of > 0 && (
         <p className='text-muted-foreground text-xs'>
-          {activityDays !== undefined && (
+          {mode !== 2 && activityDays !== undefined && (
             <>
               {t('Activity window')}: {formatNumber(activityDays, locale)}{' '}
               {t('days')} ·{' '}
@@ -350,7 +394,7 @@ export function CheckinActivityPanel(props: {
       )}
       <DataTablePage
         table={table}
-        columns={columns}
+        columns={visibleColumns}
         isLoading={pagePending}
         isFetching={query.isFetching || previewPending}
         paginationInFooter={false}

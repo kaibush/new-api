@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { lazy, Suspense, useState } from 'react'
+import { useState } from 'react'
 import { useForm, type Resolver } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -37,6 +37,14 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import {
   getCheckinConfiguration,
@@ -53,25 +61,14 @@ import { SettingsSection } from '@/features/system-settings/components/settings-
 import { formatQuotaWithCurrency } from '@/lib/currency'
 import { handleServerError } from '@/lib/handle-server-error'
 
-const ActivityPanel = lazy(() =>
-  import('@/features/checkin/components/activity-panel').then((module) => ({
-    default: module.CheckinActivityPanel,
-  }))
-)
-
-const limitsSchema = z
-  .object({
-    enabled: z.boolean(),
-    monthly_cap: z.coerce.number().int().min(0).max(2147483647),
-    activity_days: z.coerce.number().int().min(1).max(365),
-    minimum_spend: z.coerce.number().int().min(0).max(2147483647),
-    reduced_percent: z.coerce.number().int().min(0).max(100),
-    new_user_days: z.coerce.number().int().min(0).max(365),
-  })
-  .refine((limits) => !limits.enabled || limits.monthly_cap > 0, {
-    path: ['monthly_cap'],
-    message: 'Must be greater than 0',
-  })
+const limitsSchema = z.object({
+  enabled: z.boolean(),
+  monthly_cap: z.coerce.number().int().min(0).max(2147483647),
+  activity_days: z.coerce.number().int().min(1).max(365),
+  minimum_spend: z.coerce.number().int().min(0).max(2147483647),
+  reduced_percent: z.coerce.number().int().min(0).max(100),
+  new_user_days: z.coerce.number().int().min(0).max(365),
+})
 
 const limitFields = [
   {
@@ -113,11 +110,36 @@ const limitFields = [
 
 const schema = z
   .object({
-    limits: limitsSchema,
+    limits: z.object({
+      enabled: z.boolean(),
+      monthly_cap: z.coerce.number(),
+      activity_days: z.coerce.number(),
+      minimum_spend: z.coerce.number(),
+      reduced_percent: z.coerce.number(),
+      new_user_days: z.coerce.number(),
+    }),
+    mode: z.number().int().min(1).max(2),
+    expiryMinutes: z.coerce.number().int().min(1).max(525600),
     enabled: z.boolean(),
     minQuota: z.coerce.number().int().min(0).max(2147483647),
     maxQuota: z.coerce.number().int().min(0).max(2147483647),
   })
+  .superRefine((values, context) => {
+    if (values.mode === 2) return
+    const result = limitsSchema.safeParse(values.limits)
+    if (!result.success) {
+      for (const issue of result.error.issues) {
+        context.addIssue({ ...issue, path: ['limits', ...issue.path] })
+      }
+    }
+  })
+  .refine(
+    (values) =>
+      values.mode === 2 ||
+      !values.limits.enabled ||
+      values.limits.monthly_cap > 0,
+    { path: ['limits', 'monthly_cap'], message: 'Must be greater than 0' }
+  )
   .refine((values) => values.maxQuota >= values.minQuota, {
     path: ['maxQuota'],
     message: 'Maximum must be at least the minimum',
@@ -144,6 +166,8 @@ function CheckinSettingsForm(props: { configuration: CheckinConfiguration }) {
     mutationFn: (values: Values) =>
       saveCheckinConfiguration(
         {
+          mode: values.mode,
+          expiry_seconds: values.expiryMinutes * 60,
           enabled: values.enabled,
           min_quota: values.minQuota,
           max_quota: values.maxQuota,
@@ -185,6 +209,8 @@ function CheckinSettingsForm(props: { configuration: CheckinConfiguration }) {
   const form = useForm<Values>({
     resolver: zodResolver(schema) as unknown as Resolver<Values>,
     defaultValues: {
+      mode: config.settings.mode || 1,
+      expiryMinutes: (config.settings.expiry_seconds || 86400) / 60,
       enabled: defaultValues.enabled,
       limits,
       minQuota: defaultValues.minQuota,
@@ -195,9 +221,7 @@ function CheckinSettingsForm(props: { configuration: CheckinConfiguration }) {
   const { isDirty, isSubmitting } = form.formState
   const enabled = form.watch('enabled')
   const limitsEnabled = form.watch('limits.enabled')
-
-  const watched = form.watch()
-  const preview = schema.safeParse(watched)
+  const mode = form.watch('mode')
 
   async function onSubmit(values: Values) {
     try {
@@ -217,6 +241,8 @@ function CheckinSettingsForm(props: { configuration: CheckinConfiguration }) {
             variant='outline'
             onClick={() => {
               form.reset({
+                mode: config.settings.mode || 1,
+                expiryMinutes: (config.settings.expiry_seconds || 86400) / 60,
                 enabled: config.settings.enabled,
                 minQuota: config.settings.min_quota,
                 maxQuota: config.settings.max_quota,
@@ -263,6 +289,71 @@ function CheckinSettingsForm(props: { configuration: CheckinConfiguration }) {
 
           {enabled && (
             <>
+              <FormField
+                control={form.control}
+                name='mode'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Check-in method')}</FormLabel>
+                    <Select
+                      value={field.value}
+                      onValueChange={field.onChange}
+                      items={[
+                        { value: 1, label: t('Method 1: Activity rewards') },
+                        { value: 2, label: t('Method 2: Expiring rewards') },
+                      ]}
+                    >
+                      <FormControl>
+                        <SelectTrigger className='w-full'>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectGroup>
+                          <SelectItem value={1}>
+                            {t('Method 1: Activity rewards')}
+                          </SelectItem>
+                          <SelectItem value={2}>
+                            {t('Method 2: Expiring rewards')}
+                          </SelectItem>
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              {mode === 2 && (
+                <FormField
+                  control={form.control}
+                  name='expiryMinutes'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Reward validity (minutes)')}</FormLabel>
+                      <FormControl>
+                        <Input
+                          type='number'
+                          min={1}
+                          max={525600}
+                          step={1}
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        {t(
+                          '1–525600 minutes. 1440 minutes equals one day. Each reward expires from its claim time; changes apply to future claims.'
+                        )}
+                      </FormDescription>
+                      <FormDescription>
+                        {t(
+                          'Daily rewards are independent of activity and monthly caps. Expiring rewards are used first; recharged quota never expires.'
+                        )}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
               <div className='grid gap-6 sm:grid-cols-2'>
                 <FormField
                   control={form.control}
@@ -312,30 +403,32 @@ function CheckinSettingsForm(props: { configuration: CheckinConfiguration }) {
                   )}
                 />
               </div>
-              <FormField
-                control={form.control}
-                name='limits.enabled'
-                render={({ field }) => (
-                  <SettingsSwitchItem>
-                    <SettingsSwitchContent>
-                      <FormLabel>{t('Limit check-in rewards')}</FormLabel>
-                      <FormDescription>
-                        {t(
-                          'Reward percentage follows spending achievement, with the configured minimum as a floor. Registration grace and incomplete history receive full rewards. The monthly cap still applies.'
-                        )}
-                      </FormDescription>
-                    </SettingsSwitchContent>
-                    <FormControl>
-                      <Switch
-                        checked={field.value}
-                        onCheckedChange={field.onChange}
-                        disabled={isSubmitting}
-                      />
-                    </FormControl>
-                  </SettingsSwitchItem>
-                )}
-              />
-              {limitsEnabled && (
+              {mode === 1 && (
+                <FormField
+                  control={form.control}
+                  name='limits.enabled'
+                  render={({ field }) => (
+                    <SettingsSwitchItem>
+                      <SettingsSwitchContent>
+                        <FormLabel>{t('Limit check-in rewards')}</FormLabel>
+                        <FormDescription>
+                          {t(
+                            'Reward percentage follows spending achievement, with the configured minimum as a floor. Registration grace and incomplete history receive full rewards. The monthly cap still applies.'
+                          )}
+                        </FormDescription>
+                      </SettingsSwitchContent>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                          disabled={isSubmitting}
+                        />
+                      </FormControl>
+                    </SettingsSwitchItem>
+                  )}
+                />
+              )}
+              {mode === 1 && limitsEnabled && (
                 <>
                   <h3 className='text-sm font-medium'>
                     {t('Activity assessment and reward limits')}
@@ -387,21 +480,6 @@ function CheckinSettingsForm(props: { configuration: CheckinConfiguration }) {
           )}
         </SettingsForm>
       </Form>
-      <Suspense fallback={<LoadingState />}>
-        <ActivityPanel
-          previewInvalid={isDirty && !preview.success}
-          preview={
-            isDirty && preview.success
-              ? {
-                  enabled: preview.data.enabled,
-                  min_quota: preview.data.minQuota,
-                  max_quota: preview.data.maxQuota,
-                  limits: preview.data.limits,
-                }
-              : undefined
-          }
-        />
-      </Suspense>
     </SettingsSection>
   )
 }

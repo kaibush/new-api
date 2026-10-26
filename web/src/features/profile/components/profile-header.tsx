@@ -24,6 +24,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Card, CardContent } from '@/components/ui/card'
 import { IconBadge, type IconBadgeTone } from '@/components/ui/icon-badge'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useCheckinBalance } from '@/features/checkin/hooks/use-checkin-balance'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatCompactNumber, formatQuota } from '@/lib/format'
 import { getRoleLabel } from '@/lib/roles'
@@ -42,6 +43,7 @@ interface ProfileHeaderProps {
 
 export function ProfileHeader({ profile, loading }: ProfileHeaderProps) {
   const { t } = useTranslation()
+  const balance = useCheckinBalance(profile?.id)
 
   if (loading) {
     return (
@@ -63,8 +65,8 @@ export function ProfileHeader({ profile, loading }: ProfileHeaderProps) {
           </div>
         </CardContent>
         <div className='border-t'>
-          <div className='divide-border/60 grid grid-cols-1 divide-y sm:grid-cols-3 sm:divide-x sm:divide-y-0'>
-            {['balance', 'usage', 'requests'].map((key) => (
+          <div className='divide-border/60 grid grid-cols-1 divide-y sm:grid-cols-4 sm:divide-x sm:divide-y-0'>
+            {['balance', 'checkin', 'usage', 'requests'].map((key) => (
               <div key={key} className='px-4 py-3.5 sm:px-5 sm:py-4'>
                 <Skeleton className='h-3.5 w-20' />
                 <Skeleton className='mt-2 h-7 w-28' />
@@ -92,11 +94,18 @@ export function ProfileHeader({ profile, loading }: ProfileHeaderProps) {
     tone: IconBadgeTone
   }[] = [
     {
-      label: t('Current Balance'),
-      value: formatQuota(profile.quota),
+      label: t('Recharged quota'),
+      value: balance.data ? formatQuota(balance.data.wallet_quota) : '—',
       description: t('Remaining quota'),
       icon: WalletCards,
       tone: 'success',
+    },
+    {
+      label: t('Check-in quota'),
+      value: balance.data ? formatQuota(balance.data.checkin_quota) : '—',
+      description: t('Available check-in rewards'),
+      icon: WalletCards,
+      tone: 'info',
     },
     {
       label: t('Total Usage'),
@@ -163,9 +172,14 @@ export function ProfileHeader({ profile, loading }: ProfileHeaderProps) {
         </div>
       </CardContent>
       <div className='border-t'>
-        <div className='divide-border/60 grid grid-cols-3 divide-x'>
+        <div className='divide-border/60 grid grid-cols-2 divide-x sm:grid-cols-4'>
           {stats.map((item) => (
-            <div key={item.label} className='min-w-0 px-3 py-3 sm:px-5 sm:py-4'>
+            <div
+              role='group'
+              aria-label={item.label}
+              key={item.label}
+              className='min-w-0 px-3 py-3 sm:px-5 sm:py-4'
+            >
               <div className='flex items-center gap-2'>
                 <IconBadge tone={item.tone} size='stat'>
                   <item.icon />

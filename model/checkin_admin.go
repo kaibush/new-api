@@ -38,6 +38,7 @@ type CheckinUserQuery struct {
 }
 
 type CheckinUserPage struct {
+	Mode          int           `json:"mode"`
 	Items         []CheckinUser `json:"items"`
 	Total         int64         `json:"total"`
 	Page          int           `json:"page"`
@@ -121,7 +122,7 @@ func checkinUserRows(tx *gorm.DB, users []User, config CheckinConfiguration, now
 	}
 	month := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 	sums = nil
-	if err := tx.Model(&Checkin{}).Where("user_id IN ? AND checkin_date >= ? AND checkin_date < ?", ids, month.Format("2006-01-02"), month.AddDate(0, 1, 0).Format("2006-01-02")).Select("user_id, SUM(quota_awarded) AS monthly_awarded").Group("user_id").Scan(&sums).Error; err != nil {
+	if err := tx.Model(&Checkin{}).Where("user_id IN ? AND checkin_date >= ? AND checkin_date < ?", ids, month.Format("2006-01-02"), month.AddDate(0, 1, 0).Format("2006-01-02")).Where("mode IS NULL OR mode <> ?", 2).Select("user_id, SUM(quota_awarded) AS monthly_awarded").Group("user_id").Scan(&sums).Error; err != nil {
 		return nil, err
 	}
 	for _, sum := range sums {
@@ -273,7 +274,7 @@ func ListCheckinUsers(query CheckinUserQuery) (*CheckinUserPage, error) {
 		config.Settings = *query.Preview
 	}
 	now := time.Now()
-	result := &CheckinUserPage{Items: []CheckinUser{}, Page: query.Page, PageSize: query.PageSize, AsOf: now.Unix(), ConfigVersion: config.Version, Preview: query.Preview != nil}
+	result := &CheckinUserPage{Mode: max(config.Settings.Mode, 1), Items: []CheckinUser{}, Page: query.Page, PageSize: query.PageSize, AsOf: now.Unix(), ConfigVersion: config.Version, Preview: query.Preview != nil}
 	offset := (query.Page - 1) * query.PageSize
 	if query.Filter != "" || query.Sort != "" {
 		overview, all, err := checkinSnapshot(config)
@@ -348,6 +349,7 @@ type CheckinHistoryEntry struct {
 }
 
 type CheckinUserDetail struct {
+	Grants  *CheckinGrantSummary  `json:"grants"`
 	User    CheckinUser           `json:"user"`
 	Days    []CheckinUsageDay     `json:"days"`
 	Records []CheckinHistoryEntry `json:"records"`
@@ -388,5 +390,8 @@ func GetCheckinUserDetail(userID int) (*CheckinUserDetail, error) {
 		}
 		return nil
 	})
+	if err == nil {
+		result.Grants, err = GetCheckinGrants(userID)
+	}
 	return result, err
 }

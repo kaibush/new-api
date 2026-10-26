@@ -23,12 +23,18 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 // Load the lazy panel before test timing starts; its real interactions remain tested.
 import '@/features/checkin/components/activity-panel'
-import { CheckinAdmin } from '@/features/checkin'
+import { CheckinSettingsPage } from '@/features/checkin/components/settings-page'
 import { api } from '@/lib/api'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
@@ -112,7 +118,7 @@ function renderCheckin(decision: CheckinEligibility) {
       />
     </QueryClientProvider>
   )
-  return screen.findByText(/Spending in the last/)
+  return screen.findByText('Daily Check-in')
 }
 
 const configuration = {
@@ -211,18 +217,13 @@ async function renderSettings() {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   const router = createRouter({
-    routeTree: createRootRoute({ component: CheckinAdmin }),
+    routeTree: createRootRoute({ component: CheckinSettingsPage }),
     history: createMemoryHistory({ initialEntries: ['/'] }),
   })
   render(
     <QueryClientProvider client={client}>
       <RouterProvider router={router} />
     </QueryClientProvider>
-  )
-  await screen.findByRole(
-    'region',
-    { name: 'Check-in activity' },
-    { timeout: 10000 }
   )
   return screen.findByRole('switch', { name: 'Limit check-in rewards' })
 }
@@ -257,6 +258,8 @@ test('the limits toggle reveals controls and saves one complete policy', async (
     expect(api.put).toHaveBeenCalledWith('/api/option/checkin', {
       version: 1,
       settings: {
+        mode: 1,
+        expiry_seconds: 86400,
         enabled: true,
         min_quota: 10,
         max_quota: 100,
@@ -303,6 +306,7 @@ test('registration grace allows accumulated rewards without a gift cap', async (
   const button = screen.getByRole('button', { name: 'Check in now' })
   expect(button).toBeEnabled()
   fireEvent.click(button)
+  fireEvent.click(screen.getByRole('button', { name: 'Claim this reward' }))
   await waitFor(() =>
     expect(api.post).toHaveBeenCalledWith('/api/user/checkin')
   )
@@ -324,25 +328,17 @@ test('a failed settings save keeps edits available for retry', async () => {
   expect(input).toHaveValue(25)
 })
 
-test('unsaved valid settings preview the user page without updating configuration', async () => {
+test('editing settings does not request or embed the usage page', async () => {
   await renderSettings()
   fireEvent.change(
-    screen.getByRole('spinbutton', { name: 'Maximum check-in quota' }),
-    { target: { value: '200' } }
+    screen.getByRole('spinbutton', { name: 'Minimum check-in quota' }),
+    { target: { value: '25' } }
   )
-  await screen.findByText(
-    'Unsaved preview for this page. Rewards are not issued.'
-  )
-  await waitFor(() =>
-    expect(api.post).toHaveBeenCalledWith(
-      '/api/user/checkin/users',
-      expect.objectContaining({
-        preview: expect.objectContaining({ max_quota: 200 }),
-      }),
-      expect.objectContaining({ signal: expect.any(AbortSignal) })
-    )
-  )
-  expect(api.put).not.toHaveBeenCalled()
+  expect(
+    screen.getByRole('button', { name: 'Save check-in settings' })
+  ).toBeEnabled()
+  expect(screen.queryByText('User activity')).not.toBeInTheDocument()
+  expect(api.post).not.toHaveBeenCalled()
 })
 
 test('incomplete history explains the transition and allows full rewards', async () => {
@@ -357,10 +353,12 @@ test('incomplete history explains the transition and allows full rewards', async
     screen.getByText(/Spending history is incomplete since/)
   ).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Check in now' }))
+  expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+  expect(api.post).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: 'Claim this reward' }))
   await waitFor(() =>
     expect(api.post).toHaveBeenCalledWith('/api/user/checkin')
   )
-  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
 })
 
 test('disabled limits with a zero cap can be saved without exposing hidden validation errors', async () => {
@@ -443,3 +441,106 @@ test('a configuration conflict preserves edits until the administrator reloads t
     )
   )
 })
+
+test('expiring rewards show balances and expiry without activity restrictions, including after check-in is disabled', async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  const grants = {
+    available: 40,
+    reserved: 10,
+    used: 30,
+    expired: 20,
+    as_of: 1792838400,
+    records: [
+      {
+        checkin_id: 1,
+        quota: 100,
+        available: 40,
+        reserved: 10,
+        used: 30,
+        expired: 20,
+        created_at: 1792838400,
+        expires_at: 1792842000,
+      },
+    ],
+  }
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        enabled: false,
+        eligibility: {
+          ...eligibility,
+          mode: 2,
+          expiry_seconds: 3600,
+          allowed: false,
+          limited: false,
+          reasons: ['checkin_disabled'],
+        },
+        grants,
+        stats: {
+          checked_in_today: false,
+          records: [],
+          total_checkins: 1,
+          checkin_count: 1,
+          total_quota: 100,
+        },
+      },
+    },
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <CheckinCalendarCard
+        checkinEnabled={false}
+        turnstileEnabled={false}
+        turnstileSiteKey=''
+      />
+    </QueryClientProvider>
+  )
+  expect(await screen.findByText('Expiring check-in quota')).toBeVisible()
+  expect(screen.getByRole('columnheader', { name: 'Expires at' })).toBeVisible()
+  expect(
+    screen.getByRole('columnheader', { name: 'Reserved quota' })
+  ).toBeVisible()
+  expect(screen.getByRole('columnheader', { name: 'Used' })).toBeVisible()
+  expect(screen.getByRole('columnheader', { name: 'Expired' })).toBeVisible()
+  expect(screen.queryByText(/Spending in the last/)).not.toBeInTheDocument()
+  expect(
+    screen.getByText(
+      'Unused rewards expire automatically. Recharged quota is kept separately and is unaffected.'
+    )
+  ).toBeVisible()
+  client.clear()
+})
+
+test.each([1, 2])(
+  'method %s always shows its own reminder before claiming',
+  async (mode) => {
+    await renderCheckin({
+      ...eligibility,
+      mode,
+      expiry_seconds: 3600,
+      limited: mode === 1,
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Check in now' }))
+    expect(api.post).not.toHaveBeenCalled()
+    const dialog = screen.getByRole('alertdialog')
+    expect(
+      within(dialog).getByText(
+        mode === 2 ? 'Method 2: Expiring rewards' : 'Method 1: Activity rewards'
+      )
+    ).toBeVisible()
+    if (mode === 2) {
+      expect(
+        within(dialog).getByText('Reward validity: 60 minutes from claim time')
+      ).toBeVisible()
+    }
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Claim this reward' })
+    )
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith('/api/user/checkin')
+    )
+  }
+)

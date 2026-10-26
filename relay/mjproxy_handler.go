@@ -210,7 +210,7 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 		}
 	}
 
-	userQuota, err := model.GetUserQuota(info.UserId, false)
+	userQuota, _, err := model.CheckinFundingBalance(info.UserId)
 	if err != nil {
 		return &dto.MidjourneyResponse{
 			Code:        4,
@@ -529,7 +529,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 		}
 	}
 
-	userQuota, err := model.GetUserQuota(relayInfo.UserId, false)
+	userQuota, _, err := model.CheckinFundingBalance(relayInfo.UserId)
 	if err != nil {
 		return &dto.MidjourneyResponse{
 			Code:        4,

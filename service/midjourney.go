@@ -71,7 +71,14 @@ func SettleMidjourneyTaskBilling(relayInfo *relaycommon.RelayInfo, task *model.M
 		return false, errors.New("Midjourney task must be persisted before billing")
 	}
 
-	result, billingErr := postConsumeQuotaWithResult(relayInfo, task.Quota, 0, true)
+	var result postConsumeQuotaResult
+	_, isolated, billingErr := model.CheckinFundingBalance(task.UserId)
+	if billingErr == nil {
+		if isolated {
+			relayInfo.CheckinFundingSource = fmt.Sprintf("midjourney:%d", task.Id)
+		}
+		result, billingErr = postConsumeQuotaWithResult(relayInfo, task.Quota, 0, true)
+	}
 	if !result.FundingApplied {
 		task.Quota = 0
 		task.TokenId = 0
@@ -99,7 +106,16 @@ func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason s
 		return true
 	}
 
-	if err := model.IncreaseUserQuota(task.UserId, quota, false); err != nil {
+	source := fmt.Sprintf("midjourney:%d", task.Id)
+	receipt, err := model.GetCheckinFunding(task.UserId, source)
+	if err == nil {
+		if receipt != nil {
+			err = model.SetCheckinFunding(task.UserId, source, 0, false, true)
+		} else {
+			err = model.IncreaseUserQuota(task.UserId, quota, false)
+		}
+	}
+	if err != nil {
 		logger.LogWarn(ctx, fmt.Sprintf("退还 Midjourney 用户额度失败 task %s: %s", task.MjId, err.Error()))
 		return false
 	}
@@ -113,7 +129,11 @@ func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason s
 		}
 	}
 
-	if err := model.CompleteCheckinUsage(task.UserId, fmt.Sprintf("midjourney:%d", task.Id), 0); err != nil {
+	fundingSource := ""
+	if receipt != nil {
+		fundingSource = source
+	}
+	if err := model.CompleteCheckinUsage(task.UserId, source, 0, fundingSource); err != nil {
 		logger.LogError(ctx, "refund Midjourney check-in accounting: "+err.Error())
 	}
 	billingChannelId := task.GetBillingChannelId()
@@ -398,11 +418,21 @@ func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestU
 // gift attribution and activity accounting as the generic task pipeline.
 func RecordCompletedMidjourneyCheckinUsage(ctx context.Context, task *model.Midjourney) {
 	source := fmt.Sprintf("midjourney:%d", task.Id)
+	fundingSource := ""
+	receipt, err := model.GetCheckinFunding(task.UserId, source)
+	if err == nil && receipt != nil {
+		fundingSource = source
+		err = model.SetCheckinFunding(task.UserId, source, task.Quota, false, true)
+	}
+	if err != nil {
+		logger.LogError(ctx, "settle Midjourney check-in funding: "+err.Error())
+		return
+	}
 	if err := model.BeginCheckinUsage(task.UserId, source, true); err != nil {
 		logger.LogError(ctx, "begin Midjourney check-in accounting: "+err.Error())
 		return
 	}
-	if err := model.CompleteCheckinUsage(task.UserId, source, task.Quota); err != nil {
+	if err := model.CompleteCheckinUsage(task.UserId, source, task.Quota, fundingSource); err != nil {
 		logger.LogError(ctx, "complete Midjourney check-in accounting: "+err.Error())
 	}
 }

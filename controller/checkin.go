@@ -16,13 +16,18 @@ import (
 
 // GetCheckinStatus 获取用户签到状态和历史记录
 func GetCheckinStatus(c *gin.Context) {
+	if c.Query("balance_only") == "true" {
+		balances, err := model.GetCheckinBalances(c.GetInt("id"))
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		common.ApiSuccess(c, balances)
+		return
+	}
 	setting, err := model.CurrentCheckinSettings()
 	if err != nil {
 		common.ApiError(c, err)
-		return
-	}
-	if !setting.Enabled {
-		common.ApiErrorMsg(c, "签到功能未启用")
 		return
 	}
 	userId := c.GetInt("id")
@@ -47,9 +52,15 @@ func GetCheckinStatus(c *gin.Context) {
 		return
 	}
 
+	grants, err := model.GetCheckinGrants(userId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
+			"grants":      grants,
 			"enabled":     setting.Enabled,
 			"min_quota":   eligibility.BaseMinQuota,
 			"max_quota":   eligibility.BaseMaxQuota,

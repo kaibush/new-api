@@ -67,14 +67,14 @@ func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuo
 					settled := session.settled
 					session.mu.Unlock()
 					if settled {
-						if err := model.CompleteCheckinUsage(relayInfo.UserId, source, actualQuota); err != nil {
+						if err := model.CompleteCheckinUsage(relayInfo.UserId, source, actualQuota, relayInfo.CheckinFundingSource); err != nil {
 							logger.LogError(ctx, "check-in accounting: "+err.Error())
 						}
 					}
 				}
 				return
 			}
-			settleErr = model.CompleteCheckinUsage(relayInfo.UserId, source, actualQuota)
+			settleErr = model.CompleteCheckinUsage(relayInfo.UserId, source, actualQuota, relayInfo.CheckinFundingSource)
 		}()
 	}
 

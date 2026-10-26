@@ -43,6 +43,7 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { CheckinAdmin } from '..'
 import { CheckinActivityPanel } from '../components/activity-panel'
+import { CheckinSettingsPage } from '../components/settings-page'
 import type { CheckinEligibility, CheckinUserQuery } from '../types'
 
 vi.mock('@visactor/react-vchart', () => ({ VChart: () => null }))
@@ -204,6 +205,33 @@ function renderActivity() {
   )
 }
 
+test('an empty method 2 search keeps the expiry view without activity filters', async () => {
+  vi.mocked(api.post).mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        mode: 2,
+        items: [],
+        total: 0,
+        as_of: 1792838400,
+        config_version: 2,
+        updating: false,
+      },
+    },
+  })
+  renderActivity()
+  expect(
+    await screen.findByRole('heading', { name: 'Expiring check-in quota' })
+  ).toBeVisible()
+  expect(
+    screen.queryByRole('combobox', { name: 'Activity filter' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('columnheader', { name: 'Monthly rewards / cap' })
+  ).not.toBeInTheDocument()
+  expect(api.get).not.toHaveBeenCalled()
+})
+
 async function renderAdmin(path: string, role: number) {
   useAuthStore.getState().auth.setUser({ id: 1, username: 'operator', role })
   const root = createRootRoute()
@@ -218,6 +246,7 @@ async function renderAdmin(path: string, role: number) {
       createRoute({
         getParentRoute: () => root,
         path: '/system-settings/billing/$section',
+        component: CheckinSettingsPage,
         beforeLoad: BillingRoute.options.beforeLoad as (context: {
           params: { section: string }
         }) => void,
@@ -238,7 +267,7 @@ async function renderAdmin(path: string, role: number) {
 test('administrators can open the standalone activity page without requesting root settings', async () => {
   await renderAdmin('/checkin', ROLE.ADMIN)
   expect(
-    await screen.findByRole('heading', { name: 'User activity' })
+    await screen.findByRole('heading', { name: 'Check-in usage' })
   ).toBeVisible()
   await screen.findByRole('button', { name: 'Active user' })
   expect(
@@ -254,12 +283,16 @@ test('regular users visiting the activity URL are redirected before any admin da
   expect(api.post).not.toHaveBeenCalled()
 })
 
-test('the former check-in settings URL redirects to the standalone page with working save controls', async () => {
+test('check-in settings stay on a separate page without fetching usage data', async () => {
   const router = await renderAdmin(
     '/system-settings/billing/checkin',
     ROLE.SUPER_ADMIN
   )
-  await waitFor(() => expect(router.state.location.pathname).toBe('/checkin'))
+  await waitFor(() =>
+    expect(router.state.location.pathname).toBe(
+      '/system-settings/billing/checkin'
+    )
+  )
   expect(
     await screen.findByRole('button', { name: 'Save check-in settings' })
   ).toBeDisabled()
@@ -270,7 +303,10 @@ test('the former check-in settings URL redirects to the standalone page with wor
   expect(
     screen.getByRole('button', { name: 'Save check-in settings' })
   ).toBeEnabled()
-  await screen.findByRole('button', { name: 'Active user' })
+  expect(
+    screen.queryByRole('button', { name: 'Active user' })
+  ).not.toBeInTheDocument()
+  expect(api.post).not.toHaveBeenCalled()
 })
 
 test('selecting an activity filter requests a new server page and displays its results', async () => {
@@ -359,4 +395,99 @@ test('the first statistics snapshot shows loading instead of zero totals or an e
   expect(screen.queryByText('Full activity')).not.toBeInTheDocument()
   expect(screen.queryByText(/1970-01-01/)).not.toBeInTheDocument()
   expect(screen.queryByText('No records')).not.toBeInTheDocument()
+})
+
+test('switching to expiring rewards saves validity independently and preserves activity settings', async () => {
+  const user = userEvent.setup()
+  const save = vi.spyOn(api, 'put').mockImplementation(async (_url, body) => ({
+    data: {
+      success: true,
+      data: { ...(body as object), version: 3, observed_since: 1700000000 },
+    },
+  }))
+  await renderAdmin('/system-settings/billing/checkin', ROLE.SUPER_ADMIN)
+  fireEvent.change(
+    await screen.findByRole('spinbutton', { name: 'Activity window (days)' }),
+    { target: { value: '0' } }
+  )
+  const method = await screen.findByRole('combobox', {
+    name: 'Check-in method',
+  })
+  await user.click(method)
+  await user.click(
+    await screen.findByRole('option', { name: 'Method 2: Expiring rewards' })
+  )
+  expect(
+    screen.queryByLabelText('Monthly check-in reward cap')
+  ).not.toBeInTheDocument()
+  const minutes = screen.getByRole('spinbutton', {
+    name: 'Reward validity (minutes)',
+  })
+  fireEvent.change(minutes, { target: { value: '35' } })
+  await user.click(
+    screen.getByRole('button', { name: 'Save check-in settings' })
+  )
+  await waitFor(() =>
+    expect(save).toHaveBeenCalledWith(
+      '/api/option/checkin',
+      expect.objectContaining({
+        version: 2,
+        settings: expect.objectContaining({
+          mode: 2,
+          expiry_seconds: 2100,
+          limits: expect.objectContaining({
+            monthly_cap: 1000,
+            activity_days: 0,
+          }),
+        }),
+      })
+    )
+  )
+  await user.click(method)
+  await user.click(
+    await screen.findByRole('option', { name: 'Method 1: Activity rewards' })
+  )
+  expect(screen.getByLabelText('Monthly check-in reward cap')).toHaveValue(1000)
+  expect(
+    screen.queryByLabelText('Reward validity (minutes)')
+  ).not.toBeInTheDocument()
+})
+
+test('expiring reward validity rejects zero before saving', async () => {
+  const user = userEvent.setup()
+  const save = vi.spyOn(api, 'put')
+  await renderAdmin('/system-settings/billing/checkin', ROLE.SUPER_ADMIN)
+  await user.click(
+    await screen.findByRole('combobox', { name: 'Check-in method' })
+  )
+  await user.click(
+    await screen.findByRole('option', { name: 'Method 2: Expiring rewards' })
+  )
+  fireEvent.change(
+    screen.getByRole('spinbutton', { name: 'Reward validity (minutes)' }),
+    { target: { value: '0' } }
+  )
+  await user.click(
+    screen.getByRole('button', { name: 'Save check-in settings' })
+  )
+  await waitFor(() =>
+    expect(
+      screen.getByRole('spinbutton', { name: 'Reward validity (minutes)' })
+    ).toHaveAttribute('aria-invalid', 'true')
+  )
+  expect(save).not.toHaveBeenCalled()
+})
+
+test('root users see usage and a settings link without a settings form on the usage page', async () => {
+  await renderAdmin('/checkin', ROLE.SUPER_ADMIN)
+  expect(
+    await screen.findByRole('button', { name: 'Active user' })
+  ).toBeVisible()
+  expect(
+    screen.getByRole('button', { name: 'Check-in Settings' })
+  ).toHaveAttribute('href', '/system-settings/billing/checkin')
+  expect(
+    screen.queryByRole('button', { name: 'Save check-in settings' })
+  ).not.toBeInTheDocument()
+  expect(api.get).not.toHaveBeenCalledWith('/api/option/checkin')
 })

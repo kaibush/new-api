@@ -17,6 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 export interface CheckinEligibility {
+  mode?: number
+  expiry_seconds?: number
   limited: boolean
   allowed: boolean
   reasons: string[]
@@ -52,6 +54,8 @@ export interface CheckinEligibility {
 }
 
 export interface CheckinSettings {
+  mode?: number
+  expiry_seconds?: number
   enabled: boolean
   min_quota: number
   max_quota: number
@@ -89,6 +93,7 @@ export interface CheckinUserQuery {
 }
 
 export interface CheckinUserPage {
+  mode?: number
   items: CheckinUser[]
   total: number
   as_of: number
@@ -118,6 +123,7 @@ export interface CheckinOverview {
 }
 
 export interface CheckinUserDetail {
+  grants?: CheckinGrantSummary
   user: CheckinUser
   days: CheckinDay[]
   records: Array<{
@@ -129,4 +135,24 @@ export interface CheckinUserDetail {
       base_quota: number
     } | null
   }>
+}
+
+export interface CheckinGrantStatus {
+  checkin_id: number
+  quota: number
+  available: number
+  reserved: number
+  used: number
+  expired: number
+  created_at: number
+  expires_at: number
+}
+
+export interface CheckinGrantSummary {
+  available: number
+  reserved: number
+  used: number
+  expired: number
+  as_of: number
+  records: CheckinGrantStatus[]
 }

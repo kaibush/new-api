@@ -46,6 +46,8 @@ func TestMain(m *testing.M) {
 	common.LogConsumeEnabled = true
 
 	if err := db.AutoMigrate(
+		&model.CheckinGrant{},
+		&model.CheckinFunding{},
 		&model.Checkin{},
 		&model.CheckinAccount{},
 		&model.CheckinUsage{},
@@ -78,6 +80,8 @@ func truncate(t *testing.T) {
 		model.DB.Exec("DELETE FROM checkin_usages")
 		model.DB.Exec("DELETE FROM checkin_accounts")
 		model.DB.Exec("DELETE FROM checkins")
+		require.NoError(t, model.DB.Where("1 = 1").Delete(&model.CheckinGrant{}).Error)
+		require.NoError(t, model.DB.Where("1 = 1").Delete(&model.CheckinFunding{}).Error)
 		model.DB.Exec("DELETE FROM tasks")
 		model.DB.Exec("DELETE FROM users")
 		model.DB.Exec("DELETE FROM tokens")
@@ -1846,4 +1850,87 @@ func TestCheckinAccountingFollowsSettlementWithoutConsumeLogs(t *testing.T) {
 	require.NoError(t, model.DB.Where("user_id = ?", userID).Find(&usages).Error)
 	require.Len(t, usages, 2)
 	assert.Equal(t, int64(0), countLogs(t))
+}
+
+func TestExpiringCheckinBillingSessionAndTaskRefund(t *testing.T) {
+	truncate(t)
+	const userID = 850
+	seedUser(t, userID, 500)
+	require.NoError(t, model.DB.Create(&model.CheckinGrant{CheckinID: 850, UserID: userID, Quota: 100, Remaining: 100, ExpiresAt: time.Now().Unix() + 3600}).Error)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	info := &relaycommon.RelayInfo{UserId: userID, RequestId: "expiring-session", IsPlayground: true, TokenUnlimited: true}
+	info.UserSetting.BillingPreference = "wallet_only"
+	session, apiErr := NewBillingSession(ctx, info, 80)
+	require.Nil(t, apiErr)
+	info.Billing = session
+	require.NotEmpty(t, info.CheckinFundingSource)
+	require.NoError(t, session.Reserve(130))
+	assert.Equal(t, 470, getUserQuota(t, userID))
+	require.NoError(t, SettleBilling(ctx, info, 60))
+	assert.Equal(t, 500, getUserQuota(t, userID))
+	summary, err := model.GetCheckinGrants(userID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(60), summary.Used)
+	assert.Equal(t, int64(40), summary.Available)
+	assert.Zero(t, summary.Reserved)
+
+	// A persisted task keeps the funding receipt across process/session lifetimes.
+	taskInfo := &relaycommon.RelayInfo{UserId: userID, RequestId: "expiring-task", IsPlayground: true, ForcePreConsume: true}
+	taskInfo.UserSetting.BillingPreference = "wallet_only"
+	taskSession, apiErr := NewBillingSession(ctx, taskInfo, 70)
+	require.Nil(t, apiErr)
+	taskInfo.Billing = taskSession
+	require.NoError(t, taskSession.Settle(70))
+	task := makeTask(userID, 0, 70, 0, BillingSourceWallet, 0)
+	task.PrivateData.CheckinFundingSource = taskInfo.CheckinFundingSource
+	require.NoError(t, task.Insert())
+	persisted := &model.Task{}
+	require.NoError(t, model.DB.First(persisted, task.ID).Error)
+	require.Equal(t, taskInfo.CheckinFundingSource, persisted.PrivateData.CheckinFundingSource)
+	task = persisted
+	require.NoError(t, model.DB.Model(&model.CheckinGrant{}).Where("user_id = ?", userID).Update("expires_at", time.Now().Unix()).Error)
+	assert.True(t, RefundTaskQuota(context.Background(), task, "provider failure"))
+	assert.Equal(t, 500, getUserQuota(t, userID), "task refund restores only the paid portion")
+	summary, err = model.GetCheckinGrants(userID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(40), summary.Expired)
+	assert.Equal(t, int64(60), summary.Used)
+	assert.Zero(t, summary.Available)
+	assert.Zero(t, summary.Reserved)
+}
+
+func TestExpiringCheckinMidjourneyRefund(t *testing.T) {
+	truncate(t)
+	const userID, tokenID, channelID = 851, 851, 851
+	seedUser(t, userID, 500)
+	seedToken(t, tokenID, userID, "sk-expiring-mj", 500)
+	seedChannel(t, channelID)
+	require.NoError(t, model.DB.Create(&model.CheckinGrant{CheckinID: 851, UserID: userID, Quota: 100, Remaining: 100, ExpiresAt: time.Now().Unix() + 3600}).Error)
+	info := &relaycommon.RelayInfo{UserId: userID, TokenId: tokenID, TokenKey: "sk-expiring-mj", UserQuota: 600, UsingGroup: "default", ChannelMeta: &relaycommon.ChannelMeta{ChannelId: channelID}}
+	task := &model.Midjourney{UserId: userID, MjId: "expiring-mj", ChannelId: channelID, Action: "IMAGINE"}
+	prepared, err := PrepareMidjourneyTaskBilling(info, task, 130, true)
+	require.NoError(t, err)
+	require.NoError(t, task.Insert())
+	billed, err := SettleMidjourneyTaskBilling(info, task, prepared)
+	require.NoError(t, err)
+	require.True(t, billed)
+	assert.Equal(t, 470, getUserQuota(t, userID))
+	require.NoError(t, model.DB.Model(&model.CheckinGrant{}).Where("user_id = ?", userID).Update("expires_at", time.Now().Unix()).Error)
+	reloaded := getMidjourneyTask(t, task.Id)
+	task = &reloaded
+	RecordCompletedMidjourneyCheckinUsage(t.Context(), task)
+	summary, err := model.GetCheckinGrants(userID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(100), summary.Used, "a task keeps its pre-expiry reservation")
+	require.True(t, RefundMidjourneyQuota(t.Context(), task, "provider failure"))
+	assert.Equal(t, 500, getUserQuota(t, userID))
+	assert.Equal(t, 500, getTokenRemainQuota(t, tokenID))
+	summary, err = model.GetCheckinGrants(userID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(100), summary.Expired)
+	assert.Zero(t, summary.Available)
+	assert.Zero(t, summary.Used)
+	require.True(t, RefundMidjourneyQuota(t.Context(), task, "duplicate refund"))
+	assert.Equal(t, 500, getUserQuota(t, userID))
 }

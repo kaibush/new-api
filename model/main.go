@@ -369,6 +369,8 @@ func migrateDB() error {
 		&TwoFA{},
 		&TwoFABackupCode{},
 		&Checkin{},
+		&CheckinGrant{},
+		&CheckinFunding{},
 		&CheckinAccount{},
 		&CheckinUsage{},
 		&CheckinUsageDay{},

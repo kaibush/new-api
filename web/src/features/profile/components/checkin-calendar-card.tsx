@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   CalendarDays,
   ChevronDown,
@@ -43,6 +43,7 @@ import {
   TooltipTrigger,
   TooltipProvider,
 } from '@/components/ui/tooltip'
+import { CheckinGrantStatus } from '@/features/checkin/components/grant-status'
 import { CheckinRewardDetails } from '@/features/checkin/components/reward-details'
 import { formatQuotaWithCurrency } from '@/lib/currency'
 import dayjs from '@/lib/dayjs'
@@ -65,6 +66,7 @@ export function CheckinCalendarCard({
   turnstileSiteKey,
 }: CheckinCalendarCardProps) {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const [currentMonth, setCurrentMonth] = useState(() => {
     const now = new Date()
     return new Date(now.getFullYear(), now.getMonth(), 1)
@@ -99,7 +101,7 @@ export function CheckinCalendarCard({
       }
       throw createServerError(res, t('Failed to fetch checkin status'))
     },
-    enabled: checkinEnabled,
+    refetchInterval: 30000,
     staleTime: 30000,
   })
   /* eslint-enable @tanstack/query/exhaustive-deps */
@@ -156,7 +158,8 @@ export function CheckinCalendarCard({
           toast.success(
             `${t('Check-in successful! Received')} ${formatQuotaWithCurrency(res.data.quota_awarded)}`
           )
-          refetch()
+          void refetch()
+          void queryClient.invalidateQueries({ queryKey: ['checkin-balance'] })
           setTurnstileModalVisible(false)
         } else {
           if (!token && shouldTriggerTurnstile(res.message)) {
@@ -179,7 +182,7 @@ export function CheckinCalendarCard({
         setCheckinLoading(false)
       }
     },
-    [refetch, shouldTriggerTurnstile, t, turnstileSiteKey]
+    [queryClient, refetch, shouldTriggerTurnstile, t, turnstileSiteKey]
   )
 
   const handlePrevMonth = () => {
@@ -229,7 +232,7 @@ export function CheckinCalendarCard({
 
   const weekDays = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
 
-  if (!checkinEnabled) {
+  if (!checkinEnabled && !checkinData?.grants?.records.length) {
     return null
   }
 
@@ -309,6 +312,10 @@ export function CheckinCalendarCard({
         </div>
       </Dialog>
 
+      {checkinData?.grants &&
+        (eligibility?.mode === 2 || checkinData.grants.records.length > 0) && (
+          <CheckinGrantStatus grants={checkinData.grants} />
+        )}
       <Card data-card-hover='false' className='gap-0 overflow-hidden py-0'>
         {/* Header */}
         <div className='border-b p-4 sm:p-6'>
@@ -351,18 +358,7 @@ export function CheckinCalendarCard({
               </div>
             </button>
             <Button
-              onClick={() => {
-                if (
-                  eligibility &&
-                  (!eligibility.allowed ||
-                    eligibility.reward_percent < 100 ||
-                    eligibility.max_quota < eligibility.base_max_quota)
-                ) {
-                  setRewardDialogOpen(true)
-                } else {
-                  void doCheckin()
-                }
-              }}
+              onClick={() => setRewardDialogOpen(true)}
               disabled={checkinLoading || checkedToday || !checkinData}
               size='sm'
               className='w-full shrink-0 sm:w-auto'
@@ -393,7 +389,7 @@ export function CheckinCalendarCard({
             </Button>
           </div>
         )}
-        {eligibility?.limited && (
+        {eligibility && (eligibility.limited || eligibility.mode === 2) && (
           <div className='px-4 pb-4 sm:px-6'>
             <Alert>
               <AlertDescription>

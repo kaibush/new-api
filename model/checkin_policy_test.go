@@ -89,9 +89,18 @@ func TestCheckinPolicyDatabaseMatrix(t *testing.T) {
 					name = "upgrade_rc42"
 				}
 				t.Run(name, func(t *testing.T) {
-					require.NoError(t, db.Migrator().DropTable(&CheckinUsageDay{}, &CheckinPolicyState{}, &Option{}, &CheckinUsage{}, &CheckinAccount{}, &Checkin{}, &checkinTestUser{}))
+					// Each scenario represents a separate application startup. Do not
+					// reuse PostgreSQL prepared plans after replacing the schema.
+					require.NoError(t, sqlDB.Close())
+					db, err = gorm.Open(driver, &gorm.Config{})
+					require.NoError(t, err)
+					sqlDB, err = db.DB()
+					require.NoError(t, err)
+					sqlDB.SetMaxOpenConns(4)
+					DB = db
+					require.NoError(t, db.Migrator().DropTable(&Task{}, &CheckinGrant{}, &CheckinFunding{}, &CheckinUsageDay{}, &CheckinPolicyState{}, &Option{}, &CheckinUsage{}, &CheckinAccount{}, &Checkin{}, &checkinTestUser{}))
 					t.Cleanup(func() {
-						require.NoError(t, db.Migrator().DropTable(&CheckinUsageDay{}, &CheckinPolicyState{}, &Option{}, &CheckinUsage{}, &CheckinAccount{}, &Checkin{}, &checkinTestUser{}))
+						require.NoError(t, db.Migrator().DropTable(&Task{}, &CheckinGrant{}, &CheckinFunding{}, &CheckinUsageDay{}, &CheckinPolicyState{}, &Option{}, &CheckinUsage{}, &CheckinAccount{}, &Checkin{}, &checkinTestUser{}))
 					})
 					require.NoError(t, db.AutoMigrate(&checkinTestUser{}, &Option{}))
 					if upgrade {
@@ -104,7 +113,7 @@ func TestCheckinPolicyDatabaseMatrix(t *testing.T) {
 						require.NoError(t, db.Create(&Option{Key: "checkin_setting.min_quota", Value: "1234"}).Error)
 					}
 					for range 2 {
-						require.NoError(t, db.AutoMigrate(&Checkin{}, &CheckinAccount{}, &CheckinUsage{}, &CheckinUsageDay{}, &CheckinPolicyState{}))
+						require.NoError(t, db.AutoMigrate(&Task{}, &CheckinGrant{}, &CheckinFunding{}, &Checkin{}, &CheckinAccount{}, &CheckinUsage{}, &CheckinUsageDay{}, &CheckinPolicyState{}))
 						require.NoError(t, InitializeCheckinAccounting())
 					}
 					if upgrade {
@@ -121,6 +130,7 @@ func TestCheckinPolicyDatabaseMatrix(t *testing.T) {
 						assert.Error(t, db.Create(&CheckinUsageDay{UserID: 99, Day: 86400}).Error)
 						assert.Error(t, db.Create(&Checkin{UserId: 99, CheckinDate: "2025-01-01"}).Error)
 					}
+					t.Run("expiring_rewards", func(t *testing.T) { verifyExpiringCheckinFunding(t, db) })
 					now := time.Now()
 					require.NoError(t, db.Model(&CheckinPolicyState{}).Where("id = ?", 1).Update("observed_since", now.AddDate(-2, 0, 0).Unix()).Error)
 					user := checkinTestUser{Id: 1, Quota: 1000000, CreatedAt: now.Unix()}
@@ -679,4 +689,273 @@ func TestCheckinGraceCalendarDays(t *testing.T) {
 			assert.Equal(t, days < 7, slices.Contains(e.Reasons, "new_user_grace"))
 		}
 	}
+}
+
+func TestCheckinRegistrationGraceExpiry(t *testing.T) {
+	zone, err := time.LoadLocation("Asia/Shanghai")
+	require.NoError(t, err)
+	registered := time.Date(2026, 10, 21, 21, 55, 28, 0, zone)
+	expires := registered.AddDate(0, 0, 5)
+	config := CheckinConfiguration{
+		ObservedSince: registered.Unix(),
+		Settings: operation_setting.CheckinSetting{
+			Enabled: true, MinQuota: 17500000, MaxQuota: 17500000,
+			Limits: operation_setting.CheckinLimits{
+				Enabled: true, MonthlyCap: 300000000, ActivityDays: 4,
+				MinimumSpend: 50000000, ReducedPercent: 1, NewUserDays: 5,
+			},
+		},
+	}
+	require.NoError(t, config.Settings.Validate())
+	user := User{CreatedAt: registered.Unix()}
+	for _, tc := range []struct {
+		name       string
+		at         time.Time
+		inGrace    bool
+		wantReward int
+	}{
+		{"sixth_calendar_date_before_expiry", time.Date(2026, 10, 26, 10, 34, 29, 0, zone), true, 17500000},
+		{"one_second_before_expiry", expires.Add(-time.Second), true, 17500000},
+		{"exact_expiry", expires, false, 175000},
+		{"next_checkin_date", time.Date(2026, 10, 27, 0, 0, 0, 0, zone), false, 175000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := calculateCheckin(&user, &CheckinAccount{}, config, checkinFacts{MonthlyAwarded: 87500000}, tc.at)
+			assert.True(t, e.HistoryComplete)
+			assert.Zero(t, e.RecentSpend)
+			assert.True(t, e.Allowed)
+			assert.Equal(t, expires.Unix(), e.ObservationUntil)
+			assert.Equal(t, tc.inGrace, slices.Contains(e.Reasons, "new_user_grace"))
+			assert.Equal(t, tc.wantReward, e.MinQuota)
+			assert.Equal(t, tc.wantReward, e.MaxQuota)
+			assert.Equal(t, tc.wantReward, checkinReward(config.Settings.MaxQuota, e))
+			if tc.inGrace {
+				assert.Equal(t, 1, e.GraceRemainingDays)
+				assert.Equal(t, 100.0, e.RewardPercent)
+			} else {
+				assert.Zero(t, e.GraceRemainingDays)
+				assert.Equal(t, 1.0, e.RewardPercent)
+				assert.Contains(t, e.Reasons, "low_activity")
+				assert.Contains(t, e.Reasons, "reward_floor")
+			}
+		})
+	}
+}
+
+func verifyExpiringCheckinFunding(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	t.Cleanup(func() {
+		for _, value := range []any{&Task{}, &CheckinGrant{}, &CheckinFunding{}, &CheckinUsage{}, &CheckinUsageDay{}, &CheckinAccount{}, &Checkin{}} {
+			require.NoError(t, db.Where("user_id IN ?", []int{800, 801, 802}).Delete(value).Error)
+		}
+		require.NoError(t, db.Where("id IN ?", []int{800, 801, 802}).Delete(&checkinTestUser{}).Error)
+	})
+	const userID = 800
+	now := time.Now()
+	settings := operation_setting.CheckinSetting{Mode: 2, ExpirySeconds: 3600, Enabled: true, MinQuota: 100, MaxQuota: 100,
+		Limits: operation_setting.CheckinLimits{Enabled: true, MonthlyCap: 1, ActivityDays: 30, MinimumSpend: 1000}}
+	require.NoError(t, settings.Validate())
+	saveCheckinTestSettings(t, settings)
+	require.NoError(t, db.Create(&checkinTestUser{Id: userID, Quota: 1000, CreatedAt: now.AddDate(-1, 0, 0).Unix()}).Error)
+	require.NoError(t, BeginCheckinUsage(userID, "pending_other_request", true))
+	reward, err := UserCheckin(userID)
+	require.NoError(t, err)
+	assert.Equal(t, 100, reward.QuotaAwarded, "activity, pending usage and monthly cap never reduce method 2")
+	_, err = UserCheckin(userID)
+	require.Error(t, err, "daily uniqueness still applies")
+	var grant CheckinGrant
+	require.NoError(t, db.First(&grant, reward.Id).Error)
+	assert.Equal(t, int64(3600), grant.ExpiresAt-grant.CreatedAt)
+	paid, err := GetUserQuota(userID, true)
+	require.NoError(t, err)
+	assert.Equal(t, 1000, paid, "a gift never credits purchased balance")
+	balances, err := GetCheckinBalances(userID)
+	require.NoError(t, err)
+	assert.Equal(t, &CheckinBalances{WalletQuota: 1000, CheckinQuota: 100}, balances)
+	task := Task{UserId: userID, TaskID: "expiring-funding", PrivateData: TaskPrivateData{CheckinFundingSource: "mixed_request"}}
+	require.NoError(t, db.Create(&task).Error)
+	var reloaded Task
+	require.NoError(t, db.First(&reloaded, task.ID).Error)
+	assert.Equal(t, "mixed_request", reloaded.PrivateData.CheckinFundingSource, "the receipt survives each database's JSON serialization")
+
+	require.ErrorIs(t, SetCheckinFunding(userID, "too_large", 2000, true, false), ErrCheckinFundingInsufficient)
+	summary, err := GetCheckinGrants(userID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(100), summary.Available, "failed reserve rolls back gift allocation")
+	require.NoError(t, SetCheckinFunding(userID, "mixed_request", 130, true, false))
+	require.NoError(t, SetCheckinFunding(userID, "mixed_request", 130, true, false))
+	paid, err = GetUserQuota(userID, true)
+	require.NoError(t, err)
+	assert.Equal(t, 970, paid)
+	summary, err = GetCheckinGrants(userID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(100), summary.Reserved)
+	assert.Zero(t, summary.Used)
+	require.NoError(t, SetCheckinFunding(userID, "mixed_request", 60, false, true))
+	require.NoError(t, SetCheckinFunding(userID, "mixed_request", 60, false, true))
+	summary, err = GetCheckinGrants(userID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(40), summary.Available)
+	assert.Equal(t, int64(60), summary.Used)
+	assert.Zero(t, summary.Reserved)
+	paid, err = GetUserQuota(userID, true)
+	require.NoError(t, err)
+	assert.Equal(t, 1000, paid, "partial settlement returns purchased funds first")
+	require.NoError(t, db.Model(&CheckinAccount{}).Where("user_id = ?", userID).Update("gift_remaining", 25).Error)
+	require.NoError(t, BeginCheckinUsage(userID, "mixed_request", true))
+	require.NoError(t, CompleteCheckinUsage(userID, "mixed_request", 60, "mixed_request"))
+	var account CheckinAccount
+	require.NoError(t, db.First(&account, "user_id = ?", userID).Error)
+	assert.Equal(t, int64(25), account.GiftRemaining, "method 2 usage must not consume method 1 gifts again")
+	balances, err = GetCheckinBalances(userID)
+	require.NoError(t, err)
+	assert.Equal(t, &CheckinBalances{WalletQuota: 975, CheckinQuota: 65}, balances, "both gift methods are displayed separately from paid funds")
+
+	// No worker or delete is involved; the boundary itself makes unused quota unspendable.
+	require.NoError(t, db.Model(&grant).Update("expires_at", time.Now().Unix()).Error)
+	available, isolated, err := CheckinFundingBalance(userID)
+	require.NoError(t, err)
+	assert.True(t, isolated)
+	assert.Equal(t, 1000, available)
+	summary, err = GetCheckinGrants(userID)
+	require.NoError(t, err)
+	assert.Zero(t, summary.Available)
+	assert.Equal(t, int64(40), summary.Expired)
+	balances, err = GetCheckinBalances(userID)
+	require.NoError(t, err)
+	assert.Equal(t, &CheckinBalances{WalletQuota: 975, CheckinQuota: 25}, balances, "expiry removes only method 2 gifts")
+	require.NoError(t, SetCheckinFunding(userID, "mixed_request", 0, false, true))
+	require.NoError(t, SetCheckinFunding(userID, "mixed_request", 0, false, true))
+	summary, err = GetCheckinGrants(userID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(100), summary.Expired, "expired refunds cannot become purchased balance")
+	assert.Zero(t, summary.Used)
+	paid, err = GetUserQuota(userID, true)
+	require.NoError(t, err)
+	assert.Equal(t, 1000, paid)
+	require.NoError(t, IncreaseUserQuota(userID, 500, false))
+	paid, err = GetUserQuota(userID, true)
+	require.NoError(t, err)
+	assert.Equal(t, 1500, paid)
+
+	settings.ExpirySeconds = 1800
+	saveCheckinTestSettings(t, settings)
+	require.NoError(t, db.Model(reward).Update("checkin_date", now.AddDate(0, 0, -1).Format("2006-01-02")).Error)
+	next, err := UserCheckin(userID)
+	require.NoError(t, err)
+	assert.Equal(t, 100, next.QuotaAwarded, "the next day grants full reward again")
+	var nextGrant CheckinGrant
+	require.NoError(t, db.First(&nextGrant, next.Id).Error)
+	assert.Equal(t, int64(1800), nextGrant.ExpiresAt-nextGrant.CreatedAt)
+	settings.Mode = 1
+	settings.Limits.MonthlyCap = 1000
+	saveCheckinTestSettings(t, settings)
+	e, err := GetCheckinEligibility(userID)
+	require.NoError(t, err)
+	assert.Zero(t, e.MonthlyAwarded, "method 2 claims do not count toward method 1's cap")
+	summary, err = GetCheckinGrants(userID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(100), summary.Available, "switching modes preserves existing grants")
+	settings.Enabled = false
+	saveCheckinTestSettings(t, settings)
+	require.NoError(t, SetCheckinFunding(userID, "after_disabled", 50, true, false))
+	require.NoError(t, db.Model(&nextGrant).Update("expires_at", time.Now().Unix()).Error)
+	require.NoError(t, SetCheckinFunding(userID, "after_disabled", 50, false, true))
+	summary, err = GetCheckinGrants(userID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(50), summary.Used, "reservations made before expiry remain funded")
+	require.NoError(t, SetCheckinFunding(userID, "after_disabled", 0, false, true))
+	paid, err = GetUserQuota(userID, true)
+	require.NoError(t, err)
+	assert.Equal(t, 1500, paid)
+
+	t.Run("concurrent_gift_only_spending", func(t *testing.T) {
+		const giftOnlyUser = 801
+		require.NoError(t, db.Create(&checkinTestUser{Id: giftOnlyUser, Quota: 0}).Error)
+		grants := []CheckinGrant{
+			{CheckinID: 900001, UserID: giftOnlyUser, Quota: 30, Remaining: 30, ExpiresAt: now.Unix() + 3600},
+			{CheckinID: 900002, UserID: giftOnlyUser, Quota: 70, Remaining: 70, ExpiresAt: now.Unix() + 7200},
+		}
+		require.NoError(t, db.Create(&grants).Error)
+		errs := make(chan error, 2)
+		var wg sync.WaitGroup
+		for _, source := range []string{"parallel_a", "parallel_b"} {
+			wg.Go(func() { errs <- SetCheckinFunding(giftOnlyUser, source, 80, true, false) })
+		}
+		wg.Wait()
+		close(errs)
+		successful := 0
+		for err := range errs {
+			if err == nil {
+				successful++
+			} else {
+				assert.ErrorIs(t, err, ErrCheckinFundingInsufficient)
+			}
+		}
+		assert.Equal(t, 1, successful)
+		summary, err := GetCheckinGrants(giftOnlyUser)
+		require.NoError(t, err)
+		assert.Equal(t, int64(20), summary.Available)
+		assert.Equal(t, int64(80), summary.Reserved)
+		require.NoError(t, db.First(&grants[0], grants[0].CheckinID).Error)
+		assert.Zero(t, grants[0].Remaining, "earliest expiration is used first")
+		paid, err := GetUserQuota(giftOnlyUser, true)
+		require.NoError(t, err)
+		assert.Zero(t, paid)
+	})
+
+	t.Run("cached_batched_wallet_stays_separate", func(t *testing.T) {
+		const cachedUser = 802
+		useUserCacheMiniRedis(t)
+		oldBatch := common.BatchUpdateEnabled
+		common.BatchUpdateEnabled = true
+		t.Cleanup(func() { common.BatchUpdateEnabled = oldBatch })
+		require.NoError(t, db.Create(&checkinTestUser{Id: cachedUser, Quota: 100}).Error)
+		require.NoError(t, db.Create(&CheckinGrant{CheckinID: 900003, UserID: cachedUser, Quota: 20, Remaining: 20, ExpiresAt: now.Unix() + 3600}).Error)
+		// 90 units belong to an outstanding legacy batch; only 10 are spendable.
+		require.NoError(t, common.RDB.HSet(t.Context(), getUserCacheKey(cachedUser), map[string]any{
+			"Id": cachedUser, "Quota": 10, "AuthVersion": 1, "CacheSchema": userCacheSchemaVersion,
+		}).Err())
+		require.ErrorIs(t, SetCheckinFunding(cachedUser, "cached_rejected", 31, true, false), ErrCheckinFundingInsufficient)
+		// A legacy reservation racing the database write must already see the
+		// isolated debit in Redis. A failed write restores that debit exactly once.
+		failure := fmt.Errorf("database update unavailable")
+		require.NoError(t, db.Callback().Update().Before("gorm:update").Register("checkin_wallet_failure", func(tx *gorm.DB) {
+			if tx.Statement.Table != "users" {
+				return
+			}
+			reserved, err := TryReserveUserQuota(cachedUser, 1)
+			assert.NoError(t, err)
+			assert.False(t, reserved, "outstanding cached funds cannot be reserved twice")
+			tx.AddError(failure)
+		}))
+		fundingErr := SetCheckinFunding(cachedUser, "cached_rollback", 30, true, false)
+		require.NoError(t, db.Callback().Update().Remove("checkin_wallet_failure"))
+		require.ErrorIs(t, fundingErr, failure)
+		cached, err := GetUserQuota(cachedUser, false)
+		require.NoError(t, err)
+		assert.Equal(t, 10, cached, "rollback restores the cached paid reservation")
+		require.NoError(t, SetCheckinFunding(cachedUser, "cached_request", 30, true, false))
+		cached, err = GetUserQuota(cachedUser, false)
+		require.NoError(t, err)
+		assert.Zero(t, cached)
+		paid, err := GetUserQuota(cachedUser, true)
+		require.NoError(t, err)
+		assert.Equal(t, 90, paid, "isolated funding persists immediately even when batching is enabled")
+		require.NoError(t, db.Model(&CheckinGrant{}).Where("user_id = ?", cachedUser).Update("expires_at", time.Now().Unix()).Error)
+		require.NoError(t, SetCheckinFunding(cachedUser, "cached_request", 0, false, true))
+		cached, err = GetUserQuota(cachedUser, false)
+		require.NoError(t, err)
+		assert.Equal(t, 10, cached, "expired gifts never enter the purchased-quota cache")
+		paid, err = GetUserQuota(cachedUser, true)
+		require.NoError(t, err)
+		assert.Equal(t, 100, paid)
+	})
+	for _, seconds := range []int{-1, 0, 59, 365*86400 + 1} {
+		settings.Mode, settings.ExpirySeconds = 2, seconds
+		assert.Error(t, settings.Validate())
+	}
+	settings.ExpirySeconds = 60
+	settings.Limits = operation_setting.CheckinLimits{}
+	require.NoError(t, settings.Validate(), "method 2 does not require method 1 settings")
 }

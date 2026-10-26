@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { createFileRoute, redirect } from '@tanstack/react-router'
 
+import { CheckinSettingsPage } from '@/features/checkin/components/settings-page'
 import { BillingSettings } from '@/features/system-settings/billing'
 import {
   BILLING_DEFAULT_SECTION,
@@ -28,9 +29,6 @@ export const Route = createFileRoute(
   '/_authenticated/system-settings/billing/$section'
 )({
   beforeLoad: ({ params }) => {
-    if (params.section === 'checkin') {
-      throw redirect({ to: '/checkin', replace: true })
-    }
     const validSections = BILLING_SECTION_IDS as unknown as string[]
     if (!validSections.includes(params.section)) {
       throw redirect({
@@ -39,5 +37,11 @@ export const Route = createFileRoute(
       })
     }
   },
-  component: BillingSettings,
+  component: BillingSectionPage,
 })
+
+function BillingSectionPage() {
+  const params = Route.useParams()
+  if (params.section === 'checkin') return <CheckinSettingsPage />
+  return <BillingSettings />
+}

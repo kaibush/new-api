@@ -50,6 +50,11 @@ func (s *BillingSession) Settle(actualQuota int) error {
 	}
 	delta := actualQuota - s.preConsumedQuota
 	if delta == 0 {
+		if funding, ok := s.funding.(*WalletFunding); ok && funding.checkinSource != "" {
+			if err := funding.Settle(0); err != nil {
+				return err
+			}
+		}
 		s.settled = true
 		return nil
 	}
@@ -107,6 +112,7 @@ func (s *BillingSession) Refund(c *gin.Context) {
 	subscriptionId := s.relayInfo.SubscriptionId
 	funding := s.funding
 	checkinUserID, checkinSource := s.relayInfo.UserId, "request:"+s.relayInfo.RequestId
+	checkinFundingSource := s.relayInfo.CheckinFundingSource
 	trackCheckin := !s.relayInfo.ForcePreConsume && s.relayInfo.TaskRelayInfo == nil
 
 	gopool.Go(func() {
@@ -114,7 +120,7 @@ func (s *BillingSession) Refund(c *gin.Context) {
 		if err := funding.Refund(); err != nil {
 			common.SysLog("error refunding billing source: " + err.Error())
 		} else if trackCheckin {
-			if err := model.CompleteCheckinUsage(checkinUserID, checkinSource, 0); err != nil {
+			if err := model.CompleteCheckinUsage(checkinUserID, checkinSource, 0, checkinFundingSource); err != nil {
 				common.SysError("refund check-in accounting: " + err.Error())
 			}
 		}
@@ -260,6 +266,13 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 func (s *BillingSession) reserveFunding(delta int, requireAvailableQuota bool) error {
 	switch funding := s.funding.(type) {
 	case *WalletFunding:
+		if funding.checkinSource != "" && !requireAvailableQuota {
+			err := model.SetCheckinFunding(funding.userId, funding.checkinSource, funding.consumed+delta, false, false)
+			if err == nil {
+				funding.consumed += delta
+			}
+			return err
+		}
 		if requireAvailableQuota {
 			// Image quantity is known before submission, including retries and
 			// overrides. Reserve atomically instead of admitting wallet debt.
@@ -299,6 +312,14 @@ func (s *BillingSession) reserveFunding(delta int, requireAvailableQuota bool) e
 func (s *BillingSession) rollbackFundingReserve(delta int) {
 	switch funding := s.funding.(type) {
 	case *WalletFunding:
+		if funding.checkinSource != "" {
+			if err := model.SetCheckinFunding(funding.userId, funding.checkinSource, funding.consumed-delta, false, false); err != nil {
+				common.SysError("rollback check-in funding reserve: " + err.Error())
+			} else {
+				funding.consumed -= delta
+			}
+			return
+		}
 		if err := model.IncreaseUserQuota(funding.userId, delta, false); err != nil {
 			common.SysLog("error rolling back wallet funding reserve: " + err.Error())
 		} else {
@@ -323,6 +344,9 @@ func (s *BillingSession) reserveToken(delta int) error {
 
 // shouldTrust 统一信任额度检查，适用于钱包和订阅。
 func (s *BillingSession) shouldTrust(c *gin.Context) bool {
+	if funding, ok := s.funding.(*WalletFunding); ok && funding.checkinSource != "" {
+		return false
+	}
 	// 异步任务（ForcePreConsume=true）必须预扣全额，不允许信任旁路
 	if s.relayInfo.ForcePreConsume {
 		return false
@@ -362,6 +386,10 @@ func (s *BillingSession) syncRelayInfo() {
 	info := s.relayInfo
 	info.FinalPreConsumedQuota = s.preConsumedQuota
 	info.BillingSource = s.funding.Source()
+	info.CheckinFundingSource = ""
+	if funding, ok := s.funding.(*WalletFunding); ok {
+		info.CheckinFundingSource = funding.checkinSource
+	}
 
 	if sub, ok := s.funding.(*SubscriptionFunding); ok {
 		info.SubscriptionId = sub.subscriptionId
@@ -391,7 +419,7 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 
 	// 钱包路径需要先检查用户额度
 	tryWallet := func() (*BillingSession, *types.NewAPIError) {
-		userQuota, err := model.GetUserQuota(relayInfo.UserId, false)
+		userQuota, isolated, err := model.CheckinFundingBalance(relayInfo.UserId)
 		if err != nil {
 			return nil, types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
 		}
@@ -409,9 +437,17 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 		}
 		relayInfo.UserQuota = userQuota
 
+		funding := &WalletFunding{userId: relayInfo.UserId}
+		if isolated {
+			if relayInfo.RequestId == "" {
+				relayInfo.RequestId = common.GetUUID()
+			}
+			funding.checkinSource = "request:" + relayInfo.RequestId
+			funding.task = relayInfo.ForcePreConsume || relayInfo.TaskRelayInfo != nil
+		}
 		session := &BillingSession{
 			relayInfo: relayInfo,
-			funding:   &WalletFunding{userId: relayInfo.UserId},
+			funding:   funding,
 		}
 		if apiErr := session.preConsume(c, preConsumedQuota); apiErr != nil {
 			return nil, apiErr

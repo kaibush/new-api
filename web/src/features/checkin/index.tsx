@@ -16,37 +16,39 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { lazy, Suspense } from 'react'
+import { Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
-import { LoadingState } from '@/components/loading-state'
+import { Button } from '@/components/ui/button'
 import { SettingsPageFrame } from '@/features/system-settings/components/settings-page'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { CheckinActivityPanel } from './components/activity-panel'
 
-const CheckinSettingsSection = lazy(() =>
-  import('./components/settings-section').then((module) => ({
-    default: module.CheckinSettingsSection,
-  }))
-)
-
 export function CheckinAdmin() {
   const { t } = useTranslation()
   const canConfigure = useAuthStore(
     (state) => state.auth.user?.role === ROLE.SUPER_ADMIN
   )
-
   return (
-    <SettingsPageFrame title={t('User activity')}>
-      {canConfigure ? (
-        <Suspense fallback={<LoadingState />}>
-          <CheckinSettingsSection />
-        </Suspense>
-      ) : (
-        <CheckinActivityPanel />
+    <SettingsPageFrame title={t('Check-in usage')}>
+      {canConfigure && (
+        <div>
+          <Button
+            variant='outline'
+            render={
+              <Link
+                to='/system-settings/billing/$section'
+                params={{ section: 'checkin' }}
+              />
+            }
+          >
+            {t('Check-in Settings')}
+          </Button>
+        </div>
       )}
+      <CheckinActivityPanel />
     </SettingsPageFrame>
   )
 }

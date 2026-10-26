@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 )
 
@@ -33,13 +34,28 @@ type FundingSource interface {
 var ErrInsufficientWalletQuota = errors.New("wallet quota insufficient")
 
 type WalletFunding struct {
-	userId   int
-	consumed int // 实际预扣的用户额度
+	userId        int
+	consumed      int // 实际预扣的用户额度
+	checkinSource string
+	task          bool
 }
 
 func (w *WalletFunding) Source() string { return BillingSourceWallet }
 
 func (w *WalletFunding) PreConsume(amount int) error {
+	if amount < 0 || amount > common.MaxQuota-w.consumed {
+		return errors.New("invalid wallet reservation")
+	}
+	if w.checkinSource != "" {
+		err := model.SetCheckinFunding(w.userId, w.checkinSource, w.consumed+amount, true, false)
+		if errors.Is(err, model.ErrCheckinFundingInsufficient) {
+			return ErrInsufficientWalletQuota
+		}
+		if err == nil {
+			w.consumed += amount
+		}
+		return err
+	}
 	if amount <= 0 {
 		return nil
 	}
@@ -50,11 +66,18 @@ func (w *WalletFunding) PreConsume(amount int) error {
 	if !reserved {
 		return ErrInsufficientWalletQuota
 	}
-	w.consumed = amount
+	w.consumed += amount
 	return nil
 }
 
 func (w *WalletFunding) Settle(delta int) error {
+	if w.checkinSource != "" {
+		err := model.SetCheckinFunding(w.userId, w.checkinSource, w.consumed+delta, false, !w.task)
+		if err == nil {
+			w.consumed += delta
+		}
+		return err
+	}
 	if delta == 0 {
 		return nil
 	}
@@ -65,6 +88,9 @@ func (w *WalletFunding) Settle(delta int) error {
 }
 
 func (w *WalletFunding) Refund() error {
+	if w.checkinSource != "" {
+		return model.SetCheckinFunding(w.userId, w.checkinSource, 0, false, true)
+	}
 	if w.consumed <= 0 {
 		return nil
 	}

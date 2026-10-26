@@ -33,21 +33,33 @@ func (s CheckinLimits) Validate() error {
 
 // CheckinSetting 签到功能配置
 type CheckinSetting struct {
-	Limits   CheckinLimits `json:"limits"`
-	Enabled  bool          `json:"enabled"`   // 是否启用签到功能
-	MinQuota int           `json:"min_quota"` // 签到最小额度奖励
-	MaxQuota int           `json:"max_quota"` // 签到最大额度奖励
+	Mode          int           `json:"mode"` // 0 is the legacy activity mode (1).
+	ExpirySeconds int           `json:"expiry_seconds"`
+	Limits        CheckinLimits `json:"limits"`
+	Enabled       bool          `json:"enabled"`   // 是否启用签到功能
+	MinQuota      int           `json:"min_quota"` // 签到最小额度奖励
+	MaxQuota      int           `json:"max_quota"` // 签到最大额度奖励
 }
 
 func (s CheckinSetting) Validate() error {
+	if s.Mode < 0 || s.Mode > 2 {
+		return fmt.Errorf("Invalid check-in mode")
+	}
+	if s.ExpirySeconds < 0 || s.ExpirySeconds > 365*86400 || s.Mode == 2 && s.ExpirySeconds < 60 {
+		return fmt.Errorf("Check-in validity must be between 1 minute and 365 days")
+	}
 	if s.MinQuota < 0 || s.MaxQuota < s.MinQuota || s.MaxQuota > common.MaxQuota {
 		return fmt.Errorf("Invalid check-in reward range")
+	}
+	if s.Mode == 2 {
+		return nil
 	}
 	return s.Limits.Validate()
 }
 
 // 默认配置
 var checkinSetting = CheckinSetting{
+	Mode: 1, ExpirySeconds: 86400,
 	Limits:   CheckinLimits{MonthlyCap: 300000, ActivityDays: 30, MinimumSpend: 50000, ReducedPercent: 20, NewUserDays: 7},
 	Enabled:  false, // 默认关闭
 	MinQuota: 1000,  // 默认最小额度 1000 (约 0.002 USD)

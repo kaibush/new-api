@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { CheckinSettingsSection } from '@/features/checkin/components/settings-section'
 import { parseCurrencyDisplayType } from '@/lib/currency'
 
 import { PricingSection } from '../general/pricing-section'
@@ -53,6 +54,11 @@ const getGroupDefaults = (settings: BillingSettings) => ({
 })
 
 const BILLING_SECTIONS = [
+  {
+    id: 'checkin',
+    titleKey: 'Check-in Settings',
+    build: () => <CheckinSettingsSection />,
+  },
   {
     id: 'quota',
     titleKey: 'Quota Settings',
