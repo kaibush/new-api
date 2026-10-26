@@ -61,7 +61,7 @@ beforeEach(() => {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: 100 })
-  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+  vi.spyOn(api, 'get').mockImplementation(async (url, config) => {
     if (url === '/api/input-audit/status') {
       return {
         data: {
@@ -70,11 +70,14 @@ beforeEach(() => {
         },
       }
     }
+    const page = Number(config?.params?.p ?? 1)
+    const pageEntry =
+      page === 1 ? entry : { ...entry, id: page, username: `page-${page}-user` }
     return {
       data: {
         success: true,
         data: {
-          items: url === '/api/input-audit' ? [entry] : [],
+          items: url === '/api/input-audit' ? [pageEntry] : [],
           total: url === '/api/input-audit' ? 41 : 0,
         },
       },
@@ -159,32 +162,95 @@ it('invalid user IDs are rejected and valid user filters reset pagination', asyn
   expect(screen.getByRole('textbox', { name: 'User ID' })).toHaveValue('')
 })
 
-it('next page requests server pagination while keeping the user filter', async () => {
-  render(
+it('mobile message lists fill the available height and scroll inside the page', async () => {
+  const matchMedia = window.matchMedia.bind(window)
+  vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+    ...matchMedia(query),
+    matches: query === '(max-width: 640px)',
+  }))
+  const { container } = render(
     <QueryClientProvider client={client}>
-      <AuditLogs />
+      <InputAuditViewer />
     </QueryClientProvider>
   )
-  await userEvent.click(screen.getByRole('tab', { name: 'Input Audits' }))
-  await screen.findByText('alice (#4)')
-  fireEvent.change(screen.getByRole('textbox', { name: 'User ID' }), {
-    target: { value: '4' },
-  })
-  await userEvent.click(screen.getByRole('button', { name: 'Search' }))
-  await waitFor(() =>
-    expect(api.get).toHaveBeenCalledWith('/api/input-audit', {
-      params: expect.objectContaining({ user_id: 4, p: 1 }),
-    })
-  )
-  const next = await screen.findByRole('button', { name: 'Go to next page' })
-  await waitFor(() => expect(next).toBeEnabled())
-  await userEvent.click(next)
-  await waitFor(() =>
-    expect(api.get).toHaveBeenCalledWith('/api/input-audit', {
-      params: expect.objectContaining({ user_id: 4, p: 2, page_size: 20 }),
-    })
-  )
+  const row = await screen.findByText('alice (#4)')
+  expect(container.firstElementChild).toHaveClass('h-full', 'min-h-0')
+  expect(container.firstElementChild).not.toHaveClass('h-auto')
+  expect(row.closest('.overflow-y-auto')).toHaveClass('min-h-0', 'flex-1')
 })
+
+it.each([false, true])(
+  'next and previous pages keep the user filter (mobile=%s)',
+  async (mobile) => {
+    const matchMedia = window.matchMedia.bind(window)
+    vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+      ...matchMedia(query),
+      matches: mobile && query === '(max-width: 640px)',
+    }))
+    render(
+      <QueryClientProvider client={client}>
+        <AuditLogs />
+      </QueryClientProvider>
+    )
+    await userEvent.click(screen.getByRole('tab', { name: 'Input Audits' }))
+    await screen.findByText('alice (#4)')
+    fireEvent.change(screen.getByRole('textbox', { name: 'User ID' }), {
+      target: { value: '4' },
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Search' }))
+    await waitFor(() =>
+      expect(api.get).toHaveBeenCalledWith('/api/input-audit', {
+        params: expect.objectContaining({ user_id: 4, p: 1 }),
+      })
+    )
+    const next = await screen.findByRole('button', { name: 'Go to next page' })
+    await waitFor(() => expect(next).toBeEnabled())
+    if (mobile) {
+      expect(
+        within(screen.getByRole('navigation', { name: 'Page' })).getByText(
+          '1 / 3'
+        )
+      ).toBeVisible()
+    } else {
+      expect(screen.getByRole('combobox')).toBeVisible()
+    }
+    expect(
+      screen.getByRole('button', { name: 'Go to previous page' })
+    ).toBeDisabled()
+    await userEvent.click(next)
+    await waitFor(() =>
+      expect(api.get).toHaveBeenCalledWith('/api/input-audit', {
+        params: expect.objectContaining({ user_id: 4, p: 2, page_size: 20 }),
+      })
+    )
+    await screen.findByText('page-2-user (#4)')
+    if (mobile) expect(screen.getByText('2 / 3')).toBeVisible()
+    await waitFor(() => expect(next).toBeEnabled())
+    await userEvent.click(next)
+    await screen.findByText('page-3-user (#4)')
+    expect(next).toBeDisabled()
+    expect(api.get).toHaveBeenLastCalledWith('/api/input-audit', {
+      params: expect.objectContaining({ user_id: 4, p: 3, page_size: 20 }),
+    })
+    if (mobile) await screen.findByText('3 / 3')
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Go to previous page' })
+    )
+    await screen.findByText('page-2-user (#4)')
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Go to previous page' })
+    )
+    await screen.findByText('alice (#4)')
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Go to previous page' })
+      ).toBeDisabled()
+    )
+    expect(api.get).toHaveBeenLastCalledWith('/api/input-audit', {
+      params: expect.objectContaining({ user_id: 4, p: 1, page_size: 20 }),
+    })
+  }
+)
 
 it('settings remain open after a rejected save and close after a successful retry', async () => {
   const put = vi

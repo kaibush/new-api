@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next'
 import { DataTablePage, useDataTable } from '@/components/data-table'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { useMediaQuery } from '@/hooks'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
 import { ROLE } from '@/lib/roles'
@@ -47,6 +48,7 @@ const EMPTY_ROWS: InputAudit[] = []
 
 export function InputAuditViewer() {
   const { t, i18n } = useTranslation()
+  const isMobile = useMediaQuery('(max-width: 640px)')
   const user = useAuthStore((state) => state.auth.user)
   const queryClient = useQueryClient()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
@@ -138,8 +140,8 @@ export function InputAuditViewer() {
       emptyTitle={
         query.isError ? t('Failed to load audit records') : t('No records')
       }
-      className='h-auto min-h-0 flex-1'
       paginationInFooter
+      compactPagination={isMobile}
       toolbar={
         <div className='flex flex-col gap-2'>
           <p className='text-muted-foreground text-xs'>
