@@ -51,6 +51,8 @@ import { cn } from '@/lib/utils'
 
 import { confirmPaymentCompliance } from '../api'
 import {
+  SettingsControlGroup,
+  SettingsControlChildren,
   SettingsForm,
   SettingsSwitchContent,
   SettingsSwitchItem,
@@ -105,6 +107,12 @@ const paymentSchema = z.object({
   EpayKey: z.string(),
   Price: z.coerce.number().min(0),
   MinTopUp: z.coerce.number().min(0),
+  MonthlyTopUpLimitEnabled: z.boolean(),
+  MonthlyTopUpLimit: z.coerce
+    .number({
+      error: 'Monthly top-up limit must be a finite amount greater than 0',
+    })
+    .positive('Monthly top-up limit must be a finite amount greater than 0'),
   CustomCallbackAddress: z
     .string()
     .refine(
@@ -424,6 +432,8 @@ export function PaymentSettingsSection({
       EpayKey: values.EpayKey.trim(),
       Price: values.Price,
       MinTopUp: values.MinTopUp,
+      MonthlyTopUpLimitEnabled: values.MonthlyTopUpLimitEnabled,
+      MonthlyTopUpLimit: values.MonthlyTopUpLimit,
       CustomCallbackAddress: removeTrailingSlash(values.CustomCallbackAddress),
       PayMethods: values.PayMethods.trim(),
       AmountOptions: values.AmountOptions.trim(),
@@ -466,6 +476,8 @@ export function PaymentSettingsSection({
       EpayKey: initialRef.current.EpayKey.trim(),
       Price: initialRef.current.Price,
       MinTopUp: initialRef.current.MinTopUp,
+      MonthlyTopUpLimitEnabled: initialRef.current.MonthlyTopUpLimitEnabled,
+      MonthlyTopUpLimit: initialRef.current.MonthlyTopUpLimit,
       CustomCallbackAddress: removeTrailingSlash(
         initialRef.current.CustomCallbackAddress
       ),
@@ -527,6 +539,22 @@ export function PaymentSettingsSection({
 
     if (sanitized.MinTopUp !== initial.MinTopUp) {
       updates.push({ key: 'MinTopUp', value: sanitized.MinTopUp })
+    }
+
+    // Save the positive amount before enabling its enforcement.
+    if (sanitized.MonthlyTopUpLimit !== initial.MonthlyTopUpLimit) {
+      updates.push({
+        key: 'payment_setting.monthly_topup_limit',
+        value: sanitized.MonthlyTopUpLimit,
+      })
+    }
+    if (
+      sanitized.MonthlyTopUpLimitEnabled !== initial.MonthlyTopUpLimitEnabled
+    ) {
+      updates.push({
+        key: 'payment_setting.monthly_topup_limit_enabled',
+        value: sanitized.MonthlyTopUpLimitEnabled,
+      })
     }
 
     if (sanitized.CustomCallbackAddress !== initial.CustomCallbackAddress) {
@@ -949,6 +977,63 @@ export function PaymentSettingsSection({
                     )}
                   />
                 </div>
+
+                <SettingsControlGroup>
+                  <FormField
+                    control={form.control}
+                    name='MonthlyTopUpLimitEnabled'
+                    render={({ field }) => (
+                      <SettingsSwitchItem>
+                        <SettingsSwitchContent>
+                          <FormLabel>
+                            {t('Limit monthly top-ups per user')}
+                          </FormLabel>
+                          <FormDescription>
+                            {t(
+                              'Limit wallet credit from online payments and redemption codes per UTC calendar month. Pending payment orders also reserve the allowance.'
+                            )}
+                          </FormDescription>
+                        </SettingsSwitchContent>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </SettingsSwitchItem>
+                    )}
+                  />
+                  <SettingsControlChildren>
+                    <FormField
+                      control={form.control}
+                      name='MonthlyTopUpLimit'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>
+                            {t('Monthly top-up limit per user (USD)')}
+                          </FormLabel>
+                          <FormControl>
+                            <Input
+                              type='number'
+                              min='0.01'
+                              step='0.01'
+                              disabled={
+                                !currentFormValues.MonthlyTopUpLimitEnabled
+                              }
+                              {...safeNumberFieldProps(field)}
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            {t(
+                              'Enter a positive limit in USD wallet credit. Spending does not restore the monthly allowance; zero or unlimited amounts are not allowed.'
+                            )}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </SettingsControlChildren>
+                </SettingsControlGroup>
 
                 <FormField
                   control={form.control}

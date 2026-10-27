@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
+  'Monthly top-up limit must be a finite amount greater than 0',
+  'Monthly top-up limit reached (including pending orders). Reduce the amount or try again next month.',
   'Check-in reward is currently restricted',
   'Unable to verify check-in eligibility',
   'Limit check-in rewards',

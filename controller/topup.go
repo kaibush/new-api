@@ -243,12 +243,27 @@ func validateTopUpQuota(amount int64) (int, error) {
 	return 0, errors.New("充值数量无效")
 }
 
+func rejectMonthlyTopUpLimit(c *gin.Context, err error) bool {
+	if !errors.Is(err, model.ErrMonthlyTopUpLimitExceeded) {
+		return false
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message": "error",
+		"data":    err.Error(),
+		"code":    "MONTHLY_TOPUP_LIMIT_EXCEEDED",
+	})
+	return true
+}
+
 func rejectInvalidCreditedQuota(c *gin.Context, userId int, quota decimal.Decimal) bool {
 	creditedQuota, err := validateCreditedQuota(quota)
 	if err == nil {
 		err = model.ValidateTopUpQuotaCapacity(userId, creditedQuota)
 	}
 	if err != nil {
+		if rejectMonthlyTopUpLimit(c, err) {
+			return true
+		}
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": err.Error()})
 		return true
 	}
@@ -261,6 +276,9 @@ func rejectInvalidTopUpQuota(c *gin.Context, userId int, amount int64) bool {
 		err = model.ValidateTopUpQuotaCapacity(userId, creditedQuota)
 	}
 	if err != nil {
+		if rejectMonthlyTopUpLimit(c, err) {
+			return true
+		}
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": err.Error()})
 		return true
 	}
@@ -309,20 +327,7 @@ func RequestEpay(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "当前管理员未配置支付信息"})
 		return
 	}
-	uri, params, err := client.Purchase(&epay.PurchaseArgs{
-		Type:           req.PaymentMethod,
-		ServiceTradeNo: tradeNo,
-		Name:           fmt.Sprintf("TUC%d", req.Amount),
-		Money:          strconv.FormatFloat(payMoney, 'f', 2, 64),
-		Device:         epay.PC,
-		NotifyUrl:      notifyUrl,
-		ReturnUrl:      returnUrl,
-	})
-	if err != nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("易支付 拉起支付失败 user_id=%d trade_no=%s payment_method=%s amount=%d error=%q", id, tradeNo, req.PaymentMethod, req.Amount, err.Error()))
-		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "拉起支付失败"})
-		return
-	}
+
 	amount := req.Amount
 	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
 		dAmount := decimal.NewFromInt(int64(amount))
@@ -342,7 +347,25 @@ func RequestEpay(c *gin.Context) {
 	err = topUp.Insert()
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("易支付 创建充值订单失败 user_id=%d trade_no=%s payment_method=%s amount=%d error=%q", id, tradeNo, req.PaymentMethod, req.Amount, err.Error()))
+		if rejectMonthlyTopUpLimit(c, err) {
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "创建订单失败"})
+		return
+	}
+	uri, params, err := client.Purchase(&epay.PurchaseArgs{
+		Type:           req.PaymentMethod,
+		ServiceTradeNo: tradeNo,
+		Name:           fmt.Sprintf("TUC%d", req.Amount),
+		Money:          strconv.FormatFloat(payMoney, 'f', 2, 64),
+		Device:         epay.PC,
+		NotifyUrl:      notifyUrl,
+		ReturnUrl:      returnUrl,
+	})
+	if err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("易支付 拉起支付失败 user_id=%d trade_no=%s payment_method=%s amount=%d error=%q", id, tradeNo, req.PaymentMethod, req.Amount, err.Error()))
+		_ = model.UpdatePendingTopUpStatus(tradeNo, model.PaymentProviderEpay, common.TopUpStatusFailed)
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "拉起支付失败"})
 		return
 	}
 	logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 充值订单创建成功 user_id=%d trade_no=%s payment_method=%s amount=%d money=%.2f uri=%q params=%q", id, tradeNo, req.PaymentMethod, req.Amount, payMoney, uri, common.GetJsonString(params)))

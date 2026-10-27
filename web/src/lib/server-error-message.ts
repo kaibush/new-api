@@ -23,6 +23,8 @@ import i18next from 'i18next'
 export const safeServerErrorMessage = Symbol('safeServerErrorMessage')
 
 const serverErrorMessageKeys = {
+  MONTHLY_TOPUP_LIMIT_EXCEEDED:
+    'Monthly top-up limit reached (including pending orders). Reduce the amount or try again next month.',
   REGISTRATION_INVITATION_REQUIRED:
     'A valid registration invitation code is required to create an account',
   TELEGRAM_OAUTH_NOT_CONFIGURED:

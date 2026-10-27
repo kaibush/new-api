@@ -123,49 +123,66 @@ func TestRequestAmountRejectsTopUpThatCannotBeSettled(t *testing.T) {
 	assert.JSONEq(t, fmt.Sprintf(`{"message":"error","data":"单笔充值数量不能大于 %d"}`, maxAmount), recorder.Body.String())
 }
 
-func TestRequestAmountRejectsTopUpThatWouldOverflowWallet(t *testing.T) {
-	oldQuotaPerUnit := common.QuotaPerUnit
-	oldDisplayType := operation_setting.GetGeneralSetting().QuotaDisplayType
-	oldDB := model.DB
-	common.QuotaPerUnit = 500000
-	operation_setting.GetGeneralSetting().QuotaDisplayType = operation_setting.QuotaDisplayTypeUSD
+func TestRequestAmountRejectsTopUpOverQuotaLimits(t *testing.T) {
+	for _, monthly := range []bool{false, true} {
+		t.Run(fmt.Sprintf("monthly=%t", monthly), func(t *testing.T) {
+			oldQuotaPerUnit := common.QuotaPerUnit
+			oldDisplayType := operation_setting.GetGeneralSetting().QuotaDisplayType
+			oldDB := model.DB
+			oldPaymentSetting := *operation_setting.GetPaymentSetting()
+			operation_setting.GetPaymentSetting().MonthlyTopUpLimitEnabled = monthly
+			operation_setting.GetPaymentSetting().MonthlyTopUpLimit = 0.5
+			common.QuotaPerUnit = 500000
+			operation_setting.GetGeneralSetting().QuotaDisplayType = operation_setting.QuotaDisplayTypeUSD
 
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.User{}))
-	model.DB = db
-	t.Cleanup(func() {
-		common.QuotaPerUnit = oldQuotaPerUnit
-		operation_setting.GetGeneralSetting().QuotaDisplayType = oldDisplayType
-		model.DB = oldDB
-		sqlDB, dbErr := db.DB()
-		if dbErr == nil {
-			require.NoError(t, sqlDB.Close())
-		}
-	})
+			db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+			require.NoError(t, err)
+			require.NoError(t, db.AutoMigrate(&model.User{}, &model.TopUp{}, &model.Redemption{}))
+			model.DB = db
+			t.Cleanup(func() {
+				common.QuotaPerUnit = oldQuotaPerUnit
+				operation_setting.GetGeneralSetting().QuotaDisplayType = oldDisplayType
+				model.DB = oldDB
+				*operation_setting.GetPaymentSetting() = oldPaymentSetting
+				sqlDB, dbErr := db.DB()
+				if dbErr == nil {
+					require.NoError(t, sqlDB.Close())
+				}
+			})
 
-	require.NoError(t, model.DB.Create(&model.User{
-		Id:       42,
-		Username: "topup_capacity_user",
-		Quota:    common.MaxWalletQuota - 100_000,
-		Status:   common.UserStatusEnabled,
-	}).Error)
+			quota := common.MaxWalletQuota - 100_000
+			if monthly {
+				quota = 0
+			}
+			require.NoError(t, model.DB.Create(&model.User{
+				Id:       42,
+				Username: "topup_capacity_user",
+				Quota:    quota,
+				Status:   common.UserStatusEnabled,
+			}).Error)
 
-	gin.SetMode(gin.TestMode)
-	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Set("id", 42)
-	ctx.Request = httptest.NewRequest(
-		http.MethodPost,
-		"/api/user/amount",
-		strings.NewReader(`{"amount":1}`),
-	)
-	ctx.Request.Header.Set("Content-Type", "application/json")
+			gin.SetMode(gin.TestMode)
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Set("id", 42)
+			ctx.Request = httptest.NewRequest(
+				http.MethodPost,
+				"/api/user/amount",
+				strings.NewReader(`{"amount":1}`),
+			)
+			ctx.Request.Header.Set("Content-Type", "application/json")
 
-	RequestAmount(ctx)
+			RequestAmount(ctx)
 
-	assert.Equal(t, http.StatusOK, recorder.Code)
-	assert.JSONEq(t, `{"message":"error","data":"top-up quota limit exceeded"}`, recorder.Body.String())
+			assert.Equal(t, http.StatusOK, recorder.Code)
+			if monthly {
+				assert.JSONEq(t, `{"message":"error","data":"Monthly top-up limit reached (including pending orders). Reduce the amount or try again next month.","code":"MONTHLY_TOPUP_LIMIT_EXCEEDED"}`, recorder.Body.String())
+			} else {
+				assert.JSONEq(t, `{"message":"error","data":"top-up quota limit exceeded"}`, recorder.Body.String())
+			}
+
+		})
+	}
 }
 
 func TestValidateCreditedQuotaRejectsOverflow(t *testing.T) {

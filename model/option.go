@@ -231,6 +231,9 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
+	if err := operation_setting.ValidateMonthlyTopUpLimitOption(key, value); err != nil {
+		return err
+	}
 	if key == "checkin_setting.limits" {
 		var limits operation_setting.CheckinLimits
 		if err := common.UnmarshalJsonStr(value, &limits); err != nil {

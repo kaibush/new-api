@@ -390,6 +390,9 @@ func RequestWaffoPancakePay(c *gin.Context) {
 	}
 	if err := topUp.Insert(); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 创建充值订单失败 user_id=%d trade_no=%s amount=%d error=%q", id, tradeNo, req.Amount, err.Error()))
+		if rejectMonthlyTopUpLimit(c, err) {
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "创建订单失败"})
 		return
 	}
@@ -408,8 +411,7 @@ func RequestWaffoPancakePay(c *gin.Context) {
 	})
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 创建结账会话失败 user_id=%d trade_no=%s error=%q", id, tradeNo, err.Error()))
-		topUp.Status = common.TopUpStatusFailed
-		_ = topUp.Update()
+		_ = model.UpdatePendingTopUpStatus(tradeNo, model.PaymentProviderWaffoPancake, common.TopUpStatusFailed)
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "拉起支付失败"})
 		return
 	}

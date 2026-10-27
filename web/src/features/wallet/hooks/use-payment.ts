@@ -74,6 +74,10 @@ export async function requestPaymentAmount(
   }
 
   const response = await calculator({ amount: topupAmount })
+  if (response.code === 'MONTHLY_TOPUP_LIMIT_EXCEEDED') {
+    handleServerError(response)
+    return 0
+  }
   if (!isApiSuccess(response) || !response.data) {
     return 0
   }

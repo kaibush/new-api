@@ -16,7 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { describe, expect, test } from 'vitest'
+import { toast } from 'sonner'
+import { describe, expect, test, vi } from 'vitest'
 
 import { PAYMENT_TYPES } from '../constants'
 import { requestPaymentAmount } from './use-payment'
@@ -46,4 +47,23 @@ describe('payment amount routing', () => {
     expect(amount).toBe(18.75)
     expect(calls).toEqual(['waffo:120'])
   })
+})
+
+test('a monthly limit rejection shows the actionable message instead of a zero payment quote', async () => {
+  const notify = vi.spyOn(toast, 'error').mockReturnValue('monthly-limit')
+  const calculator = vi.fn().mockResolvedValue({
+    message: 'error',
+    code: 'MONTHLY_TOPUP_LIMIT_EXCEEDED',
+    data: 'monthly limit exceeded',
+  })
+  const amount = await requestPaymentAmount(100, PAYMENT_TYPES.STRIPE, {
+    regular: calculator,
+    stripe: calculator,
+    waffo: calculator,
+    waffoPancake: calculator,
+  })
+  expect(amount).toBe(0)
+  expect(notify).toHaveBeenCalledWith(
+    'Monthly top-up limit reached (including pending orders). Reduce the amount or try again next month.'
+  )
 })
