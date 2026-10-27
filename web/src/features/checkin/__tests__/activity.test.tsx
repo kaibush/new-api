@@ -150,6 +150,14 @@ beforeEach(() => {
             ? {
                 user: activeUser,
                 days: [],
+                grants: {
+                  available: 0,
+                  reserved: 0,
+                  used: 0,
+                  expired: 0,
+                  as_of: 1792838400,
+                  records: null,
+                },
                 records: [
                   {
                     checkin_date: '2026-10-23',

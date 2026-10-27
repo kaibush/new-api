@@ -80,10 +80,11 @@ func GetCheckinBalances(userID int) (*CheckinBalances, error) {
 }
 
 func GetCheckinGrants(userID int) (*CheckinGrantSummary, error) {
-	result := &CheckinGrantSummary{AsOf: time.Now().Unix(), Records: []CheckinGrantStatus{}}
+	asOf := time.Now().Unix()
+	result := &CheckinGrantSummary{}
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&CheckinGrant{}).Where("user_id = ?", userID).
-			Select("COALESCE(SUM(CASE WHEN expires_at > ? THEN remaining ELSE 0 END), 0) AS available, COALESCE(SUM(CASE WHEN expires_at <= ? THEN remaining ELSE 0 END), 0) AS expired, COALESCE(SUM(reserved), 0) AS reserved, COALESCE(SUM(used), 0) AS used", result.AsOf, result.AsOf).
+			Select("COALESCE(SUM(CASE WHEN expires_at > ? THEN remaining ELSE 0 END), 0) AS available, COALESCE(SUM(CASE WHEN expires_at <= ? THEN remaining ELSE 0 END), 0) AS expired, COALESCE(SUM(reserved), 0) AS reserved, COALESCE(SUM(used), 0) AS used", asOf, asOf).
 			Scan(result).Error; err != nil {
 			return err
 		}
@@ -91,6 +92,9 @@ func GetCheckinGrants(userID int) (*CheckinGrantSummary, error) {
 		if err := tx.Where("user_id = ?", userID).Order("created_at DESC, checkin_id DESC").Limit(100).Find(&grants).Error; err != nil {
 			return err
 		}
+		// Scan resets the destination struct, including fields outside the query.
+		result.AsOf = asOf
+		result.Records = make([]CheckinGrantStatus, 0, len(grants))
 		for _, grant := range grants {
 			status := CheckinGrantStatus{CheckinGrant: grant}
 			if grant.ExpiresAt > result.AsOf {

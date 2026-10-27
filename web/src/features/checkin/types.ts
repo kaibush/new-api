@@ -154,5 +154,6 @@ export interface CheckinGrantSummary {
   used: number
   expired: number
   as_of: number
-  records: CheckinGrantStatus[]
+  // Older servers return null when the user has not claimed any rewards.
+  records: CheckinGrantStatus[] | null
 }

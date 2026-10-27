@@ -232,7 +232,7 @@ export function CheckinCalendarCard({
 
   const weekDays = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
 
-  if (!checkinEnabled && !checkinData?.grants?.records.length) {
+  if (!checkinEnabled && !checkinData?.grants?.records?.length) {
     return null
   }
 
@@ -313,7 +313,8 @@ export function CheckinCalendarCard({
       </Dialog>
 
       {checkinData?.grants &&
-        (eligibility?.mode === 2 || checkinData.grants.records.length > 0) && (
+        (eligibility?.mode === 2 ||
+          Boolean(checkinData.grants.records?.length)) && (
           <CheckinGrantStatus grants={checkinData.grants} />
         )}
       <Card data-card-hover='false' className='gap-0 overflow-hidden py-0'>

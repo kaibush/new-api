@@ -89,13 +89,17 @@ const limits = {
   new_user_days: 7,
 }
 
-function renderCheckin(decision: CheckinEligibility) {
+function renderCheckin(
+  decision: CheckinEligibility,
+  grants?: Record<string, unknown>
+) {
   vi.spyOn(api, 'get').mockResolvedValue({
     data: {
       success: true,
       data: {
         enabled: true,
         eligibility: decision,
+        grants,
         stats: {
           checked_in_today: false,
           records: [],
@@ -513,6 +517,44 @@ test('expiring rewards show balances and expiry without activity restrictions, i
   ).toBeVisible()
   client.clear()
 })
+
+test.each([
+  { mode: 1, records: null },
+  { mode: 2, records: null },
+  { mode: 2, records: [] },
+])(
+  'method $mode with records=$records keeps check-in accessible before the first reward',
+  async ({ mode, records }) => {
+    await renderCheckin(
+      { ...eligibility, mode, expiry_seconds: 3600 },
+      {
+        available: 0,
+        reserved: 0,
+        used: 0,
+        expired: 0,
+        as_of: 1792838400,
+        records,
+      }
+    )
+    if (mode === 2) {
+      expect(screen.getByText('Expiring check-in quota')).toBeVisible()
+      expect(screen.getByRole('table')).toBeVisible()
+    } else {
+      expect(
+        screen.queryByText('Expiring check-in quota')
+      ).not.toBeInTheDocument()
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Check in now' }))
+    expect(api.post).not.toHaveBeenCalled()
+    const dialog = screen.getByRole('alertdialog')
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: 'Claim this reward' })
+    )
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith('/api/user/checkin')
+    )
+  }
+)
 
 test.each([1, 2])(
   'method %s always shows its own reminder before claiming',

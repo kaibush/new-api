@@ -69,7 +69,7 @@ export function CheckinGrantStatus(props: { grants: CheckinGrantSummary }) {
           {t('Recent expiring rewards (up to 100)')}
         </p>
         <StaticDataTable
-          data={grants.records}
+          data={grants.records ?? []}
           columns={[
             {
               id: 'claimed',

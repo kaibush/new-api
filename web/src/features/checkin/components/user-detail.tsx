@@ -77,7 +77,7 @@ export function CheckinUserDetailDialog(props: {
           <CheckinRewardDetails eligibility={query.data.user.eligibility} />
           {query.data.grants &&
             (query.data.user.eligibility.mode === 2 ||
-              query.data.grants.records.length > 0) && (
+              Boolean(query.data.grants.records?.length)) && (
               <CheckinGrantStatus grants={query.data.grants} />
             )}
           {query.data.user.eligibility.mode !== 2 && (
