@@ -225,6 +225,7 @@ export function ChatComposer(props: {
             attachment: pending,
             reply: props.reply,
           })
+          editor.current?.focus({ preventScroll: true })
         }
       }}
     >
@@ -380,7 +381,7 @@ export function ChatComposer(props: {
         placeholder={t('Write a message')}
         value={text}
         maxLength={2000}
-        disabled={send.isPending}
+        readOnly={send.isPending}
         rows={3}
         aria-describedby='community-send-hint'
         onCompositionStart={() => {
