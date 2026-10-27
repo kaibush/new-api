@@ -121,12 +121,57 @@ const inactiveUser = {
   },
 }
 
+const activityUser = {
+  id: 2,
+  username: 'active-user',
+  display_name: 'Active user',
+  consumed_quota: 5000000,
+  wallet_quota: 3000000,
+  checkin_quota: 1000000,
+  subscription_quota: 1000000,
+  charged_records: 12,
+  active_days: 3,
+  last_used_at: 1792838340,
+  pending_records: 1,
+  coverage_since: 1700000000,
+  history_complete: true,
+}
+const activityOverview = {
+  consumed_quota: 5000000,
+  wallet_quota: 3000000,
+  checkin_quota: 1000000,
+  subscription_quota: 1000000,
+  total_users: 2,
+  consuming_users: 1,
+  incomplete_users: 1,
+  pending_records: 1,
+  window_start: 1790246400,
+  as_of: 1792838400,
+  days: [],
+}
+
 beforeEach(() => {
   client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined)
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/user/activity/overview') {
+      return { data: { success: true, data: activityOverview } }
+    }
+    if (url === '/api/user/2/activity') {
+      return {
+        data: {
+          success: true,
+          data: {
+            user: activityUser,
+            window_start: 1790246400,
+            as_of: 1792838400,
+            days: [],
+          },
+        },
+      }
+    }
     if (url === '/api/option/checkin') {
       return {
         data: {
@@ -196,20 +241,28 @@ beforeEach(() => {
       },
     }
   })
-  vi.spyOn(api, 'post').mockImplementation(async (_url, query) => ({
+  vi.spyOn(api, 'post').mockImplementation(async (url, query) => ({
     data: {
       success: true,
-      data: {
-        items:
-          (query as CheckinUserQuery).filter === 'zero_activity'
-            ? [inactiveUser]
-            : [activeUser],
-        total: 1,
-        as_of: 1792838400,
-        config_version: 2,
-        updating: false,
-        preview: false,
-      },
+      data:
+        url === '/api/user/activity/users'
+          ? {
+              items: [activityUser],
+              total: 1,
+              window_start: 1790246400,
+              as_of: 1792838400,
+            }
+          : {
+              items:
+                (query as CheckinUserQuery).filter === 'zero_activity'
+                  ? [inactiveUser]
+                  : [activeUser],
+              total: 1,
+              as_of: 1792838400,
+              config_version: 2,
+              updating: false,
+              preview: false,
+            },
     },
   }))
 })
@@ -238,11 +291,13 @@ test('an empty method 2 search keeps the expiry view without activity filters', 
   })
   renderActivity()
   expect(
-    await screen.findByRole('heading', { name: 'Expiring check-in quota' })
+    await screen.findByRole('heading', { name: 'Check-in and balances' })
   ).toBeVisible()
-  expect(
-    screen.queryByRole('combobox', { name: 'Activity filter' })
-  ).not.toBeInTheDocument()
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('combobox', { name: 'Activity filter' })
+    ).not.toBeInTheDocument()
+  )
   expect(
     screen.queryByRole('columnheader', { name: 'Monthly rewards / cap' })
   ).not.toBeInTheDocument()
@@ -308,7 +363,7 @@ test.each([1, 2])(
     expect(row.getByText(expiry)).toBeVisible()
     fireEvent.click(button)
     const dialog = within(
-      await screen.findByRole('dialog', { name: 'Check-in reward details' })
+      await screen.findByRole('dialog', { name: 'User details' })
     )
     expect(
       await dialog.findByRole('group', { name: 'Recharged quota' })
@@ -399,9 +454,10 @@ async function renderAdmin(path: string, role: number) {
 test('administrators can open the standalone activity page without requesting root settings', async () => {
   await renderAdmin('/checkin', ROLE.ADMIN)
   expect(
-    await screen.findByRole('heading', { name: 'Check-in usage' })
+    await screen.findByRole('heading', { name: 'User activity' })
   ).toBeVisible()
-  await screen.findByRole('button', { name: 'Active user' })
+  await screen.findByRole('region', { name: 'Global usage overview' })
+  expect(api.post).not.toHaveBeenCalled()
   expect(
     screen.queryByRole('button', { name: 'Save check-in settings' })
   ).not.toBeInTheDocument()
@@ -462,11 +518,12 @@ test('user details retain the historical reward percentage after the current pol
   renderActivity()
   fireEvent.click(await screen.findByRole('button', { name: 'Active user' }))
   const dialog = await screen.findByRole('dialog', {
-    name: 'Check-in reward details',
+    name: 'User details',
   })
+  fireEvent.click(within(dialog).getByRole('tab', { name: 'Reward history' }))
   fireEvent.click(
     await within(dialog).findByRole('button', {
-      name: '2026-10-23 · Check-in reward details',
+      name: /2026-10-23 · Check-in reward details/,
     })
   )
   expect(
@@ -490,43 +547,15 @@ test('a failed user query offers a retry and recovers without showing stale reco
   )
 })
 
-test('the first statistics snapshot shows loading instead of zero totals or an epoch timestamp', async () => {
-  vi.mocked(api.get).mockResolvedValue({
-    data: {
-      success: true,
-      data: {
-        as_of: 0,
-        config_version: 2,
-        updating: true,
-        total: 0,
-        grace: 0,
-        active: 0,
-        low_activity: 0,
-        zero_activity: 0,
-        incomplete: 0,
-        pending: 0,
-        distribution: [],
-        days: [],
-      },
-    },
-  })
-  vi.mocked(api.post).mockResolvedValue({
-    data: {
-      success: true,
-      data: {
-        as_of: 0,
-        config_version: 2,
-        updating: true,
-        items: [],
-        total: 0,
-      },
-    },
-  })
-  renderActivity()
-  await screen.findAllByText('Updating activity statistics...')
-  expect(screen.queryByText('Full activity')).not.toBeInTheDocument()
+test('global statistics show loading until a response arrives and recover from failures', async () => {
+  vi.mocked(api.get).mockRejectedValueOnce(new Error('Unavailable'))
+  await renderAdmin('/checkin', ROLE.ADMIN)
+  fireEvent.click(await screen.findByRole('button', { name: 'Retry' }))
+  expect(
+    await screen.findByRole('region', { name: 'Global usage overview' })
+  ).toBeVisible()
   expect(screen.queryByText(/1970-01-01/)).not.toBeInTheDocument()
-  expect(screen.queryByText('No records')).not.toBeInTheDocument()
+  expect(api.post).not.toHaveBeenCalled()
 })
 
 test('switching to expiring rewards saves validity independently and preserves activity settings', async () => {
@@ -613,7 +642,7 @@ test('expiring reward validity rejects zero before saving', async () => {
 test('root users see usage and a settings link without a settings form on the usage page', async () => {
   await renderAdmin('/checkin', ROLE.SUPER_ADMIN)
   expect(
-    await screen.findByRole('button', { name: 'Active user' })
+    await screen.findByRole('region', { name: 'Global usage overview' })
   ).toBeVisible()
   expect(
     screen.getByRole('button', { name: 'Check-in Settings' })
@@ -622,4 +651,118 @@ test('root users see usage and a settings link without a settings form on the us
     screen.queryByRole('button', { name: 'Save check-in settings' })
   ).not.toBeInTheDocument()
   expect(api.get).not.toHaveBeenCalledWith('/api/option/checkin')
+})
+
+test('overview, user usage and rewards fetch independently while the usage period is preserved', async () => {
+  const user = userEvent.setup()
+  await renderAdmin('/checkin', ROLE.ADMIN)
+  const overview = await screen.findByRole('region', {
+    name: 'Global usage overview',
+  })
+  expect(
+    within(overview).getByRole('group', { name: 'Recharged quota' })
+  ).toHaveTextContent(formatQuotaWithCurrency(3000000))
+  expect(api.post).not.toHaveBeenCalled()
+  expect(
+    screen.getByRole('combobox', { name: 'Usage period' })
+  ).toHaveTextContent('Last 30 days')
+  await user.click(screen.getByRole('combobox', { name: 'Usage period' }))
+  await user.click(screen.getByRole('option', { name: 'Last 7 days' }))
+  await waitFor(() =>
+    expect(api.get).toHaveBeenCalledWith(
+      '/api/user/activity/overview',
+      expect.objectContaining({ params: { days: 7 } })
+    )
+  )
+  await user.click(screen.getByRole('tab', { name: 'User usage' }))
+  const selected = await screen.findByRole('button', { name: 'Active user' })
+  expect(
+    screen.getByRole('combobox', { name: 'Usage period' })
+  ).toHaveTextContent('Last 7 days')
+  expect(
+    screen.getByRole('combobox', { name: 'Usage status' })
+  ).toHaveTextContent('All users')
+  expect(
+    screen.getByRole('combobox', { name: 'Usage sorting' })
+  ).toHaveTextContent('Spending: high to low')
+  expect(
+    screen.queryByRole('region', { name: 'Global usage overview' })
+  ).not.toBeInTheDocument()
+  expect(api.post).toHaveBeenCalledWith(
+    '/api/user/activity/users',
+    expect.objectContaining({ days: 7 }),
+    expect.anything()
+  )
+  await user.click(selected)
+  const dialog = within(
+    await screen.findByRole('dialog', { name: 'User details' })
+  )
+  expect(
+    await dialog.findByRole('group', { name: 'Days with spending' })
+  ).toHaveTextContent('3')
+  expect(
+    dialog.getByRole('group', { name: 'Charged records' })
+  ).toHaveTextContent('12')
+  expect(api.get).not.toHaveBeenCalledWith('/api/user/2/checkin')
+  expect(
+    dialog.queryByText('Recent expiring rewards (up to 100)')
+  ).not.toBeInTheDocument()
+  await user.click(dialog.getByRole('tab', { name: 'Balance' }))
+  await dialog.findByText('Recent expiring rewards (up to 100)')
+  expect(
+    dialog.queryByRole('group', { name: 'Charged records' })
+  ).not.toBeInTheDocument()
+  expect(api.get).toHaveBeenCalledWith('/api/user/2/checkin')
+  await user.click(dialog.getByRole('tab', { name: 'Reward history' }))
+  expect(await dialog.findByText('Recent check-in rewards')).toBeVisible()
+  expect(
+    dialog.queryByText('Recent expiring rewards (up to 100)')
+  ).not.toBeInTheDocument()
+})
+
+test('mode 2 keeps the global and per-user statistics available after viewing balances', async () => {
+  const user = userEvent.setup()
+  const post = vi.mocked(api.post).getMockImplementation()
+  if (!post) throw new Error('Expected API fixture')
+  vi.mocked(api.post).mockImplementation(async (url, body, options) => {
+    if (url === '/api/user/checkin/users') {
+      return {
+        data: {
+          success: true,
+          data: {
+            mode: 2,
+            items: [],
+            total: 0,
+            as_of: 1792838400,
+            config_version: 2,
+          },
+        },
+      }
+    }
+    return post(url, body, options)
+  })
+  await renderAdmin('/checkin', ROLE.ADMIN)
+  await screen.findByRole('region', { name: 'Global usage overview' })
+  await user.click(screen.getByRole('tab', { name: 'Check-in and balances' }))
+  await screen.findByText('No records')
+  expect(
+    screen.queryByRole('combobox', { name: 'Usage period' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('region', { name: 'Global usage overview' })
+  ).not.toBeInTheDocument()
+  await user.click(screen.getByRole('tab', { name: 'Global overview' }))
+  expect(
+    await screen.findByRole('region', { name: 'Global usage overview' })
+  ).toBeVisible()
+  await user.click(screen.getByRole('tab', { name: 'User usage' }))
+  expect(
+    await screen.findByRole('button', { name: 'Active user' })
+  ).toBeVisible()
+  expect(
+    screen.getByRole('columnheader', { name: 'Settled spending' })
+  ).toBeVisible()
+  expect(
+    screen.queryByRole('columnheader', { name: 'Monthly rewards / cap' })
+  ).not.toBeInTheDocument()
 })

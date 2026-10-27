@@ -132,6 +132,7 @@ func TestCheckinPolicyDatabaseMatrix(t *testing.T) {
 					}
 					t.Run("expiring_rewards", func(t *testing.T) { verifyExpiringCheckinFunding(t, db) })
 					t.Run("admin_balances", func(t *testing.T) { verifyCheckinAdminBalances(t, db) })
+					t.Run("independent_user_activity", func(t *testing.T) { verifyIndependentUserActivity(t, db) })
 					now := time.Now()
 					require.NoError(t, db.Model(&CheckinPolicyState{}).Where("id = ?", 1).Update("observed_since", now.AddDate(-2, 0, 0).Unix()).Error)
 					user := checkinTestUser{Id: 1, Quota: 1000000, CreatedAt: now.Unix()}
@@ -1067,4 +1068,112 @@ func verifyExpiringCheckinFunding(t *testing.T, db *gorm.DB) {
 	settings.ExpirySeconds = 60
 	settings.Limits = operation_setting.CheckinLimits{}
 	require.NoError(t, settings.Validate(), "method 2 does not require method 1 settings")
+}
+
+func verifyIndependentUserActivity(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	now := time.Now().Truncate(time.Second)
+	start, err := userActivityWindow(30, now)
+	require.NoError(t, err)
+	var state CheckinPolicyState
+	require.NoError(t, db.First(&state, 1).Error)
+	require.NoError(t, db.Model(&state).Update("observed_since", now.Unix()-90*86400).Error)
+	users := []checkinTestUser{
+		{Id: 820, Username: "usage-mixed", CreatedAt: now.Unix() - 180*86400},
+		{Id: 821, Username: "usage-partial", CreatedAt: now.Unix() - 180*86400},
+		{Id: 822, Username: "usage-boundary", CreatedAt: now.Unix() - 180*86400},
+		{Id: 823, Username: "usage-new", CreatedAt: now.Unix() - 86400},
+		{Id: 824, Username: "usage-deleted", DeletedAt: gorm.DeletedAt{Time: now, Valid: true}},
+	}
+	require.NoError(t, db.Create(&users).Error)
+	// A deliberately incomplete installation history must remain explicit.
+	require.NoError(t, db.Create(&CheckinAccount{UserID: 821, ObservedSince: now.Unix() - 2*86400}).Error)
+	entries := []CheckinUsage{
+		{UserID: 820, SourceKey: "usage-paid-gifts", CreatedAt: now.Unix() - 60, Quota: 100, GiftUsed: 20, ExpiringUsed: 30, Wallet: true},
+		{UserID: 820, SourceKey: "usage-subscription", CreatedAt: now.Unix() - 86400, Quota: 80, Wallet: false},
+		{UserID: 820, SourceKey: "usage-wallet", CreatedAt: now.Unix() - 86400, Quota: 40, Wallet: true},
+		{UserID: 820, SourceKey: "usage-pending", CreatedAt: now.Unix() - 30, Quota: 999, Pending: true, Wallet: true},
+		{UserID: 820, SourceKey: "usage-refunded", CreatedAt: now.Unix() - 20, Quota: 0, Wallet: true},
+		{UserID: 820, SourceKey: "usage-before", CreatedAt: start - 1, Quota: 500, Wallet: true},
+		{UserID: 820, SourceKey: "usage-future", CreatedAt: now.Unix() + 600, Quota: 999, Wallet: true},
+		{UserID: 821, SourceKey: "usage-partial", CreatedAt: now.Unix() - 30, Quota: 60, GiftUsed: 10, Wallet: true},
+		{UserID: 822, SourceKey: "usage-boundary", CreatedAt: start, Quota: 10, Wallet: true},
+		{UserID: 824, SourceKey: "usage-deleted", CreatedAt: now.Unix() - 30, Quota: 200, Wallet: true},
+	}
+	require.NoError(t, db.Create(&entries).Error)
+	require.NoError(t, db.Model(&CheckinUsage{}).Where("source_key = ?", "usage-wallet").Update("expiring_used", nil).Error)
+	t.Cleanup(func() {
+		require.NoError(t, db.Where("user_id BETWEEN ? AND ?", 820, 824).Delete(&CheckinUsage{}).Error)
+		require.NoError(t, db.Where("user_id BETWEEN ? AND ?", 820, 824).Delete(&CheckinAccount{}).Error)
+		require.NoError(t, db.Unscoped().Where("id BETWEEN ? AND ?", 820, 824).Delete(&checkinTestUser{}).Error)
+		userActivityCache.Lock()
+		clear(userActivityCache.entries)
+		userActivityCache.Unlock()
+	})
+	config, err := CurrentCheckinConfiguration()
+	require.NoError(t, err)
+	var baseline *userActivitySnapshot
+	for _, mode := range []int{1, 2} {
+		settings := config.Settings
+		settings.Mode, settings.Enabled = mode, mode == 1
+		saveCheckinTestSettings(t, settings)
+		snapshot, err := buildUserActivitySnapshot(db, 30, now)
+		require.NoError(t, err)
+		if baseline != nil {
+			assert.Equal(t, baseline, snapshot, "mode and check-in enablement cannot change usage analytics")
+		}
+		baseline = snapshot
+		assert.Equal(t, UserActivityAmounts{ConsumedQuota: 290, WalletQuota: 150, CheckinQuota: 60, SubscriptionQuota: 80}, snapshot.Overview.UserActivityAmounts)
+		assert.Equal(t, int64(4), snapshot.Overview.TotalUsers)
+		assert.Equal(t, int64(3), snapshot.Overview.ConsumingUsers)
+		assert.Equal(t, int64(1), snapshot.Overview.PendingRecords)
+		require.Len(t, snapshot.Overview.Days, 30)
+		assert.Equal(t, int64(10), snapshot.Overview.Days[0].Quota)
+		var trendTotal int64
+		for _, day := range snapshot.Overview.Days {
+			trendTotal += day.Quota
+		}
+		assert.Equal(t, snapshot.Overview.ConsumedQuota, trendTotal)
+	}
+	week, err := buildUserActivitySnapshot(db, 7, now)
+	require.NoError(t, err)
+	assert.Equal(t, int64(280), week.Overview.ConsumedQuota)
+	// The global observation boundary also applies to accounts without history.
+	require.NoError(t, db.Model(&state).Update("observed_since", now.Unix()-2*86400).Error)
+	overview, err := GetUserActivityOverview(30)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), overview.IncompleteUsers)
+	assert.Equal(t, int64(290), overview.ConsumedQuota, "partial history still includes known spending")
+	partial, err := GetUserActivityDetail(821, 30)
+	require.NoError(t, err)
+	assert.False(t, partial.User.HistoryComplete)
+	fresh, err := GetUserActivityDetail(823, 30)
+	require.NoError(t, err)
+	assert.True(t, fresh.User.HistoryComplete, "new users have complete history since registration")
+	assert.Zero(t, fresh.User.ConsumedQuota)
+	page, err := ListUserActivity(UserActivityQuery{Days: 30, Page: 1, PageSize: 1, Search: "usage-", Filter: "used"})
+	require.NoError(t, err)
+	assert.Equal(t, 3, page.Total)
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, 820, page.Items[0].ID)
+	assert.Equal(t, int64(3), page.Items[0].ChargedRecords)
+	assert.Equal(t, int64(2), page.Items[0].ActiveDays)
+	assert.Equal(t, now.Unix()-60, page.Items[0].LastUsedAt)
+	page, err = ListUserActivity(UserActivityQuery{Days: 30, Page: 2, PageSize: 1, Search: "usage-", Filter: "used"})
+	require.NoError(t, err)
+	assert.Equal(t, 821, page.Items[0].ID)
+	page, err = ListUserActivity(UserActivityQuery{Days: 30, Page: 1, PageSize: 10, Search: "usage-", Filter: "unused"})
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, 823, page.Items[0].ID)
+	require.NoError(t, db.Model(&CheckinUsage{}).Where("source_key = ?", "usage-paid-gifts").Updates(map[string]any{"quota": 60, "gift_used": 10, "expiring_used": 20}).Error)
+	detail, err := GetUserActivityDetail(820, 30)
+	require.NoError(t, err)
+	assert.Equal(t, UserActivityAmounts{ConsumedQuota: 180, WalletQuota: 70, CheckinQuota: 30, SubscriptionQuota: 80}, detail.User.UserActivityAmounts, "refund corrections preserve source attribution")
+	_, err = GetUserActivityDetail(824, 30)
+	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
+	_, err = GetUserActivityOverview(365)
+	require.Error(t, err)
+	_, err = ListUserActivity(UserActivityQuery{Days: 30, Page: 0, PageSize: 10})
+	require.Error(t, err)
 }

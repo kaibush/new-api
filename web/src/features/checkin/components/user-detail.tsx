@@ -17,10 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { StaticDataTable } from '@/components/data-table'
 import { Dialog } from '@/components/dialog'
 import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
@@ -30,136 +29,113 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion'
-import { toIntlLocale } from '@/i18n/languages'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatQuotaWithCurrency } from '@/lib/currency'
-import { formatNumber } from '@/lib/format'
 
 import { getCheckinUserDetail } from '../api'
-import { formatCheckinPercent } from '../format'
 import { CheckinGrantStatus } from './grant-status'
 import { CheckinRewardDetails } from './reward-details'
 
-const Chart = lazy(() =>
-  import('./activity-charts').then((module) => ({
-    default: module.CheckinActivityChart,
+const Usage = lazy(() =>
+  import('@/features/user-activity/components/user-usage').then((module) => ({
+    default: module.UserUsagePanel,
   }))
 )
 
 export function CheckinUserDetailDialog(props: {
-  userId: number | null
+  userId: number
   onClose: () => void
+  initialTab?: 'usage' | 'balance' | 'rewards'
+  days?: number
 }) {
-  const { t, i18n } = useTranslation()
-  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const { t } = useTranslation()
+  const [tab, setTab] = useState<string>(props.initialTab ?? 'balance')
   const query = useQuery({
     queryKey: ['checkin-admin', 'detail', props.userId],
-    queryFn: () => getCheckinUserDetail(props.userId ?? 0),
-    enabled: props.userId !== null,
-    refetchInterval: 30000,
+    queryFn: () => getCheckinUserDetail(props.userId),
+    enabled: tab !== 'usage',
+    refetchInterval: tab !== 'usage' ? 30000 : false,
   })
   return (
     <Dialog
-      open={props.userId !== null}
+      open
       onOpenChange={(open) => {
         if (!open) props.onClose()
       }}
-      title={t('Check-in reward details')}
+      title={t('User details')}
       contentClassName='sm:max-w-4xl'
-      bodyClassName='space-y-5'
+      bodyClassName='space-y-4'
     >
-      {query.isPending && <LoadingState />}
-      {query.isError && <ErrorState onRetry={() => void query.refetch()} />}
-      {query.data && (
-        <>
-          <h3 className='font-medium'>
-            {query.data.user.display_name || query.data.user.username}
-          </h3>
-          <CheckinRewardDetails eligibility={query.data.user.eligibility} />
-          {query.data.grants &&
-            (query.data.user.balance ||
-              query.data.user.eligibility.mode === 2 ||
-              Boolean(query.data.grants.records?.length)) && (
-              <CheckinGrantStatus
-                grants={query.data.grants}
-                balance={query.data.user.balance}
-              />
-            )}
-          {query.data.user.eligibility.mode !== 2 && (
+      <Tabs value={tab} onValueChange={(value) => setTab(String(value))}>
+        <TabsList className='max-w-full flex-wrap group-data-horizontal/tabs:h-auto'>
+          <TabsTrigger value='usage'>{t('User usage')}</TabsTrigger>
+          <TabsTrigger value='balance'>{t('Balance')}</TabsTrigger>
+          <TabsTrigger value='rewards'>{t('Reward history')}</TabsTrigger>
+        </TabsList>
+        <TabsContent value='usage' className='pt-4'>
+          {tab === 'usage' && (
             <Suspense fallback={<LoadingState />}>
-              <Chart days={query.data.days} />
+              <Usage userId={props.userId} days={props.days ?? 30} />
             </Suspense>
           )}
-          <h4 className='text-sm font-medium'>
-            {t('Recent check-in rewards')}
-          </h4>
-          <StaticDataTable
-            data={query.data.records}
-            columns={[
-              {
-                id: 'date',
-                header: t('Date'),
-                cell: (record) => record.checkin_date,
-              },
-              {
-                id: 'reward',
-                header: t('Reward'),
-                cell: (record) => formatQuotaWithCurrency(record.quota_awarded),
-              },
-              {
-                id: 'base',
-                header: t('Base reward'),
-                cell: (record) =>
-                  record.snapshot
-                    ? formatQuotaWithCurrency(record.snapshot.base_quota)
-                    : '—',
-              },
-              {
-                id: 'percentage',
-                header: t('Reward percentage'),
-                cell: (record) =>
-                  record.snapshot
-                    ? formatCheckinPercent(
-                        record.snapshot.eligibility.reward_percent,
-                        locale
-                      )
-                    : t('Historical calculation unavailable'),
-              },
-              {
-                id: 'version',
-                header: t('Configuration version'),
-                cell: (record) =>
-                  record.snapshot
-                    ? formatNumber(
-                        record.snapshot.configuration.version,
-                        locale
-                      )
-                    : '—',
-              },
-            ]}
-          />
-          <Accordion>
-            {query.data.records
-              .filter((record) => record.snapshot)
-              .map((record) => (
-                <AccordionItem
-                  key={record.checkin_date}
-                  value={record.checkin_date}
-                >
-                  <AccordionTrigger>
-                    {record.checkin_date} · {t('Check-in reward details')}
-                  </AccordionTrigger>
-                  <AccordionContent>
-                    {record.snapshot && (
-                      <CheckinRewardDetails
-                        eligibility={record.snapshot.eligibility}
-                      />
-                    )}
-                  </AccordionContent>
-                </AccordionItem>
-              ))}
-          </Accordion>
-        </>
-      )}
+        </TabsContent>
+        {tab !== 'usage' && query.isPending && <LoadingState />}
+        {tab !== 'usage' && query.isError && (
+          <ErrorState onRetry={() => void query.refetch()} />
+        )}
+        <TabsContent value='balance' className='space-y-4 pt-4'>
+          {tab === 'balance' && query.data && !query.isError && (
+            <>
+              <h3 className='font-medium'>
+                {query.data.user.display_name || query.data.user.username}
+              </h3>
+              {query.data.grants && (
+                <CheckinGrantStatus
+                  grants={query.data.grants}
+                  balance={query.data.user.balance}
+                />
+              )}
+            </>
+          )}
+        </TabsContent>
+        <TabsContent value='rewards' className='space-y-4 pt-4'>
+          {tab === 'rewards' && query.data && !query.isError && (
+            <>
+              <CheckinRewardDetails eligibility={query.data.user.eligibility} />
+              <h4 className='text-sm font-medium'>
+                {t('Recent check-in rewards')}
+              </h4>
+              {query.data.records.length === 0 && (
+                <p className='text-muted-foreground text-sm'>
+                  {t('No records')}
+                </p>
+              )}
+              <Accordion>
+                {query.data.records.map((record) => (
+                  <AccordionItem
+                    key={record.checkin_date}
+                    value={record.checkin_date}
+                  >
+                    <AccordionTrigger>
+                      {record.checkin_date} · {t('Check-in reward details')} ·{' '}
+                      {formatQuotaWithCurrency(record.quota_awarded)}
+                    </AccordionTrigger>
+                    <AccordionContent>
+                      {record.snapshot ? (
+                        <CheckinRewardDetails
+                          eligibility={record.snapshot.eligibility}
+                        />
+                      ) : (
+                        <p>{t('Historical calculation unavailable')}</p>
+                      )}
+                    </AccordionContent>
+                  </AccordionItem>
+                ))}
+              </Accordion>
+            </>
+          )}
+        </TabsContent>
+      </Tabs>
     </Dialog>
   )
 }

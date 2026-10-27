@@ -18,12 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
-import { lazy, Suspense, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DataTablePage, useDataTable } from '@/components/data-table'
 import { ErrorState } from '@/components/error-state'
-import { LoadingState } from '@/components/loading-state'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -39,16 +38,11 @@ import { formatQuotaWithCurrency } from '@/lib/currency'
 import dayjs from '@/lib/dayjs'
 import { formatNumber } from '@/lib/format'
 
-import { getCheckinOverview, listCheckinUsers } from '../api'
+import { listCheckinUsers } from '../api'
 import { formatCheckinPercent } from '../format'
 import type { CheckinSettings, CheckinUser, CheckinUserQuery } from '../types'
 import { CheckinUserDetailDialog } from './user-detail'
 
-const Chart = lazy(() =>
-  import('./activity-charts').then((module) => ({
-    default: module.CheckinActivityChart,
-  }))
-)
 const EMPTY_USERS: CheckinUser[] = []
 
 export function CheckinActivityPanel(props: {
@@ -86,12 +80,6 @@ export function CheckinActivityPanel(props: {
     query.data?.mode ??
     query.data?.items[0]?.eligibility.mode ??
     1
-  const overview = useQuery({
-    queryKey: ['checkin-admin', 'overview'],
-    queryFn: getCheckinOverview,
-    enabled: !!query.data && mode !== 2,
-    refetchInterval: (query) => (query.state.data?.updating ? 2000 : 30000),
-  })
   const columns = useMemo<ColumnDef<CheckinUser>[]>(
     () => [
       {
@@ -261,8 +249,6 @@ export function CheckinActivityPanel(props: {
   })
   const update = (patch: Partial<CheckinUserQuery>) =>
     setFilters((previous) => ({ ...previous, ...patch, page: 1 }))
-  const stats = overview.data
-  const overviewPending = overview.isPending || stats?.as_of === 0
   const pagePending = query.isPending || query.data?.as_of === 0
   const activityDays =
     props.preview?.limits.activity_days ??
@@ -270,72 +256,18 @@ export function CheckinActivityPanel(props: {
   return (
     <section className='space-y-5' aria-label={t('Check-in activity')}>
       <div className='flex flex-wrap items-center justify-between gap-2'>
-        <h3 className='font-medium'>
-          {mode === 2 ? t('Expiring check-in quota') : t('Check-in activity')}
-        </h3>
+        <h3 className='font-medium'>{t('Check-in and balances')}</h3>
         <Button
           variant='outline'
           size='sm'
-          disabled={overview.isFetching || query.isFetching}
+          disabled={query.isFetching}
           onClick={() => {
-            if (mode !== 2) void overview.refetch()
             void query.refetch()
           }}
         >
           {t('Refresh')}
         </Button>
       </div>
-      {mode !== 2 && overview.isError && (
-        <ErrorState onRetry={() => void overview.refetch()} />
-      )}
-      {mode !== 2 && overviewPending && !overview.isError && (
-        <LoadingState message={t('Updating activity statistics...')} />
-      )}
-      {mode !== 2 && stats && !overviewPending && (
-        <>
-          <div className='grid grid-cols-2 gap-3 lg:grid-cols-4'>
-            {[
-              [t('Users'), stats.total],
-              [t('In grace period'), stats.grace],
-              [t('Full activity'), stats.active],
-              [t('Low activity'), stats.low_activity],
-              [t('Zero activity'), stats.zero_activity],
-              [t('Incomplete history'), stats.incomplete],
-              [t('Settlement pending'), stats.pending],
-            ].map(([label, value]) => (
-              <div key={label} className='rounded-lg border p-3'>
-                <p className='text-muted-foreground text-xs'>{label}</p>
-                <p className='text-lg font-semibold tabular-nums'>
-                  {formatNumber(Number(value), locale)}
-                </p>
-              </div>
-            ))}
-          </div>
-          <p className='text-muted-foreground text-xs'>
-            {t(
-              'Overview uses saved settings. Incomplete history is excluded from the activity distribution.'
-            )}
-          </p>
-          {stats.as_of > 0 && (
-            <p className='text-muted-foreground text-xs'>
-              {t('Updated at {{date}}', {
-                date: dayjs.unix(stats.as_of).format('YYYY-MM-DD HH:mm:ss'),
-              })}{' '}
-              · {t('Configuration version')}:{' '}
-              {formatNumber(stats.config_version, locale)}
-            </p>
-          )}
-          {stats.updating && (
-            <p role='status'>{t('Updating activity statistics...')}</p>
-          )}
-          <Suspense fallback={<LoadingState />}>
-            <div className='grid gap-6 lg:grid-cols-2'>
-              <Chart distribution={stats.distribution} />
-              <Chart days={stats.days} />
-            </div>
-          </Suspense>
-        </>
-      )}
       <div className='flex flex-wrap items-center gap-2'>
         <Input
           className='w-full sm:w-60'
@@ -348,6 +280,15 @@ export function CheckinActivityPanel(props: {
           <>
             <Select
               value={props.preview ? 'all' : filters.filter || 'all'}
+              items={[
+                { value: 'all', label: t('All users') },
+                { value: 'grace', label: t('In grace period') },
+                { value: 'active', label: t('Full activity') },
+                { value: 'low_activity', label: t('Low activity') },
+                { value: 'zero_activity', label: t('Zero activity') },
+                { value: 'incomplete', label: t('Incomplete history') },
+                { value: 'pending', label: t('Settlement pending') },
+              ]}
               disabled={!!props.preview}
               onValueChange={(value) =>
                 update({ filter: value === 'all' ? '' : (value ?? '') })
@@ -374,6 +315,11 @@ export function CheckinActivityPanel(props: {
             </Select>
             <Select
               value={props.preview ? 'id' : filters.sort || 'id'}
+              items={[
+                { value: 'id', label: t('Newest users first') },
+                { value: 'activity_asc', label: t('Activity: low to high') },
+                { value: 'activity_desc', label: t('Activity: high to low') },
+              ]}
               disabled={!!props.preview}
               onValueChange={(value) =>
                 update({ sort: value === 'id' ? '' : (value ?? '') })
@@ -437,10 +383,13 @@ export function CheckinActivityPanel(props: {
         className='h-auto'
         emptyTitle={t('No records')}
       />
-      <CheckinUserDetailDialog
-        userId={selectedId}
-        onClose={() => setSelectedId(null)}
-      />
+      {selectedId !== null && (
+        <CheckinUserDetailDialog
+          key={selectedId}
+          userId={selectedId}
+          onClose={() => setSelectedId(null)}
+        />
+      )}
     </section>
   )
 }
