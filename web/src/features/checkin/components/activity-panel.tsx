@@ -118,6 +118,41 @@ export function CheckinActivityPanel(props: {
         ),
       },
       {
+        id: 'wallet_quota',
+        header: t('Recharged quota'),
+        cell: ({ row }) =>
+          row.original.balance
+            ? formatQuotaWithCurrency(row.original.balance.wallet_quota)
+            : '—',
+      },
+      {
+        id: 'checkin_quota',
+        header: t('Check-in quota'),
+        cell: ({ row }) =>
+          row.original.balance
+            ? formatQuotaWithCurrency(row.original.balance.checkin_quota)
+            : '—',
+      },
+      {
+        id: 'expired_quota',
+        header: t('Expired check-in quota'),
+        cell: ({ row }) =>
+          row.original.balance
+            ? formatQuotaWithCurrency(row.original.balance.expired_quota)
+            : '—',
+      },
+      {
+        id: 'next_expiry',
+        header: t('Next reward expiry'),
+        cell: ({ row }) => {
+          const balance = row.original.balance
+          if (!balance) return '—'
+          return balance.next_expiry_at > 0
+            ? dayjs.unix(balance.next_expiry_at).format('YYYY-MM-DD HH:mm:ss')
+            : t('None')
+        },
+      },
+      {
         id: 'grace',
         header: t('New user grace period (days)'),
         cell: ({ row }) => {

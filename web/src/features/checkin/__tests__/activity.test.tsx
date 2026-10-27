@@ -36,6 +36,8 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { formatQuotaWithCurrency } from '@/lib/currency'
+import dayjs from '@/lib/dayjs'
 import { ROLE } from '@/lib/roles'
 import { Route as CheckinRoute } from '@/routes/_authenticated/checkin'
 import { Route as BillingRoute } from '@/routes/_authenticated/system-settings/billing/$section'
@@ -95,6 +97,13 @@ const activeUser = {
   display_name: 'Active user',
   created_at: 1700000000,
   eligibility,
+  balance: {
+    wallet_quota: 5000000,
+    checkin_quota: 1500000,
+    expired_quota: 500000,
+    next_expiry_at: 1792924800,
+    as_of: 1792838400,
+  },
 }
 const inactiveUser = {
   id: 1,
@@ -238,6 +247,121 @@ test('an empty method 2 search keeps the expiry view without activity filters', 
     screen.queryByRole('columnheader', { name: 'Monthly rewards / cap' })
   ).not.toBeInTheDocument()
   expect(api.get).not.toHaveBeenCalled()
+})
+
+test.each([1, 2])(
+  'method %i lists separate balances and opens the selected user’s balance details',
+  async (mode) => {
+    vi.mocked(api.post).mockResolvedValue({
+      data: {
+        success: true,
+        data: {
+          mode,
+          items: [{ ...activeUser, eligibility: { ...eligibility, mode } }],
+          total: 1,
+          as_of: 1792838400,
+          config_version: 2,
+          updating: false,
+        },
+      },
+    })
+    const get = vi.mocked(api.get).getMockImplementation()
+    if (!get) throw new Error('Expected the default API fixture')
+    vi.mocked(api.get).mockImplementation(async (url, options) => {
+      if (url === '/api/user/2/checkin') {
+        return {
+          data: {
+            success: true,
+            data: {
+              user: { ...activeUser, eligibility: { ...eligibility, mode } },
+              days: [],
+              records: [],
+              grants: {
+                available: 1500000,
+                reserved: 100000,
+                used: 200000,
+                expired: 500000,
+                as_of: 1792838400,
+                records: null,
+              },
+            },
+          },
+        }
+      }
+      return get(url, options)
+    })
+    renderActivity()
+    const button = await screen.findByRole('button', { name: 'Active user' })
+    const row = within(screen.getByRole('row', { name: /Active user/ }))
+    for (const label of [
+      'Recharged quota',
+      'Check-in quota',
+      'Expired check-in quota',
+      'Next reward expiry',
+    ]) {
+      expect(screen.getByRole('columnheader', { name: label })).toBeVisible()
+    }
+    for (const quota of [5000000, 1500000, 500000]) {
+      expect(row.getByText(formatQuotaWithCurrency(quota))).toBeVisible()
+    }
+    const expiry = dayjs.unix(1792924800).format('YYYY-MM-DD HH:mm:ss')
+    expect(row.getByText(expiry)).toBeVisible()
+    fireEvent.click(button)
+    const dialog = within(
+      await screen.findByRole('dialog', { name: 'Check-in reward details' })
+    )
+    expect(
+      await dialog.findByRole('group', { name: 'Recharged quota' })
+    ).toHaveTextContent(formatQuotaWithCurrency(5000000))
+    expect(
+      dialog.getByRole('group', { name: 'Check-in quota' })
+    ).toHaveTextContent(formatQuotaWithCurrency(1500000))
+    expect(dialog.getByText(`Next reward expiry: ${expiry}`)).toBeVisible()
+    for (const [label, quota] of [
+      ['Reserved quota', 100000],
+      ['Used', 200000],
+      ['Expired', 500000],
+    ] as const) {
+      expect(
+        dialog.getByText(label, { selector: 'dt' }).parentElement
+      ).toHaveTextContent(formatQuotaWithCurrency(quota))
+    }
+    expect(dialog.getByText('No records')).toBeVisible()
+  }
+)
+
+test('missing balances stay unknown while an empty wallet shows zero and no upcoming expiry', async () => {
+  vi.mocked(api.post).mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        mode: 2,
+        items: [
+          inactiveUser,
+          {
+            ...activeUser,
+            balance: {
+              wallet_quota: 0,
+              checkin_quota: 0,
+              expired_quota: 0,
+              next_expiry_at: 0,
+              as_of: 1792838400,
+            },
+          },
+        ],
+        total: 2,
+        as_of: 1792838400,
+        updating: false,
+      },
+    },
+  })
+  renderActivity()
+  await screen.findByRole('button', { name: 'Inactive user' })
+  const missing = within(screen.getByRole('row', { name: /Inactive user/ }))
+  expect(missing.getAllByText('—')).toHaveLength(4)
+  const empty = within(screen.getByRole('row', { name: /Active user/ }))
+  expect(empty.getAllByText(formatQuotaWithCurrency(0))).toHaveLength(3)
+  expect(empty.getByText('None')).toBeVisible()
 })
 
 async function renderAdmin(path: string, role: number) {

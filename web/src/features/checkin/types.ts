@@ -81,6 +81,15 @@ export interface CheckinUser {
   display_name: string
   created_at: number
   eligibility: CheckinEligibility
+  balance?: CheckinUserBalance
+}
+
+export interface CheckinUserBalance {
+  wallet_quota: number
+  checkin_quota: number
+  expired_quota: number
+  next_expiry_at: number
+  as_of: number
 }
 
 export interface CheckinUserQuery {

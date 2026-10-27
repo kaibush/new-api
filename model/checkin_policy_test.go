@@ -131,6 +131,7 @@ func TestCheckinPolicyDatabaseMatrix(t *testing.T) {
 						assert.Error(t, db.Create(&Checkin{UserId: 99, CheckinDate: "2025-01-01"}).Error)
 					}
 					t.Run("expiring_rewards", func(t *testing.T) { verifyExpiringCheckinFunding(t, db) })
+					t.Run("admin_balances", func(t *testing.T) { verifyCheckinAdminBalances(t, db) })
 					now := time.Now()
 					require.NoError(t, db.Model(&CheckinPolicyState{}).Where("id = ?", 1).Update("observed_since", now.AddDate(-2, 0, 0).Unix()).Error)
 					user := checkinTestUser{Id: 1, Quota: 1000000, CreatedAt: now.Unix()}
@@ -675,6 +676,99 @@ func verifyCheckinActivity(t *testing.T, db *gorm.DB, now time.Time) {
 	})
 }
 
+func verifyCheckinAdminBalances(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	now := time.Now().Unix()
+	users := []checkinTestUser{
+		{Id: 810, Username: "balance-mixed", Quota: 1000, CreatedAt: now - 86400},
+		{Id: 811, Username: "balance-clamped", Quota: 50, CreatedAt: now - 86400},
+		{Id: 812, Username: "balance-debt", Quota: -20, CreatedAt: now - 86400},
+		{Id: 813, Username: "balance-wallet", Quota: 250, CreatedAt: now - 86400},
+		{Id: 814, Username: "balance-deleted", Quota: 999, DeletedAt: gorm.DeletedAt{Time: time.Unix(now, 0), Valid: true}},
+	}
+	require.NoError(t, db.Create(&users).Error)
+	require.NoError(t, db.Create(&[]CheckinAccount{
+		{UserID: 810, GiftRemaining: 100}, {UserID: 811, GiftRemaining: 100}, {UserID: 812, GiftRemaining: 10},
+	}).Error)
+	require.NoError(t, db.Create(&[]CheckinGrant{
+		{CheckinID: 910001, UserID: 810, Quota: 80, Remaining: 50, Reserved: 10, Used: 20, ExpiresAt: now + 600},
+		{CheckinID: 910002, UserID: 810, Quota: 30, Remaining: 30, ExpiresAt: now + 1200},
+		{CheckinID: 910003, UserID: 810, Quota: 40, Remaining: 40, ExpiresAt: now - 1},
+		{CheckinID: 910004, UserID: 810, Quota: 10, Used: 10, ExpiresAt: now + 60},
+	}).Error)
+	t.Cleanup(func() {
+		require.NoError(t, db.Where("user_id BETWEEN ? AND ?", 810, 814).Delete(&CheckinGrant{}).Error)
+		require.NoError(t, db.Where("user_id BETWEEN ? AND ?", 810, 814).Delete(&CheckinAccount{}).Error)
+		require.NoError(t, db.Unscoped().Where("id BETWEEN ? AND ?", 810, 814).Delete(&checkinTestUser{}).Error)
+		checkinAnalytics.Lock()
+		checkinAnalytics.version, checkinAnalytics.overview, checkinAnalytics.rows = 0, nil, nil
+		checkinAnalytics.Unlock()
+	})
+	want := map[int]CheckinBalances{
+		810: {WalletQuota: 900, CheckinQuota: 180},
+		811: {WalletQuota: 0, CheckinQuota: 50},
+		812: {WalletQuota: -20, CheckinQuota: 0},
+		813: {WalletQuota: 250, CheckinQuota: 0},
+	}
+	config, err := CurrentCheckinConfiguration()
+	require.NoError(t, err)
+	for _, mode := range []int{1, 2} {
+		settings := config.Settings
+		settings.Mode = mode
+		saveCheckinTestSettings(t, settings)
+		for pageNumber := range 2 {
+			page, err := ListCheckinUsers(CheckinUserQuery{Page: pageNumber + 1, PageSize: 2, Search: "balance-"})
+			require.NoError(t, err)
+			assert.Equal(t, int64(4), page.Total, "deleted users are excluded")
+			require.Len(t, page.Items, 2)
+			for i, row := range page.Items {
+				assert.Equal(t, 813-pageNumber*2-i, row.ID)
+				require.NotNil(t, row.Balance)
+				assert.Equal(t, want[row.ID], row.Balance.CheckinBalances)
+				assert.Equal(t, page.AsOf, row.Balance.AsOf)
+				detail, err := GetCheckinUserDetail(row.ID)
+				require.NoError(t, err)
+				require.NotNil(t, detail.User.Balance)
+				assert.Equal(t, want[row.ID], detail.User.Balance.CheckinBalances)
+				assert.Equal(t, detail.Grants.Expired, row.Balance.ExpiredQuota)
+				if row.ID == 810 {
+					assert.Equal(t, int64(40), row.Balance.ExpiredQuota)
+					assert.Equal(t, now+600, row.Balance.NextExpiryAt, "depleted grants do not count as the next expiry")
+					assert.Equal(t, int64(10), detail.Grants.Reserved)
+					assert.Equal(t, int64(30), detail.Grants.Used)
+				} else {
+					assert.Zero(t, row.Balance.NextExpiryAt)
+				}
+			}
+		}
+	}
+	preview := config.Settings
+	preview.Mode, preview.MinQuota, preview.MaxQuota = 2, 999, 999
+	page, err := ListCheckinUsers(CheckinUserQuery{Page: 1, PageSize: 10, Search: "balance-mixed", Preview: &preview})
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, want[810], page.Items[0].Balance.CheckinBalances, "policy previews cannot change actual funds")
+	config, err = CurrentCheckinConfiguration()
+	require.NoError(t, err)
+	overview, rows, err := buildCheckinSnapshot(db, config, time.Now())
+	require.NoError(t, err)
+	checkinAnalytics.Lock()
+	checkinAnalytics.version, checkinAnalytics.builtAt = config.Version, time.Now()
+	checkinAnalytics.overview, checkinAnalytics.rows, checkinAnalytics.err = overview, rows, nil
+	checkinAnalytics.Unlock()
+	require.NoError(t, db.Model(&checkinTestUser{}).Where("id = ?", 810).Update("quota", 1200).Error)
+	require.NoError(t, db.Model(&CheckinGrant{}).Where("checkin_id = ?", 910001).Update("expires_at", now-1).Error)
+	page, err = ListCheckinUsers(CheckinUserQuery{Page: 1, PageSize: 1, Search: "balance-mixed", Sort: "activity_desc"})
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, CheckinBalances{WalletQuota: 1100, CheckinQuota: 130}, page.Items[0].Balance.CheckinBalances, "cached activity must not freeze spendable balances")
+	assert.Equal(t, int64(90), page.Items[0].Balance.ExpiredQuota)
+	assert.Equal(t, now+1200, page.Items[0].Balance.NextExpiryAt)
+	page, err = ListCheckinUsers(CheckinUserQuery{Page: 1, PageSize: 1, Search: "balance-missing"})
+	require.NoError(t, err)
+	assert.Empty(t, page.Items)
+}
+
 func TestCheckinGraceCalendarDays(t *testing.T) {
 	zone, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)
@@ -927,6 +1021,10 @@ func verifyExpiringCheckinFunding(t *testing.T, db *gorm.DB) {
 		require.NoError(t, common.RDB.HSet(t.Context(), getUserCacheKey(cachedUser), map[string]any{
 			"Id": cachedUser, "Quota": 10, "AuthVersion": 1, "CacheSchema": userCacheSchemaVersion,
 		}).Err())
+		detail, err := GetCheckinUserDetail(cachedUser)
+		require.NoError(t, err)
+		require.NotNil(t, detail.User.Balance)
+		assert.Equal(t, CheckinBalances{WalletQuota: 10, CheckinQuota: 20}, detail.User.Balance.CheckinBalances, "admins see spendable funds after pending batch reservations")
 		require.ErrorIs(t, SetCheckinFunding(cachedUser, "cached_rejected", 31, true, false), ErrCheckinFundingInsufficient)
 		// A legacy reservation racing the database write must already see the
 		// isolated debit in Redis. A failed write restores that debit exactly once.

@@ -26,6 +26,79 @@ type CheckinUser struct {
 	DisplayName string              `json:"display_name"`
 	CreatedAt   int64               `json:"created_at"`
 	Eligibility *CheckinEligibility `json:"eligibility"`
+	Balance     *CheckinUserBalance `json:"balance,omitempty"`
+}
+
+type CheckinUserBalance struct {
+	CheckinBalances
+	ExpiredQuota int64 `json:"expired_quota"`
+	NextExpiryAt int64 `json:"next_expiry_at"`
+	AsOf         int64 `json:"as_of"`
+}
+
+// Balances are read for the displayed page, independently of cached activity
+// snapshots and policy previews. Expiry uses one timestamp for the whole page.
+func populateCheckinUserBalances(tx *gorm.DB, rows []CheckinUser, asOf int64) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	ids := make([]int, len(rows))
+	for i := range rows {
+		ids[i] = rows[i].ID
+	}
+	var users []User
+	if err := tx.Select("id", "quota").Where("id IN ?", ids).Find(&users).Error; err != nil {
+		return err
+	}
+	balances := make(map[int]*CheckinUserBalance, len(users))
+	for _, user := range users {
+		quota := user.Quota
+		if common.RedisEnabled {
+			var err error
+			quota, err = GetUserQuota(user.Id, false)
+			if err != nil {
+				return err
+			}
+		}
+		balances[user.Id] = &CheckinUserBalance{CheckinBalances: CheckinBalances{WalletQuota: quota}, AsOf: asOf}
+	}
+	var accounts []CheckinAccount
+	if err := tx.Where("user_id IN ?", ids).Find(&accounts).Error; err != nil {
+		return err
+	}
+	for _, account := range accounts {
+		balance := balances[account.UserID]
+		if balance == nil {
+			continue
+		}
+		gift := min(max(account.GiftRemaining, 0), int64(max(balance.WalletQuota, 0)))
+		balance.WalletQuota -= int(gift)
+		balance.CheckinQuota = gift
+	}
+	var grants []struct {
+		UserID       int
+		Available    int64
+		ExpiredQuota int64
+		NextExpiryAt int64
+	}
+	if err := tx.Model(&CheckinGrant{}).Where("user_id IN ?", ids).
+		Select("user_id, COALESCE(SUM(CASE WHEN expires_at > ? THEN remaining ELSE 0 END), 0) AS available, COALESCE(SUM(CASE WHEN expires_at <= ? THEN remaining ELSE 0 END), 0) AS expired_quota, COALESCE(MIN(CASE WHEN expires_at > ? AND remaining > 0 THEN expires_at END), 0) AS next_expiry_at", asOf, asOf, asOf).
+		Group("user_id").Scan(&grants).Error; err != nil {
+		return err
+	}
+	for _, grant := range grants {
+		balance := balances[grant.UserID]
+		if balance == nil {
+			continue
+		}
+		balance.CheckinQuota += grant.Available
+		balance.ExpiredQuota = grant.ExpiredQuota
+		balance.NextExpiryAt = grant.NextExpiryAt
+	}
+	for i := range rows {
+		rows[i].Balance = balances[rows[i].ID]
+	}
+	return nil
 }
 
 type CheckinUserQuery struct {
@@ -321,7 +394,10 @@ func ListCheckinUsers(query CheckinUserQuery) (*CheckinUserPage, error) {
 		})
 		result.Total = int64(len(candidates))
 		result.Items = candidates[min(offset, len(candidates)):min(offset+query.PageSize, len(candidates))]
-		return result, nil
+		err = DB.Transaction(func(tx *gorm.DB) error {
+			return populateCheckinUserBalances(tx, result.Items, now.Unix())
+		})
+		return result, err
 	}
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		usersQuery := tx.Model(&User{})
@@ -337,7 +413,10 @@ func ListCheckinUsers(query CheckinUserQuery) (*CheckinUserPage, error) {
 			return err
 		}
 		result.Items, err = checkinUserRows(tx, users, config, now)
-		return err
+		if err != nil {
+			return err
+		}
+		return populateCheckinUserBalances(tx, result.Items, now.Unix())
 	})
 	return result, err
 }
@@ -369,6 +448,9 @@ func GetCheckinUserDetail(userID int) (*CheckinUserDetail, error) {
 		now := time.Now()
 		rows, err := checkinUserRows(tx, []User{user}, config, now)
 		if err != nil {
+			return err
+		}
+		if err := populateCheckinUserBalances(tx, rows, now.Unix()); err != nil {
 			return err
 		}
 		result.User = rows[0]
