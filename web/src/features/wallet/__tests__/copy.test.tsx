@@ -16,10 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
 import { I18nextProvider, initReactI18next } from 'react-i18next'
-import { beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { BillingHistoryDialog } from '@/features/wallet/components/dialogs/billing-history-dialog'
 import en from '@/i18n/locales/en.json'
@@ -29,6 +30,10 @@ import { api } from '@/lib/api'
 import { RechargeFormCard } from '../components/recharge-form-card'
 
 const i18n = createInstance()
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 beforeEach(async () => {
   await i18n.use(initReactI18next).init({
@@ -45,16 +50,18 @@ it('translates billing history statuses and updates them when the language chang
     data: {
       success: true,
       data: {
-        total: 3,
-        items: ['success', 'pending', 'expired'].map((status, id) => ({
-          id,
-          status,
-          amount: 10,
-          money: 10,
-          trade_no: `order-${id}`,
-          payment_method: 'stripe',
-          create_time: 1,
-        })),
+        total: 4,
+        items: ['success', 'pending', 'expired', 'canceled'].map(
+          (status, id) => ({
+            id,
+            status,
+            amount: 10,
+            money: 10,
+            trade_no: `order-${id}`,
+            payment_method: 'stripe',
+            create_time: 1,
+          })
+        ),
       },
     },
   })
@@ -64,13 +71,66 @@ it('translates billing history statuses and updates them when the language chang
     </I18nextProvider>
   )
   await screen.findByText('order-0')
-  for (const label of ['成功', '待确认', '已过期']) {
+  for (const label of ['成功', '待确认', '已过期', '已取消']) {
     expect(screen.getByText(label)).toBeVisible()
   }
   await act(() => i18n.changeLanguage('en'))
-  for (const label of ['Success', 'Pending', 'Expired']) {
+  for (const label of ['Success', 'Pending', 'Expired', 'Cancelled']) {
     expect(screen.getByText(label)).toBeVisible()
   }
+})
+
+it('lets a user cancel a pending order and releases its reservation', async () => {
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        total: 1,
+        items: [
+          {
+            id: 1,
+            status: 'pending',
+            amount: 22,
+            money: 22,
+            trade_no: 'pending-order',
+            payment_method: 'alipay',
+            create_time: 1,
+          },
+        ],
+      },
+    },
+  })
+  const cancel = vi.spyOn(api, 'post').mockResolvedValue({
+    data: { success: true, data: null },
+  })
+  const orderChanged = vi.fn()
+  const user = userEvent.setup()
+
+  render(
+    <I18nextProvider i18n={i18n}>
+      <BillingHistoryDialog
+        open
+        onOpenChange={vi.fn()}
+        onOrderChanged={orderChanged}
+      />
+    </I18nextProvider>
+  )
+
+  await screen.findByText('pending-order')
+  const cancelLabel = i18n.t('Cancel Order')
+  await user.click(screen.getByRole('button', { name: cancelLabel }))
+  const confirmation = screen.getByRole('alertdialog')
+  expect(confirmation).toBeVisible()
+  await user.click(
+    within(confirmation).getByRole('button', { name: cancelLabel })
+  )
+
+  await waitFor(() =>
+    expect(cancel).toHaveBeenCalledWith('/api/user/topup/cancel', {
+      trade_no: 'pending-order',
+    })
+  )
+  expect(orderChanged).toHaveBeenCalledOnce()
 })
 
 it.each([

@@ -323,6 +323,9 @@ func UpdatePendingTopUpStatus(tradeNo string, expectedPaymentProvider string, ta
 	if tradeNo == "" {
 		return errors.New("未提供支付单号")
 	}
+	if targetStatus != common.TopUpStatusFailed && targetStatus != common.TopUpStatusExpired && targetStatus != common.TopUpStatusCanceled {
+		return fmt.Errorf("invalid terminal top-up status: %s", targetStatus)
+	}
 
 	refCol := "`trade_no`"
 	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
@@ -344,6 +347,42 @@ func UpdatePendingTopUpStatus(tradeNo string, expectedPaymentProvider string, ta
 		topUp.Status = targetStatus
 		return tx.Save(topUp).Error
 	})
+}
+
+// CancelPendingTopUp releases an unpaid reservation. A positive userId limits
+// the transition to that user's own order; zero is reserved for administrators.
+// Provider callbacks and administrative settlement use their own trusted
+// status transitions.
+func CancelPendingTopUp(tradeNo string, userId int) error {
+	if tradeNo == "" {
+		return errors.New("未提供订单号")
+	}
+
+	refCol := "`trade_no`"
+	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+		refCol = `"trade_no"`
+	}
+
+	return DB.Transaction(func(tx *gorm.DB) error {
+		topUp := &TopUp{}
+		query := lockForUpdate(tx).Where(refCol+" = ?", tradeNo)
+		if userId > 0 {
+			query = query.Where("user_id = ?", userId)
+		}
+		if err := query.First(topUp).Error; err != nil {
+			return ErrTopUpNotFound
+		}
+		if topUp.Status != common.TopUpStatusPending {
+			return ErrTopUpStatusInvalid
+		}
+
+		topUp.Status = common.TopUpStatusCanceled
+		return tx.Save(topUp).Error
+	})
+}
+
+func topUpCanBeSettled(status string) bool {
+	return status == common.TopUpStatusPending || status == common.TopUpStatusCanceled
 }
 
 // RechargeEpay 原子完成易支付订单：订单行锁、状态校验、成功更新与用户额度增加
@@ -373,7 +412,7 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (
 			alreadyDone = true
 			return nil
 		}
-		if topUp.Status != common.TopUpStatusPending {
+		if !topUpCanBeSettled(topUp.Status) {
 			return ErrTopUpStatusInvalid
 		}
 		if actualPaymentMethod != "" && topUp.PaymentMethod != actualPaymentMethod {
@@ -430,7 +469,7 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 			return ErrPaymentMethodMismatch
 		}
 
-		if topUp.Status != common.TopUpStatusPending {
+		if !topUpCanBeSettled(topUp.Status) {
 			return errors.New("充值订单状态错误")
 		}
 
@@ -709,7 +748,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 			return ErrPaymentMethodMismatch
 		}
 
-		if topUp.Status != common.TopUpStatusPending {
+		if !topUpCanBeSettled(topUp.Status) {
 			return errors.New("充值订单状态错误")
 		}
 
@@ -785,7 +824,7 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 			return nil // 幂等：已成功直接返回
 		}
 
-		if topUp.Status != common.TopUpStatusPending {
+		if !topUpCanBeSettled(topUp.Status) {
 			return errors.New("充值订单状态错误")
 		}
 
@@ -843,7 +882,7 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 			return nil
 		}
 
-		if topUp.Status != common.TopUpStatusPending {
+		if !topUpCanBeSettled(topUp.Status) {
 			return errors.New("充值订单状态错误")
 		}
 

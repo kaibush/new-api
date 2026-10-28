@@ -841,9 +841,9 @@ func verifyExpiringCheckinFunding(t *testing.T, db *gorm.DB) {
 	t.Helper()
 	t.Cleanup(func() {
 		for _, value := range []any{&Task{}, &CheckinGrant{}, &CheckinFunding{}, &CheckinUsage{}, &CheckinUsageDay{}, &CheckinAccount{}, &Checkin{}} {
-			require.NoError(t, db.Where("user_id IN ?", []int{800, 801, 802}).Delete(value).Error)
+			require.NoError(t, db.Where("user_id IN ?", []int{800, 801, 802, 803}).Delete(value).Error)
 		}
-		require.NoError(t, db.Where("id IN ?", []int{800, 801, 802}).Delete(&checkinTestUser{}).Error)
+		require.NoError(t, db.Where("id IN ?", []int{800, 801, 802, 803}).Delete(&checkinTestUser{}).Error)
 	})
 	const userID = 800
 	now := time.Now()
@@ -974,6 +974,42 @@ func verifyExpiringCheckinFunding(t *testing.T, db *gorm.DB) {
 	paid, err = GetUserQuota(userID, true)
 	require.NoError(t, err)
 	assert.Equal(t, 1500, paid)
+
+	t.Run("legacy_checkin_quota_is_used_after_expiring_rewards", func(t *testing.T) {
+		const legacyUser = 803
+		require.NoError(t, db.Create(&checkinTestUser{Id: legacyUser, Quota: 1000}).Error)
+		require.NoError(t, db.Create(&CheckinAccount{UserID: legacyUser, GiftRemaining: 100, ObservedSince: now.Unix()}).Error)
+		require.NoError(t, db.Create(&CheckinGrant{CheckinID: 900004, UserID: legacyUser, Quota: 50, Remaining: 50, ExpiresAt: now.Unix() + 3600}).Error)
+
+		// The expiring grant is allocated first; the remainder is charged to the
+		// wallet and attributed back to the older, non-expiring check-in balance.
+		require.NoError(t, SetCheckinFunding(legacyUser, "legacy_mix", 80, true, false))
+		require.NoError(t, SetCheckinFunding(legacyUser, "legacy_mix", 80, false, true))
+		require.NoError(t, BeginCheckinUsage(legacyUser, "legacy_usage", true))
+		require.NoError(t, CompleteCheckinUsage(legacyUser, "legacy_usage", 80, "legacy_mix"))
+
+		var grant CheckinGrant
+		require.NoError(t, db.First(&grant, 900004).Error)
+		assert.Zero(t, grant.Remaining)
+		var account CheckinAccount
+		require.NoError(t, db.First(&account, "user_id = ?", legacyUser).Error)
+		assert.Equal(t, int64(70), account.GiftRemaining)
+		balances, err := GetCheckinBalances(legacyUser)
+		require.NoError(t, err)
+		assert.Equal(t, &CheckinBalances{WalletQuota: 900, CheckinQuota: 70}, balances)
+
+		// Once the expiring balance is gone, the remaining legacy check-in quota
+		// continues to be consumed before any purchased quota is left over.
+		require.NoError(t, SetCheckinFunding(legacyUser, "legacy_after_expiry", 40, true, false))
+		require.NoError(t, SetCheckinFunding(legacyUser, "legacy_after_expiry", 40, false, true))
+		require.NoError(t, BeginCheckinUsage(legacyUser, "legacy_after_expiry_usage", true))
+		require.NoError(t, CompleteCheckinUsage(legacyUser, "legacy_after_expiry_usage", 40, "legacy_after_expiry"))
+		require.NoError(t, db.First(&account, "user_id = ?", legacyUser).Error)
+		assert.Equal(t, int64(30), account.GiftRemaining)
+		balances, err = GetCheckinBalances(legacyUser)
+		require.NoError(t, err)
+		assert.Equal(t, &CheckinBalances{WalletQuota: 900, CheckinQuota: 30}, balances)
+	})
 
 	t.Run("concurrent_gift_only_spending", func(t *testing.T) {
 		const giftOnlyUser = 801

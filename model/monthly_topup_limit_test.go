@@ -143,7 +143,8 @@ func TestMonthlyTopUpLimitDatabaseMatrix(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, limitError.Status, status, "display and enforcement must use the same accounting")
 
-				require.NoError(t, UpdatePendingTopUpStatus(order.TradeNo, PaymentProviderEpay, common.TopUpStatusExpired))
+				require.NoError(t, CancelPendingTopUp(order.TradeNo, user.Id))
+				assert.Equal(t, common.TopUpStatusCanceled, GetTopUpByTradeNo(order.TradeNo).Status)
 				status, err = GetMonthlyTopUpLimitStatus(user.Id)
 				require.NoError(t, err)
 				assert.Equal(t, 500_000_000, status.RemainingQuota)

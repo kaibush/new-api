@@ -20,6 +20,7 @@ import { Search, Copy, Check, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Dialog } from '@/components/dialog'
 import { StatusBadge } from '@/components/status-badge'
 import {
@@ -47,6 +48,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { formatCurrencyFromUSD } from '@/lib/currency'
 import { formatNumber } from '@/lib/format'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { useBillingHistory } from '../../hooks/use-billing-history'
 import {
@@ -58,11 +60,13 @@ import {
 interface BillingHistoryDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  onOrderChanged?: () => void | Promise<void>
 }
 
 export function BillingHistoryDialog({
   open,
   onOpenChange,
+  onOrderChanged,
 }: BillingHistoryDialogProps) {
   const { t } = useTranslation()
   const {
@@ -73,14 +77,18 @@ export function BillingHistoryDialog({
     keyword,
     loading,
     completing,
+    canceling,
     isAdmin,
     handlePageChange,
     handlePageSizeChange,
     handleSearch,
     handleCompleteOrder,
+    handleCancelOrder,
   } = useBillingHistory()
 
   const [confirmTradeNo, setConfirmTradeNo] = useState<string | null>(null)
+  const [cancelTradeNo, setCancelTradeNo] = useState<string | null>(null)
+  const currentUserId = useAuthStore((state) => state.auth.user?.id)
   const { copyToClipboard, copiedText } = useCopyToClipboard({ notify: false })
 
   const totalPages = Math.ceil(total / pageSize)
@@ -90,6 +98,17 @@ export function BillingHistoryDialog({
       const success = await handleCompleteOrder(confirmTradeNo)
       if (success) {
         setConfirmTradeNo(null)
+        await onOrderChanged?.()
+      }
+    }
+  }
+
+  const handleConfirmCancel = async () => {
+    if (cancelTradeNo) {
+      const success = await handleCancelOrder(cancelTradeNo)
+      if (success) {
+        setCancelTradeNo(null)
+        await onOrderChanged?.()
       }
     }
   }
@@ -265,17 +284,29 @@ export function BillingHistoryDialog({
                         </div>
                       </div>
 
-                      {/* Admin Actions */}
-                      {isAdmin && record.status === 'pending' && (
-                        <div className='mt-4 flex justify-end'>
-                          <Button
-                            size='sm'
-                            variant='outline'
-                            onClick={() => setConfirmTradeNo(record.trade_no)}
-                            disabled={completing}
-                          >
-                            {t('Complete Order')}
-                          </Button>
+                      {/* Pending order actions */}
+                      {record.status === 'pending' && (
+                        <div className='mt-4 flex justify-end gap-2'>
+                          {(!isAdmin || record.user_id === currentUserId) && (
+                            <Button
+                              size='sm'
+                              variant='outline'
+                              onClick={() => setCancelTradeNo(record.trade_no)}
+                              disabled={canceling || completing}
+                            >
+                              {t('Cancel Order')}
+                            </Button>
+                          )}
+                          {isAdmin && (
+                            <Button
+                              size='sm'
+                              variant='outline'
+                              onClick={() => setConfirmTradeNo(record.trade_no)}
+                              disabled={completing || canceling}
+                            >
+                              {t('Complete Order')}
+                            </Button>
+                          )}
                         </div>
                       )}
                     </div>
@@ -349,6 +380,20 @@ export function BillingHistoryDialog({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <ConfirmDialog
+        open={!!cancelTradeNo}
+        onOpenChange={(open) => !open && setCancelTradeNo(null)}
+        title={t('Cancel Order')}
+        desc={t(
+          'Canceling an unpaid order releases its reserved monthly allowance. If payment has already completed, the provider callback may still credit it.'
+        )}
+        cancelBtnText={t('Keep Order')}
+        confirmText={canceling ? t('Processing...') : t('Cancel Order')}
+        destructive
+        handleConfirm={handleConfirmCancel}
+        isLoading={canceling}
+      />
     </>
   )
 }

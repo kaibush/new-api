@@ -236,6 +236,12 @@ func TestEpayCallbacksVerifyBeforeSettlement(t *testing.T) {
 			status: http.StatusOK, rejectedBody: "fail", pendingBody: "success",
 		},
 		{
+			name: "topup return", path: "/api/user/epay/return", handler: EpayReturn,
+			status:           http.StatusFound,
+			rejectedLocation: "https://dashboard.example.com/wallet?pay=fail&show_history=true",
+			pendingLocation:  "https://dashboard.example.com/wallet?pay=pending&show_history=true",
+		},
+		{
 			name: "subscription notify", path: "/api/subscription/epay/notify", handler: SubscriptionEpayNotify,
 			status: http.StatusOK, rejectedBody: "fail", pendingBody: "fail",
 		},

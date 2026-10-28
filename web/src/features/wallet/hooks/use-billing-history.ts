@@ -28,6 +28,7 @@ import {
   getUserBillingHistory,
   getAllBillingHistory,
   completeOrder,
+  cancelOrder,
   isApiSuccess,
 } from '../api'
 import type { TopupRecord } from '../types'
@@ -56,6 +57,7 @@ export function useBillingHistory(options: UseBillingHistoryOptions = {}) {
   const requestIdRef = useRef(0)
   const [loading, setLoading] = useState(false)
   const [completing, setCompleting] = useState(false)
+  const [canceling, setCanceling] = useState(false)
 
   /**
    * Fetch billing history
@@ -123,6 +125,31 @@ export function useBillingHistory(options: UseBillingHistoryOptions = {}) {
   )
 
   /**
+   * Release a pending order owned by the signed-in user.
+   */
+  const handleCancelOrder = useCallback(
+    async (tradeNo: string) => {
+      setCanceling(true)
+      try {
+        const response = await cancelOrder({ trade_no: tradeNo })
+        if (isApiSuccess(response)) {
+          toast.success(i18next.t('Order canceled successfully'))
+          await fetchBillingHistory()
+          return true
+        }
+        handleServerError(response, i18next.t('Failed to cancel order'))
+        return false
+      } catch (error) {
+        handleServerError(error, i18next.t('Failed to cancel order'))
+        return false
+      } finally {
+        setCanceling(false)
+      }
+    },
+    [fetchBillingHistory]
+  )
+
+  /**
    * Change page
    */
   const handlePageChange = useCallback((newPage: number) => {
@@ -161,11 +188,13 @@ export function useBillingHistory(options: UseBillingHistoryOptions = {}) {
     keyword,
     loading,
     completing,
+    canceling,
     isAdmin,
     handlePageChange,
     handlePageSizeChange,
     handleSearch,
     handleCompleteOrder,
+    handleCancelOrder,
     refresh: fetchBillingHistory,
   }
 }

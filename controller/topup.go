@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -329,7 +330,11 @@ func RequestEpay(c *gin.Context) {
 	}
 
 	callBackAddress := service.GetCallbackAddress()
-	returnUrl, _ := url.Parse(paymentReturnPath("/usage-logs"))
+	returnUrl, err := url.Parse(callBackAddress + "/api/user/epay/return")
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "回调地址配置错误"})
+		return
+	}
 	notifyUrl, _ := url.Parse(callBackAddress + "/api/user/epay/notify")
 	tradeNo := fmt.Sprintf("%s%d", common.GetRandomString(6), time.Now().Unix())
 	tradeNo = fmt.Sprintf("USR%dNO%s", id, tradeNo)
@@ -515,6 +520,112 @@ func EpayNotify(c *gin.Context) {
 	if _, writeErr := c.Writer.Write([]byte("success")); writeErr != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("易支付 webhook 响应写入失败 trade_no=%s client_ip=%s error=%q", verifyInfo.ServiceTradeNo, c.ClientIP(), writeErr.Error()))
 	}
+}
+
+func epayReturnCancellationStatus(status string) bool {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "TRADE_CLOSED", "TRADE_CANCEL", "TRADE_FAILED", "CLOSED", "CANCELED", "CANCELLED", "FAILED":
+		return true
+	default:
+		return false
+	}
+}
+
+// EpayReturn handles the browser redirect after an Epay checkout. The notify
+// callback remains the source of truth, but the signed return lets us release
+// a reservation immediately when the gateway reports a terminal cancellation.
+// A still-pending status is deliberately kept pending because a delayed
+// payment can still produce a later success notification.
+func EpayReturn(c *gin.Context) {
+	redirect := func(result string) {
+		c.Redirect(http.StatusFound, paymentReturnPath("/wallet?pay="+url.QueryEscape(result)+"&show_history=true"))
+	}
+
+	if !isEpayWebhookEnabled() {
+		redirect("fail")
+		return
+	}
+
+	var params map[string]string
+	if c.Request.Method == http.MethodPost {
+		if err := c.Request.ParseForm(); err != nil {
+			redirect("fail")
+			return
+		}
+		params = lo.Reduce(lo.Keys(c.Request.PostForm), func(result map[string]string, key string, _ int) map[string]string {
+			result[key] = c.Request.PostForm.Get(key)
+			return result
+		}, map[string]string{})
+	} else {
+		params = lo.Reduce(lo.Keys(c.Request.URL.Query()), func(result map[string]string, key string, _ int) map[string]string {
+			result[key] = c.Request.URL.Query().Get(key)
+			return result
+		}, map[string]string{})
+	}
+	if len(params) == 0 {
+		redirect("fail")
+		return
+	}
+
+	client := GetEpayClient()
+	if client == nil {
+		redirect("fail")
+		return
+	}
+	verifyInfo, err := client.Verify(params)
+	if err != nil || !verifyInfo.VerifyStatus || verifyInfo.ServiceTradeNo == "" {
+		redirect("fail")
+		return
+	}
+
+	if verifyInfo.TradeStatus == epay.StatusTradeSuccess {
+		LockOrder(verifyInfo.ServiceTradeNo)
+		defer UnlockOrder(verifyInfo.ServiceTradeNo)
+		if _, err := model.RechargeEpay(verifyInfo.ServiceTradeNo, verifyInfo.Type, c.ClientIP()); err != nil {
+			if topUp := model.GetTopUpByTradeNo(verifyInfo.ServiceTradeNo); topUp != nil && topUp.Status == common.TopUpStatusSuccess {
+				redirect("success")
+				return
+			}
+			redirect("fail")
+			return
+		}
+		redirect("success")
+		return
+	}
+
+	if epayReturnCancellationStatus(verifyInfo.TradeStatus) {
+		LockOrder(verifyInfo.ServiceTradeNo)
+		err := model.UpdatePendingTopUpStatus(verifyInfo.ServiceTradeNo, model.PaymentProviderEpay, common.TopUpStatusCanceled)
+		UnlockOrder(verifyInfo.ServiceTradeNo)
+		if err != nil && !errors.Is(err, model.ErrTopUpStatusInvalid) && !errors.Is(err, model.ErrTopUpNotFound) {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("易支付返回取消订单失败 trade_no=%s error=%q", verifyInfo.ServiceTradeNo, err.Error()))
+		}
+		redirect("canceled")
+		return
+	}
+
+	redirect("pending")
+}
+
+type CancelTopUpRequest struct {
+	TradeNo string `json:"trade_no"`
+}
+
+// CancelTopUp releases a pending order belonging to the signed-in user. A
+// later verified provider success callback may still settle a canceled order,
+// which prevents a delayed callback from losing a payment.
+func CancelTopUp(c *gin.Context) {
+	var req CancelTopUpRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.TradeNo == "" {
+		common.ApiErrorMsg(c, "参数错误")
+		return
+	}
+
+	if err := model.CancelPendingTopUp(req.TradeNo, c.GetInt("id")); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, nil)
 }
 
 func RequestAmount(c *gin.Context) {

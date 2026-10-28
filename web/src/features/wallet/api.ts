@@ -33,6 +33,7 @@ import type {
   AffiliateTransferResponse,
   BillingHistoryResponse,
   CompleteOrderRequest,
+  CancelOrderRequest,
   CreemPaymentRequest,
   CreemPaymentResponse,
   WaffoPaymentRequest,
@@ -244,5 +245,15 @@ export async function completeOrder(
   request: CompleteOrderRequest
 ): Promise<ApiResponse> {
   const res = await api.post('/api/user/topup/complete', request)
+  return res.data
+}
+
+/**
+ * Release a pending order owned by the signed-in user.
+ */
+export async function cancelOrder(
+  request: CancelOrderRequest
+): Promise<ApiResponse> {
+  const res = await api.post('/api/user/topup/cancel', request)
   return res.data
 }

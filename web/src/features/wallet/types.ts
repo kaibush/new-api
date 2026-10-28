@@ -256,7 +256,12 @@ export interface UserWalletData {
 /**
  * Topup record status
  */
-export type TopupStatus = 'success' | 'pending' | 'expired'
+export type TopupStatus =
+  | 'success'
+  | 'pending'
+  | 'expired'
+  | 'failed'
+  | 'canceled'
 
 /**
  * Topup billing record
@@ -294,5 +299,12 @@ export interface BillingHistoryResponse {
  * Complete order request (admin only)
  */
 export interface CompleteOrderRequest {
+  trade_no: string
+}
+
+/**
+ * Cancel a pending order owned by the signed-in user.
+ */
+export interface CancelOrderRequest {
   trade_no: string
 }

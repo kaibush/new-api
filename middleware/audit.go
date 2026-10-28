@@ -44,6 +44,7 @@ func (w *auditResponseWriter) WriteString(s string) (int, error) {
 var auditRouteActions = map[string]string{
 	// 用户管理
 	"POST /api/user/topup/complete":                    "user.topup_complete",
+	"POST /api/user/topup/cancel":                      "user.topup_cancel",
 	"DELETE /api/user/:id/reset_passkey":               "user.reset_passkey",
 	"DELETE /api/user/:id/oauth/bindings/:provider_id": "user.oauth_unbind",
 

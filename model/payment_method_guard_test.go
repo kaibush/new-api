@@ -140,6 +140,28 @@ func TestUpdatePendingTopUpStatus_RejectsMismatchedPaymentProvider(t *testing.T)
 	}
 }
 
+func TestCancelPendingTopUpReleasesReservationAndAllowsVerifiedSettlement(t *testing.T) {
+	truncateTables(t)
+
+	oldQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 500000
+	t.Cleanup(func() { common.QuotaPerUnit = oldQuotaPerUnit })
+
+	user := insertUserForPaymentGuardTest(t, 175, 0)
+	order := createEpayTestOrder(t, user.Id, "EPAYTESTCANCEL", PaymentProviderEpay, common.TopUpStatusPending)
+
+	assert.ErrorIs(t, CancelPendingTopUp(order.TradeNo, user.Id+1), ErrTopUpNotFound)
+	require.NoError(t, CancelPendingTopUp(order.TradeNo, user.Id))
+	assert.Equal(t, common.TopUpStatusCanceled, getTopUpStatusForPaymentGuardTest(t, order.TradeNo))
+
+	// A cancellation only releases the reservation. If the provider later
+	// confirms payment, the verified settlement must still credit the user.
+	_, err := RechargeEpay(order.TradeNo, "alipay", "127.0.0.1")
+	require.NoError(t, err)
+	assert.Equal(t, common.TopUpStatusSuccess, getTopUpStatusForPaymentGuardTest(t, order.TradeNo))
+	assert.Equal(t, 2*500000, getUserQuotaForPaymentGuardTest(t, user.Id))
+}
+
 func TestCompleteSubscriptionOrder_RejectsMismatchedPaymentProvider(t *testing.T) {
 	truncateTables(t)
 
