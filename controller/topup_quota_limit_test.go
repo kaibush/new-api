@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -11,11 +12,9 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 func TestTopUpQuotaValidation(t *testing.T) {
@@ -124,34 +123,57 @@ func TestRequestAmountRejectsTopUpThatCannotBeSettled(t *testing.T) {
 }
 
 func TestRequestAmountRejectsTopUpOverQuotaLimits(t *testing.T) {
-	for _, monthly := range []bool{false, true} {
-		t.Run(fmt.Sprintf("monthly=%t", monthly), func(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		monthly   bool
+		limit     float64
+		pending   int64
+		amount    int64
+		remaining int
+		allowed   bool
+	}{
+		{name: "wallet ceiling", amount: 1},
+		{name: "request exceeds unused monthly allowance", monthly: true, limit: 0.5, amount: 1, remaining: 250000},
+		{name: "first top-up at 1000 dollar limit", monthly: true, limit: 1000, amount: 1000, remaining: 500000000, allowed: true},
+		{name: "unpaid orders explain rejection at 1000 dollar limit", monthly: true, limit: 1000, pending: 22, amount: 1000, remaining: 489000000},
+		{name: "top-up at remaining allowance", monthly: true, limit: 1000, pending: 22, amount: 978, remaining: 489000000, allowed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			oldQuotaPerUnit := common.QuotaPerUnit
 			oldDisplayType := operation_setting.GetGeneralSetting().QuotaDisplayType
 			oldDB := model.DB
+			oldMaster, oldSQLite, oldRedis := common.IsMasterNode, common.SQLitePath, common.RedisEnabled
+			oldMainType, oldLogType := common.MainDatabaseType(), common.LogDatabaseType()
 			oldPaymentSetting := *operation_setting.GetPaymentSetting()
-			operation_setting.GetPaymentSetting().MonthlyTopUpLimitEnabled = monthly
-			operation_setting.GetPaymentSetting().MonthlyTopUpLimit = 0.5
+			oldMinTopUp, oldPrice := operation_setting.MinTopUp, operation_setting.Price
+			operation_setting.MinTopUp, operation_setting.Price = 1, 1
+			operation_setting.GetPaymentSetting().MonthlyTopUpLimitEnabled = tc.monthly
+			operation_setting.GetPaymentSetting().MonthlyTopUpLimit = tc.limit
 			common.QuotaPerUnit = 500000
 			operation_setting.GetGeneralSetting().QuotaDisplayType = operation_setting.QuotaDisplayTypeUSD
 
-			db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-			require.NoError(t, err)
-			require.NoError(t, db.AutoMigrate(&model.User{}, &model.TopUp{}, &model.Redemption{}))
-			model.DB = db
+			t.Setenv("SQL_DSN", "")
+			t.Setenv("LOG_SQL_DSN", "")
+			common.IsMasterNode, common.RedisEnabled = false, false
+			common.SQLitePath = filepath.Join(t.TempDir(), "topup.db")
 			t.Cleanup(func() {
 				common.QuotaPerUnit = oldQuotaPerUnit
 				operation_setting.GetGeneralSetting().QuotaDisplayType = oldDisplayType
 				model.DB = oldDB
+				common.IsMasterNode, common.SQLitePath, common.RedisEnabled = oldMaster, oldSQLite, oldRedis
+				common.SetDatabaseTypes(oldMainType, oldLogType)
 				*operation_setting.GetPaymentSetting() = oldPaymentSetting
-				sqlDB, dbErr := db.DB()
-				if dbErr == nil {
-					require.NoError(t, sqlDB.Close())
-				}
+				operation_setting.MinTopUp, operation_setting.Price = oldMinTopUp, oldPrice
 			})
+			require.NoError(t, model.InitDB())
+			db := model.DB
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+			require.NoError(t, db.AutoMigrate(&model.User{}, &model.TopUp{}, &model.Redemption{}))
 
 			quota := common.MaxWalletQuota - 100_000
-			if monthly {
+			if tc.monthly {
 				quota = 0
 			}
 			require.NoError(t, model.DB.Create(&model.User{
@@ -159,7 +181,11 @@ func TestRequestAmountRejectsTopUpOverQuotaLimits(t *testing.T) {
 				Username: "topup_capacity_user",
 				Quota:    quota,
 				Status:   common.UserStatusEnabled,
+				Group:    "default",
 			}).Error)
+			if tc.pending > 0 {
+				require.NoError(t, model.DB.Create(&model.TopUp{UserId: 42, TradeNo: "pending", Amount: tc.pending, Status: common.TopUpStatusPending, PaymentProvider: model.PaymentProviderEpay}).Error)
+			}
 
 			gin.SetMode(gin.TestMode)
 			recorder := httptest.NewRecorder()
@@ -168,18 +194,44 @@ func TestRequestAmountRejectsTopUpOverQuotaLimits(t *testing.T) {
 			ctx.Request = httptest.NewRequest(
 				http.MethodPost,
 				"/api/user/amount",
-				strings.NewReader(`{"amount":1}`),
+				strings.NewReader(fmt.Sprintf(`{"amount":%d}`, tc.amount)),
 			)
 			ctx.Request.Header.Set("Content-Type", "application/json")
 
 			RequestAmount(ctx)
 
 			assert.Equal(t, http.StatusOK, recorder.Code)
-			if monthly {
-				assert.JSONEq(t, `{"message":"error","data":"Monthly top-up limit reached (including pending orders). Reduce the amount or try again next month.","code":"MONTHLY_TOPUP_LIMIT_EXCEEDED"}`, recorder.Body.String())
+			if tc.allowed {
+				assert.JSONEq(t, fmt.Sprintf(`{"message":"success","data":"%d.00"}`, tc.amount), recorder.Body.String())
+			} else if tc.monthly {
+				var response struct {
+					Code  string                        `json:"code"`
+					Data  string                        `json:"data"`
+					Limit model.MonthlyTopUpLimitStatus `json:"monthly_topup_limit"`
+				}
+				require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+				assert.Equal(t, "MONTHLY_TOPUP_LIMIT_EXCEEDED", response.Code)
+				assert.Equal(t, tc.remaining, response.Limit.RemainingQuota)
+				assert.Zero(t, response.Limit.UsedQuota)
+				assert.Equal(t, int(tc.pending)*500000, response.Limit.PendingQuota)
+				assert.Contains(t, response.Data, fmt.Sprintf("%.6f USD", float64(tc.remaining)/common.QuotaPerUnit))
 			} else {
 				assert.JSONEq(t, `{"message":"error","data":"top-up quota limit exceeded"}`, recorder.Body.String())
 			}
+			infoRecorder := httptest.NewRecorder()
+			infoContext, _ := gin.CreateTestContext(infoRecorder)
+			infoContext.Set("id", 42)
+			GetTopUpInfo(infoContext)
+			var info struct {
+				Success bool `json:"success"`
+				Data    struct {
+					Limit model.MonthlyTopUpLimitStatus `json:"monthly_topup_limit"`
+				} `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(infoRecorder.Body.Bytes(), &info))
+			assert.True(t, info.Success)
+			assert.Equal(t, tc.monthly, info.Data.Limit.Enabled)
+			assert.Equal(t, tc.remaining, info.Data.Limit.RemainingQuota)
 
 		})
 	}

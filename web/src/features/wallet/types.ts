@@ -121,6 +121,14 @@ export interface WaffoPayMethod {
  * Topup configuration information
  */
 export interface TopupInfo {
+  /** Per-user UTC monthly limit, in wallet quota units. */
+  monthly_topup_limit?: {
+    enabled: boolean
+    limit_quota: number
+    used_quota: number
+    pending_quota: number
+    remaining_quota: number
+  }
   /** Whether online topup is enabled */
   enable_online_topup: boolean
   /** Whether Stripe topup is enabled */

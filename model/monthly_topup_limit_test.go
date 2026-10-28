@@ -116,6 +116,40 @@ func TestMonthlyTopUpLimitDatabaseMatrix(t *testing.T) {
 				require.NoError(t, ValidateTopUpQuotaCapacity(user.Id, 10000))
 			})
 
+			t.Run("1000 dollar limit allows a first top-up and explains unpaid reservations", func(t *testing.T) {
+				user := monthlyTopUpTestUser(t)
+				previousUnit := common.QuotaPerUnit
+				common.QuotaPerUnit = 500000
+				t.Cleanup(func() { common.QuotaPerUnit = previousUnit })
+				operation_setting.GetPaymentSetting().MonthlyTopUpLimit = 1000
+				// An existing wallet balance (for example, a gift) is not a top-up.
+				require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).UpdateColumn("quota", 100_000_000).Error)
+				status, err := GetMonthlyTopUpLimitStatus(user.Id)
+				require.NoError(t, err)
+				assert.Equal(t, &MonthlyTopUpLimitStatus{Enabled: true, LimitQuota: 500_000_000, RemainingQuota: 500_000_000}, status)
+				require.NoError(t, ValidateTopUpQuotaCapacity(user.Id, 500_000_000))
+				require.NoError(t, ValidateTopUpQuotaCapacity(user.Id, 500_000_000), "quotes must not reserve credit")
+
+				order := TopUp{UserId: user.Id, TradeNo: "unpaid-22", Amount: 22, Status: common.TopUpStatusPending, PaymentProvider: PaymentProviderEpay}
+				require.NoError(t, order.Insert())
+				err = ValidateTopUpQuotaCapacity(user.Id, 500_000_000)
+				require.ErrorIs(t, err, ErrMonthlyTopUpLimitExceeded)
+				var limitError *MonthlyTopUpLimitError
+				require.ErrorAs(t, err, &limitError)
+				assert.Equal(t, &MonthlyTopUpLimitStatus{Enabled: true, LimitQuota: 500_000_000, PendingQuota: 11_000_000, RemainingQuota: 489_000_000}, limitError.Status)
+				assert.Contains(t, err.Error(), "978.000000 USD")
+				require.NoError(t, ValidateTopUpQuotaCapacity(user.Id, 489_000_000))
+				status, err = GetMonthlyTopUpLimitStatus(user.Id)
+				require.NoError(t, err)
+				assert.Equal(t, limitError.Status, status, "display and enforcement must use the same accounting")
+
+				require.NoError(t, UpdatePendingTopUpStatus(order.TradeNo, PaymentProviderEpay, common.TopUpStatusExpired))
+				status, err = GetMonthlyTopUpLimitStatus(user.Id)
+				require.NoError(t, err)
+				assert.Equal(t, 500_000_000, status.RemainingQuota)
+				assert.Zero(t, status.PendingQuota)
+			})
+
 			t.Run("settlement retains its completion month across midnight", func(t *testing.T) {
 				user := monthlyTopUpTestUser(t)
 				now := time.Now().UTC()
@@ -133,6 +167,29 @@ func TestMonthlyTopUpLimitDatabaseMatrix(t *testing.T) {
 				assert.ErrorIs(t, err, ErrMonthlyTopUpLimitExceeded)
 				assert.Zero(t, getUserQuotaForPaymentGuardTest(t, user.Id))
 				require.NoError(t, ValidateTopUpQuotaCapacity(user.Id, 1000), "the new month's allowance starts fresh")
+			})
+
+			t.Run("totals above the wallet ceiling remain rejected without overflowing", func(t *testing.T) {
+				user := monthlyTopUpTestUser(t)
+				previousUnit := common.QuotaPerUnit
+				common.QuotaPerUnit = 1
+				t.Cleanup(func() { common.QuotaPerUnit = previousUnit })
+				operation_setting.GetPaymentSetting().MonthlyTopUpLimit = float64(common.MaxWalletQuota)
+				now := common.GetTimestamp()
+				orders := []TopUp{
+					{UserId: user.Id, TradeNo: "maximum-credit", Amount: int64(common.MaxWalletQuota), PaymentProvider: PaymentProviderCreem, Status: common.TopUpStatusSuccess, CompleteTime: now},
+					{UserId: user.Id, TradeNo: "excess-credit", Amount: 1, PaymentProvider: PaymentProviderCreem, Status: common.TopUpStatusSuccess, CompleteTime: now},
+				}
+				require.NoError(t, db.Create(&orders).Error)
+				status, err := GetMonthlyTopUpLimitStatus(user.Id)
+				require.NoError(t, err)
+				assert.Zero(t, status.RemainingQuota)
+				assert.Equal(t, common.MaxWalletQuota, status.UsedQuota)
+				err = userWalletTransaction(user.Id, func(tx *gorm.DB) error {
+					return orders[1].creditQuota(tx, 1, nil)
+				})
+				assert.ErrorIs(t, err, ErrMonthlyTopUpLimitExceeded)
+				assert.Zero(t, getUserQuotaForPaymentGuardTest(t, user.Id))
 			})
 
 			for _, provider := range []string{PaymentProviderEpay, PaymentProviderStripe, PaymentProviderCreem, PaymentProviderWaffo, PaymentProviderWaffoPancake, "manual-creem"} {
@@ -154,6 +211,9 @@ func TestMonthlyTopUpLimitDatabaseMatrix(t *testing.T) {
 					operation_setting.GetPaymentSetting().MonthlyTopUpLimit = 10
 					require.NoError(t, settleMonthlyTopUpTestOrder(provider, order.TradeNo))
 					assert.Equal(t, 1000, getUserQuotaForPaymentGuardTest(t, user.Id))
+					status, err := GetMonthlyTopUpLimitStatus(user.Id)
+					require.NoError(t, err)
+					assert.Equal(t, &MonthlyTopUpLimitStatus{Enabled: true, LimitQuota: 1000, UsedQuota: 1000}, status)
 					if provider == PaymentProviderEpay {
 						alreadyDone, err := RechargeEpay(order.TradeNo, "alipay", "")
 						require.NoError(t, err)

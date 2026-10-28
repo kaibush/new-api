@@ -23,6 +23,11 @@ import (
 )
 
 func GetTopUpInfo(c *gin.Context) {
+	monthlyLimit, err := model.GetMonthlyTopUpLimitStatus(c.GetInt("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	complianceConfirmed := operation_setting.IsPaymentComplianceConfirmed()
 
 	// 获取支付方式
@@ -97,6 +102,7 @@ func GetTopUpInfo(c *gin.Context) {
 	}
 
 	data := gin.H{
+		"monthly_topup_limit":              monthlyLimit,
 		"enable_online_topup":              isEpayTopUpEnabled(),
 		"enable_stripe_topup":              isStripeTopUpEnabled(),
 		"enable_creem_topup":               isCreemTopUpEnabled(),
@@ -247,11 +253,16 @@ func rejectMonthlyTopUpLimit(c *gin.Context, err error) bool {
 	if !errors.Is(err, model.ErrMonthlyTopUpLimitExceeded) {
 		return false
 	}
-	c.JSON(http.StatusOK, gin.H{
+	response := gin.H{
 		"message": "error",
 		"data":    err.Error(),
 		"code":    "MONTHLY_TOPUP_LIMIT_EXCEEDED",
-	})
+	}
+	var limitError *model.MonthlyTopUpLimitError
+	if errors.As(err, &limitError) {
+		response["monthly_topup_limit"] = limitError.Status
+	}
+	c.JSON(http.StatusOK, response)
 	return true
 }
 

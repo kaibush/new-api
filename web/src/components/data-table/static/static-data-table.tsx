@@ -69,6 +69,7 @@ export type StaticDataTableColumn<TData = unknown> = {
   className?: string
   cellClassName?: string | ((row: TData, index: number) => string | undefined)
   cell?: (row: TData, index: number) => React.ReactNode
+  truncate?: boolean
 }
 
 export function StaticDataTable<TData = unknown>(
@@ -184,6 +185,7 @@ function renderStaticCellContent<TData>(
   index: number
 ) {
   const content = column.cell?.(row, index)
+  if (column.truncate === false) return content
   const textContent = getPrimitiveTextContent(content)
 
   if (!textContent) return content

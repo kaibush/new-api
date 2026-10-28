@@ -96,9 +96,13 @@ export function useWaffoPancakePayment() {
           }
         }
 
-        handleServerError(response, undefined, {
-          title: getErrorMessage(response.message, response.data),
-        })
+        if (response.code === 'MONTHLY_TOPUP_LIMIT_EXCEEDED') {
+          handleServerError(response)
+        } else {
+          handleServerError(response, undefined, {
+            title: getErrorMessage(response.message, response.data),
+          })
+        }
         return false
       } catch (_error) {
         handleServerError(_error, i18next.t('Payment request failed'))

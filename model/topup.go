@@ -55,6 +55,36 @@ var (
 	ErrMonthlyTopUpLimitExceeded = errors.New("Monthly top-up limit reached (including pending orders). Reduce the amount or try again next month.")
 )
 
+// MonthlyTopUpLimitStatus uses wallet quota units, independent of payment
+// currency, discounts, display currency, and the user's current balance.
+type MonthlyTopUpLimitStatus struct {
+	Enabled        bool `json:"enabled"`
+	LimitQuota     int  `json:"limit_quota"`
+	UsedQuota      int  `json:"used_quota"`
+	PendingQuota   int  `json:"pending_quota"`
+	RemainingQuota int  `json:"remaining_quota"`
+	limitExceeded  bool
+}
+
+type MonthlyTopUpLimitError struct {
+	Status *MonthlyTopUpLimitStatus
+}
+
+func (err *MonthlyTopUpLimitError) Error() string {
+	return fmt.Sprintf("This top-up exceeds your remaining monthly allowance. Remaining: %.6f USD; credited: %.6f USD; pending orders: %.6f USD.",
+		float64(err.Status.RemainingQuota)/common.QuotaPerUnit,
+		float64(err.Status.UsedQuota)/common.QuotaPerUnit,
+		float64(err.Status.PendingQuota)/common.QuotaPerUnit)
+}
+
+func (err *MonthlyTopUpLimitError) Unwrap() error {
+	return ErrMonthlyTopUpLimitExceeded
+}
+
+func GetMonthlyTopUpLimitStatus(userId int) (*MonthlyTopUpLimitStatus, error) {
+	return getMonthlyTopUpLimitStatus(DB, userId, true, common.GetTimestamp())
+}
+
 func (topUp *TopUp) Insert() error {
 	limit, err := operation_setting.GetPaymentSetting().MonthlyTopUpQuotaLimit()
 	if err != nil {
@@ -105,9 +135,21 @@ func (topUp TopUp) CreditedQuota() (int, error) {
 // Mutating callers hold the wallet lock before any snapshot reads, so MySQL
 // repeatable read also sees the last committed reservation or credit.
 func validateMonthlyTopUpQuota(tx *gorm.DB, userId, additionalQuota int, includePending bool, completedAt int64) error {
-	limit, err := operation_setting.GetPaymentSetting().MonthlyTopUpQuotaLimit()
-	if err != nil || limit == 0 {
+	status, err := getMonthlyTopUpLimitStatus(tx, userId, includePending, completedAt)
+	if err != nil || !status.Enabled {
 		return err
+	}
+	if status.limitExceeded || additionalQuota > status.RemainingQuota {
+		return &MonthlyTopUpLimitError{Status: status}
+	}
+	return nil
+}
+
+func getMonthlyTopUpLimitStatus(tx *gorm.DB, userId int, includePending bool, completedAt int64) (*MonthlyTopUpLimitStatus, error) {
+	limit, err := operation_setting.GetPaymentSetting().MonthlyTopUpQuotaLimit()
+	status := &MonthlyTopUpLimitStatus{Enabled: limit > 0, LimitQuota: limit}
+	if err != nil || limit == 0 {
+		return status, err
 	}
 	now := time.Unix(completedAt, 0).UTC()
 	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
@@ -120,40 +162,39 @@ func validateMonthlyTopUpQuota(tx *gorm.DB, userId, additionalQuota int, include
 				common.TopUpStatusSuccess, start.Unix(), start.AddDate(0, 1, 0).Unix(), common.TopUpStatusPending)
 	}
 	var topUps []TopUp
-	if err := query.Where("amount > 0").Select("amount", "money", "payment_provider", "payment_method").Find(&topUps).Error; err != nil {
-		return err
+	if err := query.Where("amount > 0").Select("amount", "money", "payment_provider", "payment_method", "status").Find(&topUps).Error; err != nil {
+		return nil, err
 	}
-	remaining := limit
 	for _, topUp := range topUps {
 		quota, err := topUp.CreditedQuota()
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if quota > remaining {
-			return ErrMonthlyTopUpLimitExceeded
+		// Totals can exceed the cap after an administrator lowers it. Keep
+		// reading so the UI can show the reason, without overflowing an int.
+		status.limitExceeded = status.limitExceeded || quota > limit-status.UsedQuota-status.PendingQuota
+		if topUp.Status == common.TopUpStatusPending {
+			status.PendingQuota += min(quota, common.MaxWalletQuota-status.PendingQuota)
+		} else {
+			status.UsedQuota += min(quota, common.MaxWalletQuota-status.UsedQuota)
 		}
-		remaining -= quota
 	}
 	// Used redemption codes remain part of the total after soft deletion.
 	redemptionQuery := tx.Unscoped().Where("used_user_id = ? AND status = ? AND redeemed_time >= ? AND redeemed_time < ?",
 		userId, common.RedemptionCodeStatusUsed, start.Unix(), start.AddDate(0, 1, 0).Unix())
 	var redemptions []Redemption
 	if err := redemptionQuery.Select("quota").Find(&redemptions).Error; err != nil {
-		return err
+		return nil, err
 	}
 	for _, redemption := range redemptions {
 		if redemption.Quota <= 0 {
-			return ErrInvalidTopUpQuota
+			return nil, ErrInvalidTopUpQuota
 		}
-		if redemption.Quota > remaining {
-			return ErrMonthlyTopUpLimitExceeded
-		}
-		remaining -= redemption.Quota
+		status.limitExceeded = status.limitExceeded || redemption.Quota > limit-status.UsedQuota-status.PendingQuota
+		status.UsedQuota += min(redemption.Quota, common.MaxWalletQuota-status.UsedQuota)
 	}
-	if additionalQuota > remaining {
-		return ErrMonthlyTopUpLimitExceeded
-	}
-	return nil
+	status.RemainingQuota = max(0, limit-status.UsedQuota-status.PendingQuota)
+	return status, nil
 }
 
 // creditQuota checks the completion month recorded on the order, even when

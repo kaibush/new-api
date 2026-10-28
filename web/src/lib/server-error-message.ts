@@ -20,6 +20,10 @@ import { isCancelledError } from '@tanstack/react-query'
 import { isCancel } from 'axios'
 import i18next from 'i18next'
 
+import { toIntlLocale } from '@/i18n/languages'
+
+import { formatQuotaWithCurrency } from './currency'
+
 export const safeServerErrorMessage = Symbol('safeServerErrorMessage')
 
 const serverErrorMessageKeys = {
@@ -175,6 +179,39 @@ export function getServerErrorMessage(
     )
   }
   const key = getServerErrorMessageKey(value)
+  if (key === serverErrorMessageKeys.MONTHLY_TOPUP_LIMIT_EXCEEDED) {
+    const source = sources.find(
+      (item) => item.code === 'MONTHLY_TOPUP_LIMIT_EXCEEDED'
+    )
+    const limit = source?.monthly_topup_limit
+    if (
+      isRecord(limit) &&
+      typeof limit.remaining_quota === 'number' &&
+      Number.isSafeInteger(limit.remaining_quota) &&
+      limit.remaining_quota >= 0 &&
+      typeof limit.used_quota === 'number' &&
+      Number.isSafeInteger(limit.used_quota) &&
+      limit.used_quota >= 0 &&
+      typeof limit.pending_quota === 'number' &&
+      Number.isSafeInteger(limit.pending_quota) &&
+      limit.pending_quota >= 0
+    ) {
+      const options = {
+        abbreviate: false,
+        digitsLarge: 6,
+        digitsSmall: 6,
+        locale: toIntlLocale(i18next.resolvedLanguage || i18next.language),
+      }
+      return i18next.t(
+        'This top-up exceeds your remaining monthly allowance. You can still add {{remaining}}; {{used}} credited and {{pending}} reserved by pending orders this month.',
+        {
+          remaining: formatQuotaWithCurrency(limit.remaining_quota, options),
+          used: formatQuotaWithCurrency(limit.used_quota, options),
+          pending: formatQuotaWithCurrency(limit.pending_quota, options),
+        }
+      )
+    }
+  }
   if (key) return i18next.t(key)
   for (const source of sources) {
     if (

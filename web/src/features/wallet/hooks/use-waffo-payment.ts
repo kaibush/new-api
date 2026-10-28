@@ -73,9 +73,13 @@ export function useWaffoPayment() {
           }
         }
 
-        handleServerError(response, undefined, {
-          title: getErrorMessage(response.message, response.data),
-        })
+        if (response.code === 'MONTHLY_TOPUP_LIMIT_EXCEEDED') {
+          handleServerError(response)
+        } else {
+          handleServerError(response, undefined, {
+            title: getErrorMessage(response.message, response.data),
+          })
+        }
         return false
       } catch (error) {
         handleServerError(error, i18next.t('Payment request failed'))

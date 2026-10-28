@@ -41,6 +41,13 @@ it('opens wallet recharge on keyboard activation and closes with Escape', async 
         pay_methods: [],
         discount: {},
         min_topup: 1,
+        monthly_topup_limit: {
+          enabled: true,
+          limit_quota: 500_000_000,
+          used_quota: 0,
+          pending_quota: 11_000_000,
+          remaining_quota: 489_000_000,
+        },
       }
     }
     return { data: { success: true, data } }
@@ -65,6 +72,8 @@ it('opens wallet recharge on keyboard activation and closes with Escape', async 
   expect(
     await screen.findByPlaceholderText('Enter your redemption code')
   ).toBeVisible()
+  expect(screen.getByText('Remaining top-up allowance this month: $978')).toBeVisible()
+  expect(screen.getByText('Monthly limit: $1,000 · Credited: $0 · Pending orders: $22')).toBeVisible()
   expect(screen.queryByText('Affiliate Rewards')).not.toBeInTheDocument()
   await user.keyboard('{Escape}')
   await waitFor(() =>
@@ -74,7 +83,7 @@ it('opens wallet recharge on keyboard activation and closes with Escape', async 
   client.clear()
 })
 
-it('a monthly limit rejection stops payment confirmation and shows the reason', async () => {
+it('an over-limit top-up shows the remaining allowance and accepts a reduced amount', async () => {
   useAuthStore.getState().auth.setUser({ id: 1, username: 'user', role: 10 })
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
     let data: unknown = {}
@@ -91,13 +100,24 @@ it('a monthly limit rejection stops payment confirmation and shows the reason', 
     }
     return { data: { success: true, data } }
   })
-  vi.spyOn(api, 'post').mockImplementation(async () => ({
-    data: {
+  vi.spyOn(api, 'post').mockImplementation(async (_url, request) => {
+    const amount = (request as { amount: number }).amount
+    if (amount <= 978) {
+      return { data: { message: 'success', data: amount.toFixed(2) } }
+    }
+    return { data: {
       message: 'error',
       data: 'monthly limit exceeded',
       code: 'MONTHLY_TOPUP_LIMIT_EXCEEDED',
-    },
-  }))
+      monthly_topup_limit: {
+        enabled: true,
+        limit_quota: 500_000_000,
+        used_quota: 0,
+        pending_quota: 11_000_000,
+        remaining_quota: 489_000_000,
+      },
+    } }
+  })
   const notify = vi.spyOn(toast, 'error').mockReturnValue('monthly-limit')
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -110,12 +130,15 @@ it('a monthly limit rejection stops payment confirmation and shows the reason', 
     </QueryClientProvider>
   )
   await user.click(screen.getByRole('button', { name: 'Online Top-up' }))
+  const amount = await screen.findByRole('spinbutton', { name: 'Custom Amount' })
+  await user.clear(amount)
+  await user.type(amount, '1000')
   await user.click(await screen.findByRole('button', { name: 'Test Pay' }))
   await waitFor(() =>
     expect(screen.getByRole('button', { name: 'Test Pay' })).toBeEnabled()
   )
   expect(notify).toHaveBeenCalledWith(
-    'Monthly top-up limit reached (including pending orders). Reduce the amount or try again next month.'
+    'This top-up exceeds your remaining monthly allowance. You can still add $978; $0 credited and $22 reserved by pending orders this month.'
   )
   expect(
     screen.queryByRole('alertdialog', { name: 'Confirm Payment' })
@@ -125,5 +148,10 @@ it('a monthly limit rejection stops payment confirmation and shows the reason', 
     expect.anything(),
     expect.anything()
   )
+  const reducedAmount = await screen.findByRole('spinbutton', { name: 'Custom Amount' })
+  await user.clear(reducedAmount)
+  await user.type(reducedAmount, '978')
+  await user.click(screen.getByRole('button', { name: 'Test Pay' }))
+  expect(await screen.findByRole('alertdialog', { name: 'Confirm Payment' })).toBeVisible()
   client.clear()
 })

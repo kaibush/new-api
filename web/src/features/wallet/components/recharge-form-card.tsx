@@ -20,7 +20,7 @@ import { Gift, ExternalLink, Loader2, Receipt, WalletCards } from 'lucide-react'
 import { useState, useEffect, useId } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
-import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { IconBadge } from '@/components/ui/icon-badge'
@@ -34,6 +34,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatQuotaWithCurrency } from '@/lib/currency'
 import { formatNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
@@ -112,7 +114,14 @@ export function RechargeFormCard({
   onWaffoMethodSelect,
   enableWaffoPancakeTopup,
 }: RechargeFormCardProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const quotaFormat = {
+    abbreviate: false,
+    digitsLarge: 6,
+    digitsSmall: 6,
+    locale: toIntlLocale(i18n.resolvedLanguage || i18n.language),
+  }
+  const monthlyLimit = topupInfo?.monthly_topup_limit
   const amountId = useId()
   const redemptionId = useId()
   const [localAmount, setLocalAmount] = useState(topupAmount.toString())
@@ -218,6 +227,51 @@ export function RechargeFormCard({
       }
       contentClassName='space-y-4 sm:space-y-6'
     >
+      {monthlyLimit?.enabled && (
+        <Alert role='status'>
+          <AlertTitle>
+            {t('Remaining top-up allowance this month: {{amount}}', {
+              amount: formatQuotaWithCurrency(
+                monthlyLimit.remaining_quota,
+                quotaFormat
+              ),
+            })}
+          </AlertTitle>
+          <AlertDescription>
+            <div>
+              {t(
+                'Monthly limit: {{limit}} · Credited: {{used}} · Pending orders: {{pending}}',
+                {
+                  limit: formatQuotaWithCurrency(
+                    monthlyLimit.limit_quota,
+                    quotaFormat
+                  ),
+                  used: formatQuotaWithCurrency(
+                    monthlyLimit.used_quota,
+                    quotaFormat
+                  ),
+                  pending: formatQuotaWithCurrency(
+                    monthlyLimit.pending_quota,
+                    quotaFormat
+                  ),
+                }
+              )}
+            </div>
+            <div>
+              {t(
+                'Limits apply to wallet credit, including redemption codes, per UTC calendar month.'
+              )}
+            </div>
+            {monthlyLimit.pending_quota > 0 && (
+              <div>
+                {t(
+                  'Pending orders reserve allowance even before payment. Check Order History for details.'
+                )}
+              </div>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
       {/* Online Topup Section */}
       {hasAnyTopup ? (
         <div className='space-y-4 sm:space-y-6'>

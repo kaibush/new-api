@@ -132,7 +132,20 @@ describe.each(cases)('dashboard $granularity chart chronology', (scenario) => {
     const values: Array<{ Time: string; rawValue: number }> =
       result.spec_user_trend.data[0].values
 
-    expect(values.map((row) => row.Time)).toEqual(scenario.labels)
+    expect(values.map((row) => row.Time)).toEqual(
+      scenario.granularity === 'week'
+        ? [
+            '11-24 - 11-30',
+            '12-01 - 12-07',
+            '12-08 - 12-14',
+            '12-15 - 12-21',
+            '12-22 - 12-28',
+            '12-29 - 01-04',
+            '01-05 - 01-11',
+            '01-12 - 01-18',
+          ]
+        : scenario.labels
+    )
     expect(values.map((row) => row.rawValue / 500000)).toEqual([
       11, 2, 3, 4, 5, 6, 7, 8,
     ])
@@ -157,6 +170,34 @@ describe.each(cases)('dashboard $granularity chart chronology', (scenario) => {
 })
 
 describe('user token analytics', () => {
+  test('groups records from Monday through Sunday into one weekly total', () => {
+    const data = [
+      {
+        username: 'alice',
+        created_at: new Date('2026-10-19T10:00:00').getTime() / 1000,
+        token_used: 10,
+      },
+      {
+        username: 'alice',
+        created_at: new Date('2026-10-25T22:00:00').getTime() / 1000,
+        token_used: 20,
+      },
+      {
+        username: 'alice',
+        created_at: new Date('2026-10-26T09:00:00').getTime() / 1000,
+        token_used: 5,
+      },
+    ]
+    const result = processUserChartData(data, 'week', undefined, 5, 'tokens')
+    expect(
+      result.spec_user_trend.data[0].values.map(
+        (row: { Time: string; rawValue: number }) => [row.Time, row.rawValue]
+      )
+    ).toEqual([
+      ['10-19 - 10-25', 30],
+      ['10-26 - 11-01', 5],
+    ])
+  })
   test('ranks by tokens independently of spending and aggregates the selected users over time', () => {
     const data = [
       {
@@ -176,18 +217,20 @@ describe('user token analytics', () => {
       'tokens',
       'en'
     )
-    expect(result.spec_user_rank.data[0].values).toEqual([
-      { User: 'bob', rawValue: 1500, Usage: 1500 },
+    expect(result.ranking).toEqual([
+      expect.objectContaining({
+        username: 'bob',
+        value: 1500,
+        valueDisplay: '1,500',
+      }),
     ])
-    expect(result.spec_user_rank.title.subtext).toBe('Total: 1,500')
+    expect(result.selectedTotalDisplay).toBe('1,500')
     expect(
       result.spec_user_trend.data[0].values.map(
         (row: { rawValue: number }) => row.rawValue
       )
     ).toEqual([1200, 300])
-    expect(
-      processUserChartData(data).spec_user_rank.data[0].values[0].User
-    ).toBe('alice')
+    expect(processUserChartData(data).ranking[0].username).toBe('alice')
   })
   test('keeps missing token usage at zero and displays an empty state for no records', () => {
     const result = processUserChartData(
@@ -197,9 +240,10 @@ describe('user token analytics', () => {
       10,
       'tokens'
     )
-    expect(result.spec_user_rank.data[0].values[0].rawValue).toBe(0)
+    expect(result.ranking[0].value).toBe(0)
     const empty = processUserChartData([], 'day', undefined, 10, 'tokens')
-    expect(empty.spec_user_rank.title.subtext).toBe('No data available')
+    expect(empty.ranking).toEqual([])
+    expect(empty.totalUsers).toBe(0)
     expect(empty.spec_user_trend.data[0].values).toEqual([])
   })
 })
@@ -222,5 +266,35 @@ test.each([
     'tokens',
     toIntlLocale(language)
   )
-  expect(result.spec_user_rank.title.subtext).toBe(`Total: ${expected}`)
+  expect(result.selectedTotalDisplay).toBe(expected)
+})
+
+test('selects users by whole-period totals and keeps ties stable across input ordering', () => {
+  const data = [
+    { username: 'alice', created_at: 1767225600, token_used: 60 },
+    { username: 'bob', created_at: 1767225600, token_used: 90 },
+    { username: 'alice', created_at: 1767312000, token_used: 60 },
+    { username: 'carol', created_at: 1767312000, token_used: 90 },
+  ]
+  const result = processUserChartData(data, 'day', undefined, 2, 'tokens', 'en')
+  expect(result.ranking.map((row) => row.username)).toEqual(['alice', 'bob'])
+  expect(result.totalUsers).toBe(3)
+  expect(result.totalDisplay).toBe('300')
+  expect(result.selectedTotalDisplay).toBe('210')
+  expect(result.spec_user_trend.data[0].values).toEqual([
+    { Time: '01-01', User: 'alice', rawValue: 60, Usage: 60 },
+    { Time: '01-01', User: 'bob', rawValue: 90, Usage: 90 },
+    { Time: '01-02', User: 'alice', rawValue: 60, Usage: 60 },
+    { Time: '01-02', User: 'bob', rawValue: 0, Usage: 0 },
+  ])
+  expect(
+    processUserChartData(
+      [...data].reverse(),
+      'week',
+      undefined,
+      2,
+      'tokens',
+      'en'
+    ).ranking
+  ).toEqual(result.ranking)
 })

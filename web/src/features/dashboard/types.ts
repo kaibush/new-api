@@ -249,8 +249,18 @@ export interface ProcessedChartData {
   totalCountDisplay: string
 }
 
+export interface UserRankingItem {
+  username: string
+  value: number
+  valueDisplay: string
+  color: string
+}
+
 export interface ProcessedUserChartData {
-  spec_user_rank: VChartSpec
+  ranking: UserRankingItem[]
+  totalUsers: number
+  totalDisplay: string
+  selectedTotalDisplay: string
   spec_user_trend: VChartSpec
 }
 

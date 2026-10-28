@@ -85,7 +85,7 @@ export function Wallet(props: WalletProps) {
 
   const { status } = useStatus()
   const { currency } = useSystemConfig()
-  const { topupInfo, presetAmounts, loading: topupLoading } = useTopupInfo()
+  const { topupInfo, presetAmounts, loading: topupLoading, refetch: refetchTopupInfo } = useTopupInfo()
 
   // Calculate effective exchange rate - when display type is USD, use rate of 1
   const effectiveUsdExchangeRate = useMemo(() => {
@@ -188,7 +188,10 @@ export function Wallet(props: WalletProps) {
 
       // Calculate payment amount and show confirmation dialog
       const amount = await calculatePaymentAmount(topupAmount, method.type)
-      if (amount <= 0) return
+      if (amount <= 0) {
+        void refetchTopupInfo()
+        return
+      }
       setConfirmDialogOpen(true)
     } finally {
       setPaymentLoading(null)
@@ -212,7 +215,9 @@ export function Wallet(props: WalletProps) {
 
     if (success) {
       setConfirmDialogOpen(false)
-      await fetchUser()
+      await Promise.all([fetchUser(), refetchTopupInfo()])
+    } else {
+      await refetchTopupInfo()
     }
   }
 
@@ -223,7 +228,9 @@ export function Wallet(props: WalletProps) {
     const success = await redeemCode(redemptionCode)
     if (success) {
       setRedemptionCode('')
-      await fetchUser()
+      await Promise.all([fetchUser(), refetchTopupInfo()])
+    } else {
+      await refetchTopupInfo()
     }
   }
 
@@ -250,7 +257,9 @@ export function Wallet(props: WalletProps) {
     if (success) {
       setCreemDialogOpen(false)
       setSelectedCreemProduct(null)
-      await fetchUser()
+      await Promise.all([fetchUser(), refetchTopupInfo()])
+    } else {
+      await refetchTopupInfo()
     }
   }
 
@@ -272,7 +281,10 @@ export function Wallet(props: WalletProps) {
         topupAmount,
         PAYMENT_TYPES.WAFFO
       )
-      if (amount <= 0) return
+      if (amount <= 0) {
+        void refetchTopupInfo()
+        return
+      }
       setConfirmDialogOpen(true)
     } finally {
       setPaymentLoading(null)
