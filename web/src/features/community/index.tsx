@@ -253,7 +253,7 @@ export function CommunityChat() {
             />
           </section>
           <aside
-            className='hidden min-h-0 overflow-y-auto border-l pl-6 lg:block'
+            className='hover-scrollbar hidden min-h-0 overflow-y-auto border-l pl-6 lg:block'
             aria-label={t('Community board')}
           >
             <CommunityBoard
