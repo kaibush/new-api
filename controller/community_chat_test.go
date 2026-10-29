@@ -32,6 +32,83 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestCommunityRedPacketSessionAuthorization(t *testing.T) {
+	user, _ := setupSecurityEnrollmentTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.CommunityConfig{}, &model.CommunityMessage{}, &model.CommunityProfile{}, &model.CommunityRedPacket{}, &model.CommunityRedPacketItem{}, &model.Redemption{}))
+	require.NoError(t, model.SaveCommunityConfig(model.CommunityConfig{Enabled: true}))
+	member, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "packet-test")
+	require.NoError(t, err)
+	admin := model.User{Username: "packet-admin", AffCode: "pkadmin", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, AuthVersion: 1}
+	require.NoError(t, model.DB.Create(&admin).Error)
+	adminSession, err := service.CreateLoginSession(admin.Id, "password", "127.0.0.1", "packet-test")
+	require.NoError(t, err)
+	router := gin.New()
+	routes := router.Group("/api/community", middleware.UserAuth(), middleware.DisableCache(), CommunityAccess)
+	routes.POST("/red-packets", middleware.AdminAuth(), CreateCommunityRedPacket)
+	routes.GET("/red-packets/:id", GetCommunityRedPacket)
+	routes.POST("/red-packets/:id/claim", ClaimCommunityRedPacket)
+	code := model.Redemption{Key: "abababababababababababababababab", Name: "gift", Quota: 100}
+	require.NoError(t, code.Insert())
+	body := `{"greeting":"Hello","codes":["abababababababababababababababab"]}`
+	for _, tc := range []struct {
+		token  string
+		status int
+	}{{"", 401}, {member.AccessToken, 403}, {adminSession.AccessToken, 200}} {
+		req := httptest.NewRequest(http.MethodPost, "/api/community/red-packets", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		if tc.token != "" {
+			req.Header.Set("Authorization", "Bearer "+tc.token)
+		}
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		assert.Equal(t, tc.status, response.Code, response.Body.String())
+		assert.NotContains(t, response.Body.String(), code.Key)
+	}
+	packets, err := model.ListCommunityRedPackets(0)
+	require.NoError(t, err)
+	require.Len(t, packets, 1)
+	path := fmt.Sprintf("/api/community/red-packets/%d", packets[0].ID)
+	for _, tc := range []struct {
+		path, method, token string
+		status              int
+		hasCode             bool
+	}{
+		{path + "/claim", http.MethodPost, "", 401, false},
+		{path, http.MethodGet, member.AccessToken, 200, false},
+		{path + "/claim", http.MethodPost, member.AccessToken, 200, true},
+		{path, http.MethodGet, adminSession.AccessToken, 200, false},
+		{path, http.MethodGet, member.AccessToken, 200, true},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		if tc.token != "" {
+			req.Header.Set("Authorization", "Bearer "+tc.token)
+		}
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		assert.Equal(t, tc.status, response.Code, response.Body.String())
+		if tc.hasCode {
+			assert.Contains(t, response.Body.String(), code.Key)
+		} else {
+			assert.NotContains(t, response.Body.String(), code.Key)
+		}
+		if tc.status == 200 {
+			assert.Contains(t, response.Header().Get("Cache-Control"), "no-store")
+		}
+	}
+	// Cookies and URL parameters cannot substitute for the dashboard bearer session.
+	req := httptest.NewRequest(http.MethodPost, path+"/claim?token="+member.AccessToken, nil)
+	req.AddCookie(&http.Cookie{Name: "session", Value: member.AccessToken})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+	assert.Equal(t, 401, response.Code)
+	require.NoError(t, model.SaveCommunityConfig(model.CommunityConfig{Enabled: false}))
+	req = httptest.NewRequest(http.MethodPost, path+"/claim", nil)
+	req.Header.Set("Authorization", "Bearer "+member.AccessToken)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+	assert.Equal(t, 403, response.Code)
+}
+
 func TestCommunityChatHistoryAndAuthorization(t *testing.T) {
 	user, _ := setupSecurityEnrollmentTest(t)
 	migrations := []any{&model.CommunityConfig{}, &model.CommunityMessage{}, &model.CommunityProfile{}, &model.CommunityBotFeedback{}}

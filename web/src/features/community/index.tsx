@@ -1,5 +1,5 @@
 import { useMutation } from '@tanstack/react-query'
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -16,11 +16,15 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { uploadChatFile, type ChatMessage } from './api'
 import { ChatComposer } from './chat-composer'
+import { CommunityBoard } from './community-board'
 import { CommunityRecords } from './history'
 import { ChatMessageBubble } from './message-bubble'
 import { ChatModerationDialog } from './moderation-dialog'
 import { OnlineUsers } from './online-users'
+import { RedPacketCreate } from './red-packet-create'
+import { RedPacketDetailDialog } from './red-packet-detail'
 import { useCommunityChat } from './use-community-chat'
+import { useRedPackets } from './use-red-packets'
 
 export function CommunityChat() {
   const { t, i18n } = useTranslation()
@@ -41,6 +45,14 @@ export function CommunityChat() {
     clearThrough,
     markDeleted,
   } = chat
+  const packets = useRedPackets(status.data?.enabled === true)
+  const packetById = new Map(
+    packets.data?.pages.flat().map((packet) => [packet.id, packet])
+  )
+  const [boardOpen, setBoardOpen] = useState(false)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [packetId, setPacketId] = useState<number | null>(null)
+  const [locateId, setLocateId] = useState<number | null>(null)
   const [reply, setReply] = useState<ChatMessage | null>(null)
   const [remove, setRemove] = useState<ChatMessage | null>(null)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
@@ -62,6 +74,30 @@ export function CommunityChat() {
     }
     previousScroll.current = { firstId, height: el.scrollHeight }
   }, [messages])
+  useEffect(() => {
+    if (locateId === null) return
+    const target = document.querySelector<HTMLElement>(`#message-${locateId}`)
+    if (target) {
+      stickToBottom.current = false
+      target.scrollIntoView({ block: 'center', behavior: 'instant' })
+      target.focus({ preventScroll: true })
+      setLocateId(null)
+    } else if (historyError || !hasMore) {
+      toast.info(t('This message is outside the available chat history.'))
+      setLocateId(null)
+    } else if (!loadingEarlier) {
+      stickToBottom.current = false
+      loadEarlier()
+    }
+  }, [
+    locateId,
+    messages,
+    hasMore,
+    loadingEarlier,
+    historyError,
+    loadEarlier,
+    t,
+  ])
   if (status.isPending) return <LoadingState />
   if (status.isError) {
     return <ErrorState onRetry={() => void status.refetch()} />
@@ -72,7 +108,7 @@ export function CommunityChat() {
   const members = new Map(users.map((member) => [member.user_id, member]))
   return (
     <Main>
-      <div className='mx-auto flex h-full min-h-0 w-full max-w-5xl flex-1 flex-col gap-3 p-3 sm:p-5'>
+      <div className='mx-auto flex h-full min-h-0 w-full max-w-[1440px] flex-1 flex-col gap-3 p-3 sm:p-5'>
         <header className='flex flex-wrap items-center justify-between gap-2 border-b pb-3'>
           <div className='min-w-0 flex-1 basis-40'>
             <h1 className='text-xl font-semibold break-words'>
@@ -82,6 +118,13 @@ export function CommunityChat() {
               {connected ? t('Connected') : t('Reconnecting')}
             </p>
           </div>
+          <Button
+            variant='outline'
+            className='lg:hidden'
+            onClick={() => setBoardOpen(true)}
+          >
+            {t('Community board')}
+          </Button>
           <OnlineUsers users={users} connected={connected} />
           {notifications.supported &&
             notifications.permission !== 'granted' && (
@@ -105,87 +148,160 @@ export function CommunityChat() {
             {t('Upload avatar')}
           </Button>
         </header>
-        <p className='text-muted-foreground text-sm'>
-          {t(
-            'You can load messages from the last {{days}} days, including today, in the site’s time zone.',
-            { days: formatNumber(status.data.history_days || 1, locale) }
-          )}
-        </p>
-        <div
-          ref={scroll}
-          className='min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain [overflow-anchor:none]'
-          role='log'
-          aria-label={t('Chat messages')}
-          aria-live='polite'
-          onScroll={() => {
-            const el = scroll.current
-            if (el) {
-              stickToBottom.current =
-                el.scrollHeight - el.scrollTop - el.clientHeight < 80
-            }
-          }}
-        >
-          {hasMore && (
-            <div className='flex justify-center'>
-              <Button
-                variant='outline'
-                disabled={loadingEarlier}
-                onClick={() => {
-                  stickToBottom.current = false
-                  loadEarlier()
-                }}
-              >
-                {loadingEarlier ? (
-                  <LoadingState inline size='sm' />
-                ) : (
-                  t('Load earlier messages')
-                )}
-              </Button>
+        <div className='grid min-h-0 flex-1 gap-6 lg:grid-cols-[minmax(0,1fr)_300px] xl:grid-cols-[minmax(0,1fr)_320px]'>
+          <section
+            className='flex min-h-0 min-w-0 flex-col gap-3'
+            aria-label={t('Chat messages')}
+          >
+            <p className='text-muted-foreground text-sm'>
+              {t(
+                'You can load messages from the last {{days}} days, including today, in the site’s time zone.',
+                { days: formatNumber(status.data.history_days || 1, locale) }
+              )}
+            </p>
+            <div
+              ref={scroll}
+              className='min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain [overflow-anchor:none]'
+              role='log'
+              aria-label={t('Chat messages')}
+              aria-live='polite'
+              onScroll={() => {
+                const el = scroll.current
+                if (el) {
+                  stickToBottom.current =
+                    el.scrollHeight - el.scrollTop - el.clientHeight < 80
+                }
+              }}
+            >
+              {hasMore && (
+                <div className='flex justify-center'>
+                  <Button
+                    variant='outline'
+                    disabled={loadingEarlier}
+                    onClick={() => {
+                      stickToBottom.current = false
+                      loadEarlier()
+                    }}
+                  >
+                    {loadingEarlier ? (
+                      <LoadingState inline size='sm' />
+                    ) : (
+                      t('Load earlier messages')
+                    )}
+                  </Button>
+                </div>
+              )}
+              {historyError && (
+                <ErrorState className='min-h-0' onRetry={loadEarlier} />
+              )}
+              {messages.length === 0 && (
+                <EmptyState title={t('No messages yet')} />
+              )}
+              {messages.map((message) => (
+                <ChatMessageBubble
+                  key={`${message.user_id}:${message.client_id || message.id}`}
+                  message={message}
+                  currentUserId={user?.id}
+                  onReply={setReply}
+                  onOpenRedPacket={setPacketId}
+                  redPacket={packetById.get(message.id)}
+                  onRemove={(user?.role ?? 0) >= 10 ? setRemove : undefined}
+                />
+              ))}
             </div>
-          )}
-          {historyError && (
-            <ErrorState className='min-h-0' onRetry={loadEarlier} />
-          )}
-          {messages.length === 0 && <EmptyState title={t('No messages yet')} />}
-          {messages.map((message) => (
-            <ChatMessageBubble
-              key={`${message.user_id}:${message.client_id || message.id}`}
-              message={message}
-              currentUserId={user?.id}
-              onReply={setReply}
-              onRemove={(user?.role ?? 0) >= 10 ? setRemove : undefined}
+            <ChatComposer
+              connected={connected}
+              currentUser={
+                members.get(user?.id ?? 0) || {
+                  user_id: user?.id ?? 0,
+                  name: user?.display_name || user?.username || '',
+                  avatar: '',
+                }
+              }
+              onSending={(message) => {
+                stickToBottom.current = true
+                onSending(message)
+              }}
+              onDelivered={onSent}
+              onFailed={onFailed}
+              status={status.data}
+              users={[...members.values()]}
+              reply={
+                reply
+                  ? messages.find((message) => message.id === reply.id) || null
+                  : null
+              }
+              onCancelReply={() => setReply(null)}
+              onSent={(sentReplyId) =>
+                setReply((current) =>
+                  current?.id === sentReplyId ? null : current
+                )
+              }
             />
-          ))}
+          </section>
+          <aside
+            className='hidden min-h-0 overflow-y-auto border-l pl-6 lg:block'
+            aria-label={t('Community board')}
+          >
+            <CommunityBoard
+              onOpen={setPacketId}
+              onCreate={() => setCreateOpen(true)}
+            />
+          </aside>
         </div>
-        <ChatComposer
-          connected={connected}
-          currentUser={
-            members.get(user?.id ?? 0) || {
-              user_id: user?.id ?? 0,
-              name: user?.display_name || user?.username || '',
-              avatar: '',
-            }
-          }
-          onSending={(message) => {
-            stickToBottom.current = true
-            onSending(message)
-          }}
-          onDelivered={onSent}
-          onFailed={onFailed}
-          status={status.data}
-          users={[...members.values()]}
-          reply={
-            reply
-              ? messages.find((message) => message.id === reply.id) || null
-              : null
-          }
-          onCancelReply={() => setReply(null)}
-          onSent={(sentReplyId) =>
-            setReply((current) =>
-              current?.id === sentReplyId ? null : current
-            )
-          }
-        />
+        <Dialog
+          open={boardOpen}
+          onOpenChange={setBoardOpen}
+          title={t('Community board')}
+          contentClassName='sm:max-w-md'
+        >
+          {boardOpen && (
+            <CommunityBoard
+              onOpen={(id) => {
+                setBoardOpen(false)
+                setPacketId(id)
+              }}
+              onCreate={() => {
+                setBoardOpen(false)
+                setCreateOpen(true)
+              }}
+            />
+          )}
+        </Dialog>
+        {createOpen && (
+          <RedPacketCreate
+            onClose={() => setCreateOpen(false)}
+            onCreated={(packet) => {
+              setCreateOpen(false)
+              stickToBottom.current = true
+              onSending({
+                id: packet.id,
+                user_id: packet.user_id,
+                name: packet.name,
+                avatar: members.get(packet.user_id)?.avatar || '',
+                text: packet.greeting,
+                kind: 'red_packet',
+                url: '',
+                filename: '',
+                size: 0,
+                created_at: packet.created_at,
+                deleted: false,
+              })
+              setPacketId(packet.id)
+            }}
+          />
+        )}
+        {packetId !== null && (
+          <RedPacketDetailDialog
+            key={packetId}
+            id={packetId}
+            onClose={() => setPacketId(null)}
+            onLocate={(id) => {
+              setPacketId(null)
+              setLocateId(id)
+            }}
+          />
+        )}
         <Input
           ref={fileInput}
           type='file'

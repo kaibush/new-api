@@ -1,0 +1,42 @@
+/* Red envelopes keep their familiar warm identity across site themes. */
+:root {
+  --red-packet: oklch(0.52 0.17 28);
+  --red-packet-highlight: oklch(0.56 0.18 34);
+  --red-packet-foreground: oklch(0.97 0.03 80);
+  --red-packet-gold: oklch(0.88 0.1 82);
+  --red-packet-ink: oklch(0.32 0.09 28);
+}
+
+.dark {
+  --red-packet: oklch(0.42 0.13 28);
+  --red-packet-highlight: oklch(0.51 0.15 34);
+}
+
+.community-red-packet {
+  color: var(--red-packet-foreground);
+  background: linear-gradient(
+    125deg,
+    var(--red-packet-highlight),
+    var(--red-packet)
+  );
+}
+
+button.community-red-packet:hover {
+  color: var(--red-packet-foreground);
+  filter: brightness(1.06);
+}
+
+.community-red-packet-seal {
+  color: var(--red-packet-gold);
+  background: color-mix(in oklch, var(--red-packet-gold) 12%, transparent);
+  border: 1px solid color-mix(in oklch, var(--red-packet-gold) 40%, transparent);
+}
+
+.community-red-packet-footer {
+  background: color-mix(in oklch, var(--red-packet) 60%, transparent);
+}
+
+.community-red-packet-action {
+  background: var(--red-packet-gold);
+  color: var(--red-packet-ink);
+}

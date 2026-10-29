@@ -13,6 +13,8 @@ import { cn } from '@/lib/utils'
 
 import type { ChatMessage } from './api'
 import { MessageText } from './message-text'
+import type { RedPacket } from './red-packet-api'
+import { RedPacketCard } from './red-packet-card'
 
 export function ChatMessageBubble(props: {
   message: ChatMessage
@@ -20,6 +22,8 @@ export function ChatMessageBubble(props: {
   showDeletedContent?: boolean
   onReply?: (message: ChatMessage) => void
   onRemove?: (message: ChatMessage) => void
+  redPacket?: RedPacket
+  onOpenRedPacket?: (id: number) => void
 }) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
@@ -34,11 +38,15 @@ export function ChatMessageBubble(props: {
   return (
     <article
       id={`message-${message.id}`}
+      tabIndex={-1}
       aria-busy={message.sending || undefined}
-      className={cn('group group/message flex items-start gap-3', {
-        'flex-row-reverse is-user': message.user_id === props.currentUserId,
-        'is-assistant': message.user_id !== props.currentUserId,
-      })}
+      className={cn(
+        'group group/message flex items-start gap-3 rounded-lg focus-visible:outline-2 focus-visible:outline-primary',
+        {
+          'flex-row-reverse is-user': message.user_id === props.currentUserId,
+          'is-assistant': message.user_id !== props.currentUserId,
+        }
+      )}
     >
       <Avatar className='size-9 shrink-0'>
         <AvatarImage src={message.avatar || undefined} alt={message.name} />
@@ -86,6 +94,8 @@ export function ChatMessageBubble(props: {
                 message.user_id === props.currentUserId,
               'items-start rounded-tl-sm border-border/60':
                 message.user_id !== props.currentUserId,
+              'w-72 p-0 border-0':
+                message.kind === 'red_packet' && !message.deleted,
             }
           )}
         >
@@ -114,14 +124,23 @@ export function ChatMessageBubble(props: {
                   {t('Original content is no longer available')}
                 </p>
               )}
-              {message.text && (
-                <p className='max-w-full text-left break-words whitespace-pre-wrap'>
-                  <MessageText
-                    text={message.text}
-                    currentUserId={props.currentUserId}
-                  />
-                </p>
+              {message.kind === 'red_packet' && props.onOpenRedPacket && (
+                <RedPacketCard
+                  id={message.id}
+                  greeting={message.text}
+                  packet={props.redPacket}
+                  onOpen={props.onOpenRedPacket}
+                />
               )}
+              {message.text &&
+                (message.kind !== 'red_packet' || !props.onOpenRedPacket) && (
+                  <p className='max-w-full text-left break-words whitespace-pre-wrap'>
+                    <MessageText
+                      text={message.text}
+                      currentUserId={props.currentUserId}
+                    />
+                  </p>
+                )}
               {message.url &&
                 (message.kind === 'image' || message.kind === 'sticker') && (
                   <a

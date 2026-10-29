@@ -12,6 +12,7 @@ import (
 )
 
 type Redemption struct {
+	RedPacketID  *int64         `json:"-" gorm:"index"`
 	Id           int            `json:"id"`
 	UserId       int            `json:"user_id"`
 	Key          string         `json:"key" gorm:"type:char(32);uniqueIndex"`
@@ -159,6 +160,24 @@ func Redeem(key string, userId int) (quota int, err error) {
 		if redemption.ExpiredTime != 0 && redemption.ExpiredTime < common.GetTimestamp() {
 			return errors.New("该兑换码已过期")
 		}
+		if redemption.RedPacketID != nil {
+			var item CommunityRedPacketItem
+			if err := lockForUpdate(tx).Where("redemption_id = ?", redemption.Id).First(&item).Error; err != nil {
+				return err
+			}
+			if item.UserID != nil && *item.UserID != userId {
+				return errors.New("red packet code belongs to another user")
+			}
+			if item.UserID == nil {
+				var packet CommunityRedPacket
+				if err := tx.First(&packet, *redemption.RedPacketID).Error; err != nil {
+					return err
+				}
+				if packet.ExpiresAt > common.GetTimestamp() {
+					return errors.New("red packet code has not been claimed")
+				}
+			}
+		}
 		redemption.RedeemedTime = common.GetTimestamp()
 		if err := validateMonthlyTopUpQuota(tx, userId, redemption.Quota, true, redemption.RedeemedTime); err != nil {
 			return err
@@ -204,7 +223,7 @@ func (redemption *Redemption) Insert() error {
 
 func (redemption *Redemption) SelectUpdate() error {
 	// This can update zero values
-	return DB.Model(redemption).Select("redeemed_time", "status").Updates(redemption).Error
+	return DB.Model(redemption).Where("red_packet_id IS NULL").Select("redeemed_time", "status").Updates(redemption).Error
 }
 
 // Update Make sure your token's fields is completed, because this will update non-zero values
@@ -215,15 +234,25 @@ func (redemption *Redemption) Update() error {
 	if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
 		return err
 	}
-	var err error
-	err = DB.Model(redemption).Select("name", "status", "quota", "redeemed_time", "expired_time").Updates(redemption).Error
-	return err
+	result := DB.Model(redemption).Where("red_packet_id IS NULL").Select("name", "status", "quota", "redeemed_time", "expired_time").Updates(redemption)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 && redemption.RedPacketID != nil {
+		return errors.New("Red packet codes cannot be changed or deleted")
+	}
+	return nil
 }
 
 func (redemption *Redemption) Delete() error {
-	var err error
-	err = DB.Delete(redemption).Error
-	return err
+	result := DB.Where("red_packet_id IS NULL").Delete(redemption)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("Red packet codes cannot be changed or deleted")
+	}
+	return nil
 }
 
 func DeleteRedemptionById(id int) (err error) {
@@ -240,7 +269,7 @@ func DeleteRedemptionById(id int) (err error) {
 
 func DeleteInvalidRedemptions() (int64, error) {
 	now := common.GetTimestamp()
-	result := DB.Where("status IN ? OR (status = ? AND expired_time != 0 AND expired_time < ?)", []int{common.RedemptionCodeStatusUsed, common.RedemptionCodeStatusDisabled}, common.RedemptionCodeStatusEnabled, now).Delete(&Redemption{})
+	result := DB.Where("red_packet_id IS NULL").Where("status IN ? OR (status = ? AND expired_time != 0 AND expired_time < ?)", []int{common.RedemptionCodeStatusUsed, common.RedemptionCodeStatusDisabled}, common.RedemptionCodeStatusEnabled, now).Delete(&Redemption{})
 	return result.RowsAffected, result.Error
 }
 
@@ -254,6 +283,6 @@ func BatchDeleteRedemptions(ids []int) (int64, error) {
 			return 0, errors.New("redemption IDs must be positive")
 		}
 	}
-	result := DB.Where("id IN ?", ids).Delete(&Redemption{})
+	result := DB.Where("red_packet_id IS NULL").Where("id IN ?", ids).Delete(&Redemption{})
 	return result.RowsAffected, result.Error
 }

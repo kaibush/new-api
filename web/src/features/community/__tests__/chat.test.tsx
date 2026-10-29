@@ -6,6 +6,7 @@ import {
   renderHook,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
@@ -1577,7 +1578,12 @@ test('a failed history page can be retried and a new day clears previously loade
   await user.click(
     screen.getByRole('button', { name: 'Load earlier messages' })
   )
-  await user.click(await screen.findByRole('button', { name: 'Retry' }))
+  await user.click(
+    await within(screen.getByRole('log', { name: 'Chat messages' })).findByRole(
+      'button',
+      { name: 'Retry' }
+    )
+  )
   expect(await screen.findByText('Old morning')).toBeInTheDocument()
   act(() =>
     FakeSocket.instances[0].onmessage?.({
@@ -2276,4 +2282,203 @@ test('guest pages and disabled community chat do not open a presence connection'
   )
   expect(FakeSocket.instances).toHaveLength(0)
   rendered.unmount()
+})
+
+const giftPacket = {
+  id: 80,
+  user_id: 2,
+  name: 'Bob',
+  greeting: 'Good luck',
+  total: 2,
+  claimed: 0,
+  created_at: 1700000000,
+  expires_at: 4102444800,
+  records: [],
+  redeemed: false,
+}
+
+test('red packets in the board and conversation open the same detail and preserve the draft', async () => {
+  const user = userEvent.setup()
+  vi.mocked(api.get).mockImplementation(async (url) => {
+    if (url === '/api/community/status') {
+      return {
+        data: { success: true, data: { enabled: true, name: 'Lounge' } },
+      }
+    }
+    return {
+      data: {
+        success: true,
+        data: url === '/api/community/red-packets' ? [giftPacket] : giftPacket,
+      },
+    }
+  })
+  show(<CommunityChat />)
+  const draft = await screen.findByRole('textbox', { name: 'Message' })
+  await user.type(draft, 'Keep writing')
+  act(() =>
+    FakeSocket.instances[0].onmessage?.({
+      data: JSON.stringify({
+        type: 'history',
+        messages: [{ ...historyMessage(80, 'Good luck'), kind: 'red_packet' }],
+      }),
+    })
+  )
+  const cards = await screen.findAllByRole('button', { name: /Good luck/ })
+  expect(cards).toHaveLength(2)
+  await user.click(cards[0])
+  expect(
+    await screen.findByRole('dialog', { name: 'Quota red packet' })
+  ).toBeInTheDocument()
+  expect(
+    await screen.findByRole('button', { name: 'Open red packet' })
+  ).toBeEnabled()
+  expect(
+    screen.queryByText('11111111111111111111111111111111')
+  ).not.toBeInTheDocument()
+  const target = document.querySelector<HTMLElement>('#message-80')
+  if (!target) throw new Error('Message target missing')
+  Object.defineProperty(target, 'scrollIntoView', {
+    configurable: true,
+    value: vi.fn(),
+  })
+  await user.click(screen.getByRole('button', { name: 'View in chat' }))
+  await waitFor(() => expect(target).toHaveFocus())
+  expect(target.scrollIntoView).toHaveBeenCalledWith({
+    block: 'center',
+    behavior: 'instant',
+  })
+  expect(draft).toHaveValue('Keep writing')
+  await user.click(cards[1])
+  expect(
+    await screen.findByRole('dialog', { name: 'Quota red packet' })
+  ).toBeInTheDocument()
+})
+
+test('claiming disables repeat requests, shows the assigned code and updates shared progress', async () => {
+  const { RedPacketDetailDialog } = await import('../red-packet-detail')
+  const user = userEvent.setup()
+  vi.mocked(api.get).mockResolvedValue({
+    data: { success: true, data: giftPacket },
+  })
+  let finish: (value: unknown) => void = () => {}
+  vi.mocked(api.post).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      })
+  )
+  show(<RedPacketDetailDialog id={80} onClose={() => {}} onLocate={() => {}} />)
+  const open = await screen.findByRole('button', { name: 'Open red packet' })
+  await user.click(open)
+  expect(open).toBeDisabled()
+  await act(async () =>
+    finish({
+      data: {
+        success: true,
+        data: {
+          ...giftPacket,
+          claimed: 1,
+          my_code: '11111111111111111111111111111111',
+          my_quota: 100,
+          records: [{ user_id: 1, name: 'Alice', claimed_at: 1700000000 }],
+        },
+      },
+    })
+  )
+  expect(
+    await screen.findByText('11111111111111111111111111111111')
+  ).toBeInTheDocument()
+  expect(screen.getByText('1 / 2 claimed')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Redeem to wallet' })).toBeEnabled()
+  expect(screen.getByText('Alice')).toBeInTheDocument()
+  expect(api.post).toHaveBeenCalledTimes(1)
+})
+
+test.each(['expired', 'exhausted'])(
+  '%s red packets show records and disable new claims',
+  async (state) => {
+    const { RedPacketDetailDialog } = await import('../red-packet-detail')
+    vi.mocked(api.get).mockResolvedValue({
+      data: {
+        success: true,
+        data: {
+          ...giftPacket,
+          expires_at: state === 'expired' ? 1 : giftPacket.expires_at,
+          claimed: state === 'exhausted' ? 2 : 0,
+        },
+      },
+    })
+    show(
+      <RedPacketDetailDialog id={80} onClose={() => {}} onLocate={() => {}} />
+    )
+    expect(
+      await screen.findByRole('button', {
+        name: state === 'expired' ? 'Expired' : 'All claimed',
+      })
+    ).toBeDisabled()
+    expect(
+      screen.getByRole('region', { name: 'Claim records' })
+    ).toBeInTheDocument()
+    expect(api.post).not.toHaveBeenCalled()
+  }
+)
+
+test('invalid duplicate codes prevent publishing and a failed publish preserves the draft', async () => {
+  const { RedPacketCreate } = await import('../red-packet-create')
+  const user = userEvent.setup()
+  const created = vi.fn()
+  show(<RedPacketCreate onClose={() => {}} onCreated={created} />)
+  const codes = screen.getByRole('textbox', { name: 'Redemption codes' })
+  await user.type(
+    codes,
+    '11111111111111111111111111111111\n11111111111111111111111111111111'
+  )
+  await user.click(screen.getByRole('button', { name: 'Send a red packet' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'Enter 1 to 100 unique, 32-character codes.'
+  )
+  expect(codes).toHaveAttribute('aria-invalid', 'true')
+  expect(api.post).not.toHaveBeenCalled()
+  await user.clear(codes)
+  await user.type(codes, '11111111111111111111111111111111')
+  vi.mocked(api.post).mockRejectedValueOnce(
+    new Error('Could not send red packet')
+  )
+  await user.click(screen.getByRole('button', { name: 'Send a red packet' }))
+  await waitFor(() =>
+    expect(
+      screen.getByRole('button', { name: 'Send a red packet' })
+    ).toBeEnabled()
+  )
+  expect(codes).toHaveValue('11111111111111111111111111111111')
+  expect(created).not.toHaveBeenCalled()
+  vi.mocked(api.post).mockResolvedValueOnce({
+    data: { success: true, data: giftPacket },
+  })
+  await user.click(screen.getByRole('button', { name: 'Send a red packet' }))
+  await waitFor(() => expect(created).toHaveBeenCalledWith(giftPacket))
+})
+
+test('the compact board entry opens the public content without replacing the composer', async () => {
+  const user = userEvent.setup()
+  vi.mocked(api.get).mockImplementation(async (url) => ({
+    data: {
+      success: true,
+      data: url === '/api/community/status' ? { enabled: true } : [],
+    },
+  }))
+  show(<CommunityChat />)
+  const entry = await screen.findByRole('button', { name: 'Community board' })
+  expect(entry).toHaveClass('lg:hidden')
+  const composer = screen.getByRole('textbox', { name: 'Message' })
+  await user.type(composer, 'Draft')
+  await user.click(entry)
+  expect(
+    await screen.findByRole('dialog', { name: 'Community board' })
+  ).toBeInTheDocument()
+  await user.keyboard('{Escape}')
+  expect(composer).toHaveValue('Draft')
+  expect(
+    screen.queryByRole('button', { name: 'Send a red packet' })
+  ).not.toBeInTheDocument()
 })

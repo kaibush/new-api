@@ -22,7 +22,7 @@ export type ChatMessage = {
   name: string
   avatar: string
   text: string
-  kind: 'text' | 'image' | 'sticker' | 'file'
+  kind: 'text' | 'image' | 'sticker' | 'file' | 'red_packet'
   url: string
   filename: string
   size: number

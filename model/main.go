@@ -350,6 +350,8 @@ func migrateDB() error {
 		&CommunityMessage{},
 		&CommunityProfile{},
 		&CommunityBotFeedback{},
+		&CommunityRedPacket{},
+		&CommunityRedPacketItem{},
 		&ExternalIdentityClaim{},
 		&PasskeyCredential{},
 		&Option{},
