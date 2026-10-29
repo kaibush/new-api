@@ -36,7 +36,7 @@ export function CommunityBoard(props: {
   const events = useCommunityEvents()
   const [expanded, setExpanded] = useState(false)
   return (
-    <div className='flex min-h-0 flex-col gap-4'>
+    <div className='flex min-h-0 min-w-0 flex-col gap-5'>
       <div className='flex items-center justify-between gap-3'>
         <div>
           <h2 className='font-semibold'>{t('Community board')}</h2>
@@ -109,7 +109,7 @@ export function CommunityBoard(props: {
         onCreate={props.onCreate}
         onOpen={props.onOpen}
       />
-      <Card size='sm' className='mt-2'>
+      <Card size='sm' data-card-hover='false' className='bg-muted/40 ring-0'>
         <CardHeader>
           <CardTitle>{t('About red packets')}</CardTitle>
           <CardDescription>

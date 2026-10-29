@@ -2693,10 +2693,15 @@ test('red packets in the board and conversation open the same detail and preserv
     })
   )
   const board = screen.getByRole('complementary', { name: 'Community board' })
-  expect(board).toHaveClass('hover-scrollbar', 'overflow-y-auto')
+  expect(board).toHaveClass('no-scrollbar', 'overflow-y-auto')
+  expect(board).not.toHaveClass('border-l', 'pl-6')
+  expect(screen.getByRole('log', { name: 'Chat messages' })).toHaveClass(
+    'no-scrollbar',
+    'overflow-y-auto'
+  )
   expect(
     within(board).getByRole('tabpanel', { name: 'Current red packets' })
-  ).toHaveClass('hover-scrollbar', 'overflow-y-auto')
+  ).toHaveClass('no-scrollbar', 'overflow-y-auto')
   const cards = await screen.findAllByRole('button', { name: /Good luck/ })
   expect(cards).toHaveLength(2)
   await user.click(cards[0])

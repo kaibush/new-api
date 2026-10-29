@@ -97,7 +97,7 @@ export function RedPacketBoard(props: {
           <TabsContent
             key={group.key}
             value={group.key}
-            className='hover-scrollbar max-h-112 overflow-y-auto overscroll-contain'
+            className='no-scrollbar -mx-1 max-h-112 overflow-y-auto overscroll-contain px-1 pb-1'
           >
             <div className='flex flex-col gap-3'>
               {group.messages.map((message) => (

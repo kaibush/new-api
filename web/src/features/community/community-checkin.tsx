@@ -52,7 +52,7 @@ export function CommunityCheckin() {
     <Card
       size='sm'
       data-card-hover='false'
-      className='gap-2'
+      className='bg-muted/40 gap-2 ring-0'
       role='region'
       aria-label={t('Daily Check-in')}
     >

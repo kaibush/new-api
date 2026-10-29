@@ -27,6 +27,17 @@ import { Button } from '@/components/ui/button'
 import { Dialog as DialogRoot, DialogContent, DialogTitle } from '../dialog'
 
 describe('dialog viewport layout', () => {
+  test('a dialog can hide its body scrollbar while retaining overflow scrolling', () => {
+    render(
+      <Dialog open title='Community board' scrollAreaClassName='no-scrollbar'>
+        <p>Community content</p>
+      </Dialog>
+    )
+    const body =
+      screen.getByText('Community content').parentElement?.parentElement
+    expect(body).toHaveClass('no-scrollbar', 'overflow-y-auto', 'min-h-0')
+  })
+
   test('long content shrinks independently of a stacked action footer', async () => {
     const onConfirm = vi.fn()
     render(

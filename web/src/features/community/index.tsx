@@ -160,7 +160,7 @@ export function CommunityChat() {
             {t('Upload avatar')}
           </Button>
         </header>
-        <div className='grid min-h-0 flex-1 gap-6 lg:grid-cols-[minmax(0,1fr)_300px] xl:grid-cols-[minmax(0,1fr)_320px]'>
+        <div className='grid min-h-0 flex-1 gap-6 lg:grid-cols-[minmax(0,1fr)_300px] lg:gap-8 xl:grid-cols-[minmax(0,1fr)_320px]'>
           <section
             className='flex min-h-0 min-w-0 flex-col gap-3'
             aria-label={t('Chat messages')}
@@ -173,7 +173,7 @@ export function CommunityChat() {
             </p>
             <div
               ref={scroll}
-              className='min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain [overflow-anchor:none]'
+              className='no-scrollbar -mx-1 min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-1 [overflow-anchor:none]'
               role='log'
               aria-label={t('Chat messages')}
               aria-live='polite'
@@ -253,7 +253,7 @@ export function CommunityChat() {
             />
           </section>
           <aside
-            className='hover-scrollbar hidden min-h-0 overflow-y-auto border-l pl-6 lg:block'
+            className='no-scrollbar -mx-1 hidden min-h-0 min-w-0 overflow-y-auto px-1 pb-1 lg:block'
             aria-label={t('Community board')}
           >
             <CommunityBoard
@@ -271,7 +271,8 @@ export function CommunityChat() {
           open={boardOpen}
           onOpenChange={setBoardOpen}
           title={t('Community board')}
-          contentClassName='sm:max-w-md'
+          contentClassName='no-scrollbar sm:max-w-md'
+          scrollAreaClassName='no-scrollbar'
         >
           {boardOpen && (
             <CommunityBoard
