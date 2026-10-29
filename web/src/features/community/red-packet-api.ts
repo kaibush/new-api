@@ -10,6 +10,7 @@ export type RedPacket = {
   claimed: number
   created_at: number
   expires_at: number
+  completed_at?: number
 }
 
 export type RedPacketDetail = RedPacket & {
@@ -20,10 +21,10 @@ export type RedPacketDetail = RedPacket & {
   redeemed: boolean
 }
 
-export async function listRedPackets(beforeId = 0) {
+export async function listRedPackets(beforeId = 0, signal?: AbortSignal) {
   const res = await api.get<{ success: boolean; data: RedPacket[] }>(
     '/api/community/red-packets',
-    { params: { before_id: beforeId } }
+    { params: { before_id: beforeId }, signal }
   )
   const packets = requireServerSuccess(res.data).data
   if (!Array.isArray(packets)) throw new Error('Could not load red packets')

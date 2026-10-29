@@ -158,7 +158,7 @@ export function CheckinCalendarCard({
           toast.success(
             `${t('Check-in successful! Received')} ${formatQuotaWithCurrency(res.data.quota_awarded)}`
           )
-          void refetch()
+          void queryClient.invalidateQueries({ queryKey: ['checkin-status'] })
           void queryClient.invalidateQueries({ queryKey: ['checkin-balance'] })
           setTurnstileModalVisible(false)
         } else {

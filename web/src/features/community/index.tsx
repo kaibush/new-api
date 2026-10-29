@@ -17,6 +17,8 @@ import { useAuthStore } from '@/stores/auth-store'
 import { uploadChatFile, type ChatMessage } from './api'
 import { ChatComposer } from './chat-composer'
 import { CommunityBoard } from './community-board'
+import { EventCreate } from './event-create'
+import { EventDetail } from './event-detail'
 import { CommunityRecords } from './history'
 import { ChatMessageBubble } from './message-bubble'
 import { ChatModerationDialog } from './moderation-dialog'
@@ -45,13 +47,23 @@ export function CommunityChat() {
     clearThrough,
     markDeleted,
   } = chat
-  const packets = useRedPackets(status.data?.enabled === true)
-  const packetById = new Map(
-    packets.data?.pages.flat().map((packet) => [packet.id, packet])
+  const packetMessages = messages.filter(
+    (message) =>
+      message.kind === 'red_packet' &&
+      !message.deleted &&
+      !message.cleared &&
+      !message.sending
   )
+  const packets = useRedPackets(
+    packetMessages.map((message) => message.id),
+    status.data?.enabled === true
+  )
+  const packetById = new Map(packets.data?.map((packet) => [packet.id, packet]))
   const [boardOpen, setBoardOpen] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [packetId, setPacketId] = useState<number | null>(null)
+  const [eventId, setEventId] = useState<number | null>(null)
+  const [eventCreateOpen, setEventCreateOpen] = useState(false)
   const [locateId, setLocateId] = useState<number | null>(null)
   const [reply, setReply] = useState<ChatMessage | null>(null)
   const [remove, setRemove] = useState<ChatMessage | null>(null)
@@ -204,6 +216,7 @@ export function CommunityChat() {
                   currentUserId={user?.id}
                   onReply={setReply}
                   onOpenRedPacket={setPacketId}
+                  onOpenEvent={setEventId}
                   redPacket={packetById.get(message.id)}
                   onRemove={(user?.role ?? 0) >= 10 ? setRemove : undefined}
                 />
@@ -244,8 +257,13 @@ export function CommunityChat() {
             aria-label={t('Community board')}
           >
             <CommunityBoard
+              retentionMinutes={status.data?.red_packet_retention_minutes}
+              packetMessages={packetMessages}
+              packets={packets}
               onOpen={setPacketId}
               onCreate={() => setCreateOpen(true)}
+              onOpenEvent={setEventId}
+              onCreateEvent={() => setEventCreateOpen(true)}
             />
           </aside>
         </div>
@@ -257,6 +275,17 @@ export function CommunityChat() {
         >
           {boardOpen && (
             <CommunityBoard
+              retentionMinutes={status.data?.red_packet_retention_minutes}
+              packetMessages={packetMessages}
+              packets={packets}
+              onOpenEvent={(id) => {
+                setBoardOpen(false)
+                setEventId(id)
+              }}
+              onCreateEvent={() => {
+                setBoardOpen(false)
+                setEventCreateOpen(true)
+              }}
               onOpen={(id) => {
                 setBoardOpen(false)
                 setPacketId(id)
@@ -288,6 +317,41 @@ export function CommunityChat() {
                 deleted: false,
               })
               setPacketId(packet.id)
+            }}
+          />
+        )}
+        {eventCreateOpen && (
+          <EventCreate
+            onClose={() => setEventCreateOpen(false)}
+            onCreated={(event) => {
+              setEventCreateOpen(false)
+              stickToBottom.current = true
+              onSending({
+                id: event.id,
+                user_id: event.user_id,
+                name: event.name,
+                avatar: members.get(event.user_id)?.avatar || '',
+                text: event.title,
+                kind: 'event',
+                event,
+                url: '',
+                filename: '',
+                size: 0,
+                created_at: event.created_at,
+                deleted: false,
+              })
+              setEventId(event.id)
+            }}
+          />
+        )}
+        {eventId !== null && (
+          <EventDetail
+            key={eventId}
+            id={eventId}
+            onClose={() => setEventId(null)}
+            onLocate={(id) => {
+              setEventId(null)
+              setLocateId(id)
             }}
           />
         )}

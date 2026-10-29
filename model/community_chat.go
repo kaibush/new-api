@@ -18,19 +18,20 @@ import (
 
 // CommunityConfig is separate from generic options so credentials never appear in option exports.
 type CommunityConfig struct {
-	ClearedThroughID int64  `json:"-"`
-	ID               int    `json:"-" gorm:"primaryKey"`
-	Name             string `json:"name" gorm:"type:varchar(80)"`
-	Enabled          bool   `json:"enabled"`
-	HistoryDays      int    `json:"history_days"`
-	BotEnabled       bool   `json:"bot_enabled"`
-	BotName          string `json:"bot_name" gorm:"type:varchar(32)"`
-	BotReply         string `json:"bot_reply" gorm:"type:text"`
-	AppID            string `json:"app_id" gorm:"type:varchar(128)"`
-	AppSecret        string `json:"-" gorm:"type:text"`
-	TemplateID       string `json:"template_id" gorm:"type:varchar(128)"`
-	Receiver         string `json:"receiver" gorm:"type:varchar(128)"`
-	CallbackToken    string `json:"-" gorm:"type:text"`
+	ClearedThroughID          int64  `json:"-"`
+	ID                        int    `json:"-" gorm:"primaryKey"`
+	Name                      string `json:"name" gorm:"type:varchar(80)"`
+	Enabled                   bool   `json:"enabled"`
+	HistoryDays               int    `json:"history_days"`
+	RedPacketRetentionMinutes *int   `json:"red_packet_retention_minutes"`
+	BotEnabled                bool   `json:"bot_enabled"`
+	BotName                   string `json:"bot_name" gorm:"type:varchar(32)"`
+	BotReply                  string `json:"bot_reply" gorm:"type:text"`
+	AppID                     string `json:"app_id" gorm:"type:varchar(128)"`
+	AppSecret                 string `json:"-" gorm:"type:text"`
+	TemplateID                string `json:"template_id" gorm:"type:varchar(128)"`
+	Receiver                  string `json:"receiver" gorm:"type:varchar(128)"`
+	CallbackToken             string `json:"-" gorm:"type:text"`
 }
 
 type CommunityReply struct {
@@ -43,6 +44,7 @@ type CommunityReply struct {
 }
 
 type CommunityMessage struct {
+	Event     *CommunityEvent `json:"event,omitempty" gorm:"-"`
 	Cleared   bool            `json:"cleared,omitempty" gorm:"-"`
 	Replayed  bool            `json:"-" gorm:"-"`
 	ClientID  *string         `json:"client_id,omitempty" gorm:"type:varchar(36);uniqueIndex:idx_community_sender_request,priority:2"`
@@ -93,6 +95,9 @@ func GetCommunityConfig() (CommunityConfig, error) {
 	if config.HistoryDays == 0 {
 		config.HistoryDays = 1
 	}
+	if config.RedPacketRetentionMinutes == nil {
+		config.RedPacketRetentionMinutes = new(10)
+	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return config, nil
 	}
@@ -122,6 +127,12 @@ func GetCommunityConfig() (CommunityConfig, error) {
 
 func SaveCommunityConfig(config CommunityConfig) error {
 	config.ID = 1
+	if config.RedPacketRetentionMinutes == nil {
+		config.RedPacketRetentionMinutes = new(10)
+	}
+	if *config.RedPacketRetentionMinutes < 0 || *config.RedPacketRetentionMinutes > 1440 {
+		return errors.New("Red packet retention must be between 0 and 1440 minutes")
+	}
 	if config.HistoryDays == 0 {
 		config.HistoryDays = 1
 	}
@@ -166,6 +177,7 @@ func (message *CommunityMessage) RedactDeletedContent() {
 	}
 	message.Text, message.URL, message.Filename, message.Size = "", "", "", 0
 	message.ReplyToID, message.Reply = nil, nil
+	message.Event = nil
 }
 
 // CommunityMessageHistory uses a stable ID cursor. Only the administrator route
@@ -187,6 +199,25 @@ func CommunityMessageHistory(beforeID int64, limit int, archive bool) (Community
 	}
 	if err := query.Find(&page.Items).Error; err != nil {
 		return page, err
+	}
+	eventIDs := []int64{}
+	for _, message := range page.Items {
+		if message.Kind == "event" && (!message.Deleted || archive) {
+			eventIDs = append(eventIDs, message.ID)
+		}
+	}
+	if len(eventIDs) > 0 {
+		var events []CommunityEvent
+		if err := DB.Where("id IN ?", eventIDs).Find(&events).Error; err != nil {
+			return page, err
+		}
+		byID := make(map[int64]*CommunityEvent, len(events))
+		for i := range events {
+			byID[events[i].ID] = &events[i]
+		}
+		for i := range page.Items {
+			page.Items[i].Event = byID[page.Items[i].ID]
+		}
 	}
 	page.HasMore = len(page.Items) > limit
 	if page.HasMore {

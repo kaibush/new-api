@@ -1,4 +1,5 @@
-import { Gift } from 'lucide-react'
+import { CalendarDays, Gift } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/empty-state'
@@ -12,20 +13,28 @@ import {
   CardDescription,
   CardContent,
 } from '@/components/ui/card'
-import { toIntlLocale } from '@/i18n/languages'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { RedPacketCard } from './red-packet-card'
-import { useRedPackets } from './use-red-packets'
+import type { ChatMessage } from './api'
+import { CommunityCheckin } from './community-checkin'
+import { useCommunityEvents } from './event-api'
+import { EventCard } from './event-card'
+import { RedPacketBoard } from './red-packet-board'
+import type { useRedPackets } from './use-red-packets'
 
 export function CommunityBoard(props: {
+  retentionMinutes?: number
+  packetMessages: ChatMessage[]
+  packets: ReturnType<typeof useRedPackets>
   onOpen: (id: number) => void
   onCreate: () => void
+  onOpenEvent: (id: number) => void
+  onCreateEvent: () => void
 }) {
-  const { t, i18n } = useTranslation()
-  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const { t } = useTranslation()
   const user = useAuthStore((s) => s.auth.user)
-  const packets = useRedPackets()
+  const events = useCommunityEvents()
+  const [expanded, setExpanded] = useState(false)
   return (
     <div className='flex min-h-0 flex-col gap-4'>
       <div className='flex items-center justify-between gap-3'>
@@ -40,59 +49,66 @@ export function CommunityBoard(props: {
           aria-hidden='true'
         />
       </div>
-      {(user?.role ?? 0) >= 10 && (
-        <Button variant='outline' className='w-full' onClick={props.onCreate}>
-          <Gift data-icon='inline-start' />
-          {t('Send a red packet')}
-        </Button>
-      )}
-      <section className='flex flex-col gap-3' aria-label={t('Red packets')}>
-        {packets.isPending && <LoadingState size='sm' />}
-        {packets.isError && (
+      <CommunityCheckin />
+      <section
+        className='flex flex-col gap-3 border-b pb-4'
+        aria-label={t('Upcoming events')}
+      >
+        <div className='flex items-center justify-between gap-2'>
+          <h3 className='flex items-center gap-2 text-sm font-semibold'>
+            <CalendarDays className='size-4' aria-hidden='true' />
+            {t('Upcoming events')}
+          </h3>
+          {(user?.role ?? 0) >= 10 && (
+            <Button size='sm' variant='ghost' onClick={props.onCreateEvent}>
+              {t('Publish event')}
+            </Button>
+          )}
+        </div>
+        {events.isPending && <LoadingState size='sm' />}
+        {events.isError && (
           <ErrorState
             className='min-h-0'
-            onRetry={() => void packets.refetch()}
+            onRetry={() => void events.refetch()}
           />
         )}
-        {packets.data?.pages.flat().map((packet) => (
-          <article key={packet.id} className='flex flex-col gap-2'>
-            <div className='text-muted-foreground flex items-center justify-between gap-2 text-xs'>
-              <span className='min-w-0 truncate'>{packet.name}</span>
-              <time
-                className='shrink-0'
-                dateTime={new Date(packet.created_at * 1000).toISOString()}
-              >
-                {new Date(packet.created_at * 1000).toLocaleDateString(locale)}
-              </time>
-            </div>
-            <RedPacketCard
-              id={packet.id}
-              greeting={packet.greeting}
-              packet={packet}
-              onOpen={props.onOpen}
-            />
-          </article>
-        ))}
-        {packets.data?.pages[0]?.length === 0 && (
+        {events.data?.length === 0 && (
           <EmptyState
-            className='min-h-0 py-8'
-            icon={Gift}
-            title={t('No red packets yet')}
+            icon={CalendarDays}
+            className='min-h-0 py-3'
+            title={t('Upcoming events')}
             description={t(
-              'New red packets appear here and in the conversation.'
+              'No upcoming events. New announcements will appear here.'
             )}
           />
         )}
-        {packets.hasNextPage && (
+        {events.data?.slice(0, expanded ? 50 : 3).map((event) => (
+          <EventCard
+            key={event.id}
+            id={event.id}
+            title={event.title}
+            event={event}
+            onOpen={props.onOpenEvent}
+          />
+        ))}
+        {(events.data?.length ?? 0) > 3 && (
           <Button
             variant='ghost'
-            disabled={packets.isFetchingNextPage}
-            onClick={() => void packets.fetchNextPage()}
+            size='sm'
+            onClick={() => setExpanded(!expanded)}
           >
-            {t('Load more')}
+            {expanded ? t('Show less') : t('Show more')}
           </Button>
         )}
       </section>
+      <RedPacketBoard
+        messages={props.packetMessages}
+        packets={props.packets}
+        retentionMinutes={props.retentionMinutes ?? 10}
+        canCreate={(user?.role ?? 0) >= 10}
+        onCreate={props.onCreate}
+        onOpen={props.onOpen}
+      />
       <Card size='sm' className='mt-2'>
         <CardHeader>
           <CardTitle>{t('About red packets')}</CardTitle>

@@ -41,6 +41,7 @@ const schema = z.object({
   name: z.string().trim().max(80),
   enabled: z.boolean(),
   history_days: z.number().int().min(1).max(365),
+  red_packet_retention_minutes: z.number().int().min(0).max(1440),
   bot_enabled: z.boolean(),
   bot_reply: z.string().trim().max(2000),
   bot_name: z
@@ -71,6 +72,7 @@ export function CommunitySettings() {
       name: '',
       enabled: false,
       history_days: 1,
+      red_packet_retention_minutes: 10,
       bot_enabled: false,
       bot_name: '助手',
       bot_reply: '',
@@ -87,6 +89,8 @@ export function CommunitySettings() {
         ...settings.data.data,
         name: settings.data.data.name || '',
         history_days: settings.data.data.history_days || 1,
+        red_packet_retention_minutes:
+          settings.data.data.red_packet_retention_minutes ?? 10,
         bot_reply: settings.data.data.bot_reply || '',
         app_secret: '',
         callback_token: '',
@@ -221,6 +225,35 @@ export function CommunitySettings() {
                 {form.formState.errors.history_days && (
                   <FieldDescription role='alert'>
                     {t('Enter a whole number from 1 to 365.')}
+                  </FieldDescription>
+                )}
+              </Field>
+              <Field>
+                <FieldLabel htmlFor='community-red-packet-retention'>
+                  {t('Claimed red packet retention (minutes)')}
+                </FieldLabel>
+                <Input
+                  id='community-red-packet-retention'
+                  type='number'
+                  min={0}
+                  max={1440}
+                  step={1}
+                  {...form.register('red_packet_retention_minutes', {
+                    valueAsNumber: true,
+                  })}
+                  aria-invalid={Boolean(
+                    form.formState.errors.red_packet_retention_minutes
+                  )}
+                  aria-describedby='community-red-packet-retention-description'
+                />
+                <FieldDescription id='community-red-packet-retention-description'>
+                  {t(
+                    'Keep fully claimed packets on the board for this long, then move them to Red packet history. Set 0 to move immediately. Expired packets move immediately; records are kept.'
+                  )}
+                </FieldDescription>
+                {form.formState.errors.red_packet_retention_minutes && (
+                  <FieldDescription role='alert'>
+                    {t('Enter a whole number from 0 to 1440.')}
                   </FieldDescription>
                 )}
               </Field>

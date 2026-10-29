@@ -2,7 +2,10 @@ import { api } from '@/lib/api'
 import { authResult } from '@/lib/secure-verification'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
+import type { CommunityEvent } from './event-api'
+
 export type ChatMessage = {
+  event?: CommunityEvent
   cleared?: boolean
   client_id?: string
   is_bot?: boolean
@@ -22,7 +25,7 @@ export type ChatMessage = {
   name: string
   avatar: string
   text: string
-  kind: 'text' | 'image' | 'sticker' | 'file' | 'red_packet'
+  kind: 'text' | 'image' | 'sticker' | 'file' | 'red_packet' | 'event'
   url: string
   filename: string
   size: number
@@ -36,6 +39,7 @@ export type ChatStatus = {
   bot_enabled: boolean
   bot_name: string
   history_days: number
+  red_packet_retention_minutes?: number
 }
 export type ChatSettings = ChatStatus & {
   bot_reply: string

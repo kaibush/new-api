@@ -66,7 +66,7 @@ func GetCommunityStatus(c *gin.Context) {
 		communityError(c, 500, "Could not load community settings")
 		return
 	}
-	c.JSON(200, gin.H{"success": true, "data": gin.H{"enabled": config.Enabled, "name": config.Name, "bot_enabled": config.BotEnabled, "bot_name": config.BotName, "history_days": config.HistoryDays}})
+	c.JSON(200, gin.H{"success": true, "data": gin.H{"enabled": config.Enabled, "name": config.Name, "bot_enabled": config.BotEnabled, "bot_name": config.BotName, "history_days": config.HistoryDays, "red_packet_retention_minutes": config.RedPacketRetentionMinutes}})
 }
 
 func GetCommunitySettings(c *gin.Context) {
@@ -113,6 +113,10 @@ func UpdateCommunitySettings(c *gin.Context) {
 		return
 	}
 	config := req.CommunityConfig
+	if config.RedPacketRetentionMinutes != nil && (*config.RedPacketRetentionMinutes < 0 || *config.RedPacketRetentionMinutes > 1440) {
+		communityError(c, 400, "Red packet retention must be between 0 and 1440 minutes")
+		return
+	}
 	if req.HistoryDays != nil && (*req.HistoryDays < 1 || *req.HistoryDays > 365) {
 		communityError(c, 400, "Chat history must be between 1 and 365 days")
 		return
@@ -143,6 +147,9 @@ func UpdateCommunitySettings(c *gin.Context) {
 	config.AppSecret = old.AppSecret
 	config.CallbackToken = old.CallbackToken
 	config.HistoryDays = old.HistoryDays
+	if config.RedPacketRetentionMinutes == nil {
+		config.RedPacketRetentionMinutes = old.RedPacketRetentionMinutes
+	}
 	if req.HistoryDays != nil {
 		config.HistoryDays = *req.HistoryDays
 	}

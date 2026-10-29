@@ -83,6 +83,7 @@ function mergeChatHistory(
           size: 0,
           reply_to_id: undefined,
           reply: undefined,
+          event: undefined,
         }
       }
       if (message.reply && deleted.has(message.reply.id)) {

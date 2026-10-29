@@ -12,6 +12,7 @@ import { formatNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import type { ChatMessage } from './api'
+import { EventCard } from './event-card'
 import { MessageText } from './message-text'
 import type { RedPacket } from './red-packet-api'
 import { RedPacketCard } from './red-packet-card'
@@ -24,6 +25,7 @@ export function ChatMessageBubble(props: {
   onRemove?: (message: ChatMessage) => void
   redPacket?: RedPacket
   onOpenRedPacket?: (id: number) => void
+  onOpenEvent?: (id: number) => void
 }) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
@@ -95,7 +97,8 @@ export function ChatMessageBubble(props: {
               'items-start rounded-tl-sm border-border/60':
                 message.user_id !== props.currentUserId,
               'w-72 p-0 border-0':
-                message.kind === 'red_packet' && !message.deleted,
+                (message.kind === 'red_packet' || message.kind === 'event') &&
+                !message.deleted,
             }
           )}
         >
@@ -132,7 +135,16 @@ export function ChatMessageBubble(props: {
                   onOpen={props.onOpenRedPacket}
                 />
               )}
+              {message.kind === 'event' && props.onOpenEvent && (
+                <EventCard
+                  id={message.id}
+                  title={message.text}
+                  event={message.event}
+                  onOpen={props.onOpenEvent}
+                />
+              )}
               {message.text &&
+                (message.kind !== 'event' || !props.onOpenEvent) &&
                 (message.kind !== 'red_packet' || !props.onOpenRedPacket) && (
                   <p className='max-w-full text-left break-words whitespace-pre-wrap'>
                     <MessageText

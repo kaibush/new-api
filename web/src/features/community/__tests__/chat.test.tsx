@@ -65,10 +65,6 @@ function show(component: React.ReactNode) {
 }
 beforeEach(() => {
   FakeSocket.instances = []
-  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
-    callback(0)
-    return 0
-  })
   vi.stubGlobal(
     'URL',
     class extends URL {
@@ -270,6 +266,12 @@ test('administrator can enable chat while preserving a stored secret', async () 
   expect(days).toHaveValue(1)
   await user.clear(days)
   await user.type(days, '7')
+  const retention = screen.getByRole('spinbutton', {
+    name: 'Claimed red packet retention (minutes)',
+  })
+  expect(retention).toHaveValue(10)
+  await user.clear(retention)
+  await user.type(retention, '25')
   await user.click(screen.getByRole('button', { name: 'Save' }))
   await waitFor(() =>
     expect(api.put).toHaveBeenCalledWith(
@@ -277,6 +279,7 @@ test('administrator can enable chat while preserving a stored secret', async () 
       expect.objectContaining({
         enabled: true,
         history_days: 7,
+        red_packet_retention_minutes: 25,
         name: 'My lounge',
         bot_reply: 'We received your message.',
         app_secret: '',
@@ -302,6 +305,33 @@ test('invalid history days show an error and cannot be saved', async () => {
     expect(days).toHaveAttribute('aria-invalid', 'true')
     expect(api.put).not.toHaveBeenCalled()
   }
+})
+
+test('red packet retention rejects invalid minutes and preserves an explicit zero', async () => {
+  vi.spyOn(api, 'put').mockResolvedValue({ data: { success: true } })
+  show(<SettingsHarness />)
+  const retention = await screen.findByRole('spinbutton', {
+    name: 'Claimed red packet retention (minutes)',
+  })
+  const form = retention.closest('form')
+  if (!form) throw new Error('Retention must be in the settings form')
+  for (const value of ['', '-1', '1441', '1.5']) {
+    fireEvent.change(retention, { target: { value } })
+    fireEvent.submit(form)
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Enter a whole number from 0 to 1440.'
+    )
+    expect(retention).toHaveAttribute('aria-invalid', 'true')
+    expect(api.put).not.toHaveBeenCalled()
+  }
+  fireEvent.change(retention, { target: { value: '0' } })
+  fireEvent.submit(form)
+  await waitFor(() =>
+    expect(api.put).toHaveBeenCalledWith(
+      '/api/option/community',
+      expect.objectContaining({ red_packet_retention_minutes: 0 })
+    )
+  )
 })
 
 test('empty history disables blank messages and a failed send preserves the draft', async () => {
@@ -2297,6 +2327,345 @@ const giftPacket = {
   redeemed: false,
 }
 
+test('the red packet board follows loaded chat history and adds older packets only when their messages load', async () => {
+  const user = userEvent.setup()
+  const earlier = { ...giftPacket, id: 60, greeting: 'Earlier gift' }
+  vi.mocked(api.get).mockImplementation(async (url) => {
+    let data: unknown = {}
+    if (url === '/api/community/status') {
+      data = { enabled: true, name: 'Lounge' }
+    } else if (url === '/api/community/events') data = []
+    else if (url === '/api/community/red-packets') data = [giftPacket, earlier]
+    else if (url === '/api/community/messages') {
+      data = {
+        items: [
+          { ...historyMessage(60, earlier.greeting), kind: 'red_packet' },
+        ],
+        has_more: false,
+        day_start: 0,
+        day_end: 0,
+        history_days: 7,
+        deleted_ids: [],
+      }
+    }
+    return { data: { success: true, data } }
+  })
+  show(<CommunityChat />)
+  await screen.findByRole('textbox', { name: 'Message' })
+  const board = screen.getByRole('complementary', { name: 'Community board' })
+  act(() =>
+    FakeSocket.instances[0].onmessage?.({
+      data: JSON.stringify({
+        type: 'history',
+        history_days: 7,
+        has_more: true,
+        messages: [
+          { ...historyMessage(80, giftPacket.greeting), kind: 'red_packet' },
+        ],
+      }),
+    })
+  )
+  expect(
+    await within(board).findByRole('button', { name: /Good luck/ })
+  ).toBeInTheDocument()
+  expect(
+    within(board).queryByRole('button', { name: /Earlier gift/ })
+  ).not.toBeInTheDocument()
+  await user.click(
+    screen.getByRole('button', { name: 'Load earlier messages' })
+  )
+  expect(
+    await within(board).findByRole('button', { name: /Earlier gift/ })
+  ).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Community board' }))
+  const mobile = await screen.findByRole('dialog', { name: 'Community board' })
+  expect(
+    within(mobile).getByRole('button', { name: /Earlier gift/ })
+  ).toBeInTheDocument()
+})
+
+test.each([
+  ['deleted', { deleted_ids: [80] }],
+  ['cleared', { cleared_through_id: 80 }],
+  ['outside the history window', { day_start: 1700000001, history_days: 1 }],
+])(
+  'the red packet board removes a message that is %s even while packet data stays cached',
+  async (_reason, update) => {
+    vi.mocked(api.get).mockImplementation(async (url) => ({
+      data: {
+        success: true,
+        data:
+          url === '/api/community/red-packets'
+            ? [giftPacket]
+            : { enabled: true, name: 'Lounge' },
+      },
+    }))
+    show(<CommunityChat />)
+    await screen.findByRole('textbox', { name: 'Message' })
+    const snapshot = {
+      type: 'history',
+      history_days: 7,
+      messages: [
+        { ...historyMessage(80, giftPacket.greeting), kind: 'red_packet' },
+      ],
+    }
+    act(() =>
+      FakeSocket.instances[0].onmessage?.({ data: JSON.stringify(snapshot) })
+    )
+    const board = screen.getByRole('complementary', { name: 'Community board' })
+    expect(await within(board).findByText('0 / 2 claimed')).toBeInTheDocument()
+    act(() =>
+      FakeSocket.instances[0].onmessage?.({
+        data: JSON.stringify({ ...snapshot, ...update }),
+      })
+    )
+    expect(
+      within(board).queryByRole('button', { name: /Good luck/ })
+    ).not.toBeInTheDocument()
+  }
+)
+
+test('an expiring chat message removes its red packet from the board while disconnected', async () => {
+  vi.mocked(api.get).mockImplementation(async (url) => ({
+    data: {
+      success: true,
+      data:
+        url === '/api/community/red-packets'
+          ? [giftPacket]
+          : { enabled: true, name: 'Lounge' },
+    },
+  }))
+  show(<CommunityChat />)
+  const editor = await screen.findByRole('textbox', { name: 'Message' })
+  vi.useFakeTimers()
+  try {
+    const expires = Math.floor(Date.now() / 1000) + 2
+    act(() =>
+      FakeSocket.instances[0].onmessage?.({
+        data: JSON.stringify({
+          type: 'history',
+          history_days: 7,
+          day_start: expires - 7 * 86400,
+          day_end: expires + 86400,
+          messages: [
+            {
+              ...historyMessage(80, giftPacket.greeting),
+              kind: 'red_packet',
+              created_at: expires - 60,
+              expires_at: expires,
+            },
+          ],
+        }),
+      })
+    )
+    const board = screen.getByRole('complementary', { name: 'Community board' })
+    await act(async () => vi.advanceTimersByTime(1))
+    expect(
+      within(board).getByRole('button', { name: /Good luck/ })
+    ).toBeInTheDocument()
+    fireEvent.change(editor, { target: { value: 'Still writing' } })
+    act(() => FakeSocket.instances[0].onclose?.())
+    await act(async () => vi.advanceTimersByTime(2000))
+    expect(
+      within(board).queryByRole('button', { name: /Good luck/ })
+    ).not.toBeInTheDocument()
+    expect(editor).toHaveValue('Still writing')
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+test('loaded older red packets receive progress beyond the first packet page without listing unloaded messages', async () => {
+  const recent = Array.from({ length: 30 }, (_, i) => ({
+    ...giftPacket,
+    id: 200 - i,
+    greeting: `Recent gift ${i}`,
+  }))
+  const older = { ...giftPacket, claimed: 1 }
+  vi.mocked(api.get).mockImplementation(async (url, config) => {
+    let data: unknown = {}
+    if (url === '/api/community/status') {
+      data = { enabled: true, name: 'Lounge' }
+    } else if (url === '/api/community/events') data = []
+    else if (url === '/api/community/red-packets') {
+      data = config?.params?.before_id === 171 ? [older] : recent
+    }
+    return { data: { success: true, data } }
+  })
+  show(<CommunityChat />)
+  await screen.findByRole('textbox', { name: 'Message' })
+  act(() =>
+    FakeSocket.instances[0].onmessage?.({
+      data: JSON.stringify({
+        type: 'history',
+        messages: [
+          { ...historyMessage(80, older.greeting), kind: 'red_packet' },
+          { ...historyMessage(200, recent[0].greeting), kind: 'red_packet' },
+        ],
+      }),
+    })
+  )
+  const board = screen.getByRole('complementary', { name: 'Community board' })
+  expect(await within(board).findByText('1 / 2 claimed')).toBeInTheDocument()
+  expect(
+    within(board).getAllByRole('button', { name: /Quota red packet/ })
+  ).toHaveLength(2)
+  expect(
+    within(board).queryByRole('button', { name: 'Load more' })
+  ).not.toBeInTheDocument()
+})
+
+test('a server-side deleted packet disappears from the board without waiting for chat history', async () => {
+  let packets = [giftPacket]
+  vi.mocked(api.get).mockImplementation(async (url) => ({
+    data: {
+      success: true,
+      data:
+        url === '/api/community/red-packets'
+          ? packets
+          : { enabled: true, name: 'Lounge' },
+    },
+  }))
+  show(<CommunityChat />)
+  await screen.findByRole('textbox', { name: 'Message' })
+  act(() =>
+    FakeSocket.instances[0].onmessage?.({
+      data: JSON.stringify({
+        type: 'history',
+        messages: [{ ...historyMessage(80, 'Good luck'), kind: 'red_packet' }],
+      }),
+    })
+  )
+  const board = screen.getByRole('complementary', { name: 'Community board' })
+  await within(board).findByText('0 / 2 claimed')
+  packets = []
+  act(() => window.dispatchEvent(new Event('visibilitychange')))
+  await waitFor(() =>
+    expect(
+      within(board).queryByRole('button', { name: /Good luck/ })
+    ).not.toBeInTheDocument()
+  )
+})
+
+test.each([undefined, 0, 2])(
+  'packets prioritize available gifts and move to history after retention %s without deleting messages',
+  async (minutes) => {
+    const completedAt = Math.floor(Date.now() / 1000)
+    const packets = [
+      {
+        ...giftPacket,
+        id: 83,
+        greeting: 'Just completed',
+        claimed: 2,
+        completed_at: completedAt,
+      },
+      { ...giftPacket, id: 82, greeting: 'Still available' },
+      {
+        ...giftPacket,
+        id: 81,
+        greeting: 'Expired gift',
+        expires_at: completedAt - 1,
+      },
+      {
+        ...giftPacket,
+        id: 80,
+        greeting: 'Earlier completed',
+        claimed: 2,
+        completed_at: completedAt - 3600,
+      },
+    ]
+    vi.mocked(api.get).mockImplementation(async (url) => {
+      let data: unknown = {
+        enabled: true,
+        name: 'Lounge',
+        red_packet_retention_minutes: minutes,
+      }
+      if (url === '/api/community/red-packets') data = packets
+      if (url === '/api/community/red-packets/83') {
+        data = {
+          ...packets[0],
+          records: [{ user_id: 2, name: 'Bob', claimed_at: completedAt }],
+          redeemed: false,
+        }
+      }
+      if (url === '/api/community/events') data = []
+      return { data: { success: true, data } }
+    })
+    show(<CommunityChat />)
+    const editor = await screen.findByRole('textbox', { name: 'Message' })
+    fireEvent.change(editor, { target: { value: 'My draft' } })
+    vi.useFakeTimers()
+    vi.setSystemTime(completedAt * 1000)
+    try {
+      act(() =>
+        FakeSocket.instances[0].onmessage?.({
+          data: JSON.stringify({
+            type: 'history',
+            messages: [...packets].reverse().map((packet) => ({
+              ...historyMessage(packet.id, packet.greeting),
+              kind: 'red_packet',
+            })),
+          }),
+        })
+      )
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
+      })
+      const board = screen.getByRole('complementary', {
+        name: 'Community board',
+      })
+      const current = within(board).getByRole('tabpanel', {
+        name: 'Current red packets',
+      })
+      const cards = within(current).getAllByRole('button', {
+        name: /Quota red packet/,
+      })
+      expect(cards[0]).toHaveTextContent('Still available')
+      expect(cards).toHaveLength(minutes === 0 ? 1 : 2)
+      expect(
+        within(current).queryByText('Expired gift')
+      ).not.toBeInTheDocument()
+      if (minutes !== 0) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync((minutes ?? 10) * 60000 - 2)
+        })
+        expect(within(current).getByText('Just completed')).toBeInTheDocument()
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1)
+        })
+        expect(
+          within(current).queryByText('Just completed')
+        ).not.toBeInTheDocument()
+      }
+      fireEvent.click(
+        within(board).getByRole('tab', { name: 'Red packet history' })
+      )
+      const history = within(board).getByRole('tabpanel', {
+        name: 'Red packet history',
+      })
+      expect(
+        within(history).getAllByRole('button', { name: /Quota red packet/ })
+      ).toHaveLength(3)
+      expect(within(history).getByText('Expired gift')).toBeInTheDocument()
+      expect(document.querySelector('#message-83')).toHaveTextContent(
+        'Just completed'
+      )
+      fireEvent.click(
+        within(history).getByRole('button', { name: /Just completed/ })
+      )
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
+      })
+      expect(
+        screen.getByRole('dialog', { name: 'Quota red packet' })
+      ).toHaveTextContent('Bob')
+      expect(editor).toHaveValue('My draft')
+    } finally {
+      vi.useRealTimers()
+    }
+  }
+)
+
 test('red packets in the board and conversation open the same detail and preserve the draft', async () => {
   const user = userEvent.setup()
   vi.mocked(api.get).mockImplementation(async (url) => {
@@ -2352,6 +2721,74 @@ test('red packets in the board and conversation open the same detail and preserv
   expect(
     await screen.findByRole('dialog', { name: 'Quota red packet' })
   ).toBeInTheDocument()
+})
+
+test('event previews in chat and the mobile board share details and locate the announcement without losing the draft', async () => {
+  const user = userEvent.setup()
+  const event = {
+    id: 80,
+    user_id: 2,
+    name: 'Admin',
+    title: 'Community evening',
+    description: 'Meet in chat',
+    kind: 'event',
+    starts_at: Date.now() / 1000 + 3600,
+    ends_at: Date.now() / 1000 + 7200,
+    created_at: 1700000000,
+    cancelled: false,
+  }
+  vi.mocked(api.get).mockImplementation(async (url) => {
+    let data: unknown = {}
+    if (url === '/api/community/status') {
+      data = { enabled: true, name: 'Lounge' }
+    } else if (url === '/api/community/events') data = [event]
+    else if (url === '/api/community/events/80') data = event
+    else if (url === '/api/community/red-packets') data = []
+    return { data: { success: true, data } }
+  })
+  show(<CommunityChat />)
+  const draft = await screen.findByRole('textbox', { name: 'Message' })
+  await user.type(draft, 'Keep writing')
+  act(() =>
+    FakeSocket.instances[0].onmessage?.({
+      data: JSON.stringify({
+        type: 'history',
+        messages: [
+          { ...historyMessage(80, event.title), kind: 'event', event },
+        ],
+      }),
+    })
+  )
+  const cards = await screen.findAllByRole('button', {
+    name: /Community evening/,
+  })
+  expect(cards).toHaveLength(2)
+  await user.click(cards[0])
+  expect(
+    await screen.findByRole('dialog', { name: 'Event details' })
+  ).toBeInTheDocument()
+  const target = document.querySelector<HTMLElement>('#message-80')
+  if (!target) throw new Error('Message target missing')
+  Object.defineProperty(target, 'scrollIntoView', {
+    configurable: true,
+    value: vi.fn(),
+  })
+  await user.click(screen.getByRole('button', { name: 'View in chat' }))
+  await waitFor(() => expect(target).toHaveFocus())
+  expect(draft).toHaveValue('Keep writing')
+  await user.click(screen.getByRole('button', { name: 'Community board' }))
+  const board = await screen.findByRole('dialog', { name: 'Community board' })
+  await user.click(
+    within(board).getByRole('button', { name: /Community evening/ })
+  )
+  expect(
+    await screen.findByRole('dialog', { name: 'Event details' })
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByRole('dialog', { name: 'Community board' })
+  ).not.toBeInTheDocument()
+  await user.keyboard('{Escape}')
+  expect(draft).toHaveValue('Keep writing')
 })
 
 test('claiming disables repeat requests, shows the assigned code and updates shared progress', async () => {

@@ -15,14 +15,15 @@ var ErrRedPacketCodes = errors.New("Use 1 to 100 distinct, unused redemption cod
 
 // A packet shares its ID with the chat message created in the same transaction.
 type CommunityRedPacket struct {
-	ID        int64  `json:"id" gorm:"primaryKey;autoIncrement:false"`
-	UserID    int    `json:"user_id" gorm:"index"`
-	Name      string `json:"name" gorm:"type:varchar(80)"`
-	Greeting  string `json:"greeting" gorm:"type:varchar(120)"`
-	Total     int    `json:"total"`
-	Claimed   int    `json:"claimed"`
-	CreatedAt int64  `json:"created_at"`
-	ExpiresAt int64  `json:"expires_at"`
+	ID          int64  `json:"id" gorm:"primaryKey;autoIncrement:false"`
+	UserID      int    `json:"user_id" gorm:"index"`
+	Name        string `json:"name" gorm:"type:varchar(80)"`
+	Greeting    string `json:"greeting" gorm:"type:varchar(120)"`
+	Total       int    `json:"total"`
+	Claimed     int    `json:"claimed"`
+	CreatedAt   int64  `json:"created_at"`
+	ExpiresAt   int64  `json:"expires_at"`
+	CompletedAt int64  `json:"completed_at" gorm:"-"`
 }
 
 type CommunityRedPacketItem struct {
@@ -126,8 +127,38 @@ func ListCommunityRedPackets(beforeID int64) ([]CommunityRedPacket, error) {
 	if beforeID > 0 {
 		query = query.Where("id < ?", beforeID)
 	}
-	err := query.Find(&packets).Error
-	return packets, err
+	if err := query.Find(&packets).Error; err != nil {
+		return nil, err
+	}
+	completedIDs := make([]int64, 0, len(packets))
+	for _, packet := range packets {
+		if packet.Claimed >= packet.Total {
+			completedIDs = append(completedIDs, packet.ID)
+		}
+	}
+	if len(completedIDs) == 0 {
+		return packets, nil
+	}
+	// Derive completion from existing claims, including packets sent before
+	// retention was introduced. No codes or recipient details enter the list.
+	var completed []struct {
+		PacketID    int64
+		CompletedAt int64
+	}
+	if err := DB.Model(&CommunityRedPacketItem{}).
+		Select("packet_id, MAX(claimed_at) AS completed_at").
+		Where("packet_id IN ? AND user_id IS NOT NULL", completedIDs).
+		Group("packet_id").Scan(&completed).Error; err != nil {
+		return nil, err
+	}
+	times := make(map[int64]int64, len(completed))
+	for _, item := range completed {
+		times[item.PacketID] = item.CompletedAt
+	}
+	for i := range packets {
+		packets[i].CompletedAt = times[packets[i].ID]
+	}
+	return packets, nil
 }
 
 func GetCommunityRedPacket(id int64, userID int) (CommunityRedPacketDetail, error) {
@@ -149,6 +180,9 @@ func GetCommunityRedPacket(id int64, userID int) (CommunityRedPacketDetail, erro
 		}
 		// The public DTO never contains other recipients' codes or quota values.
 		for _, item := range detail.Records {
+			if detail.Claimed >= detail.Total {
+				detail.CompletedAt = max(detail.CompletedAt, item.ClaimedAt)
+			}
 			if item.UserID == nil || *item.UserID != userID {
 				continue
 			}

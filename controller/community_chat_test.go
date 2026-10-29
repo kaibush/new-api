@@ -32,6 +32,142 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestCommunityEvents(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			if dialect != "sqlite" && os.Getenv("TEST_"+strings.ToUpper(dialect)+"_DSN") == "" {
+				t.Skip("database DSN not configured")
+			}
+			t.Setenv("TEST_SECURITY_DIALECT", dialect)
+			for _, upgrade := range []bool{false, true} {
+				t.Run(fmt.Sprintf("upgrade=%t", upgrade), func(t *testing.T) {
+					user, _ := setupSecurityEnrollmentTest(t)
+					// The latest release has no community tables. Also cover a
+					// populated installation of this branch before adding events.
+					original := model.CommunityMessage{UserID: user.Id, Name: "Original author", Text: "Original conversation", Kind: "text", CreatedAt: time.Now().Unix()}
+					requestID := "00000000-0000-4000-8000-000000000001"
+					original.ClientID = &requestID
+					if upgrade {
+						require.NoError(t, model.DB.AutoMigrate(&model.CommunityMessage{}))
+						require.NoError(t, model.DB.Create(&original).Error)
+					}
+					models := []any{&model.CommunityConfig{}, &model.CommunityMessage{}, &model.CommunityProfile{}, &model.CommunityEvent{}}
+					for range 2 {
+						require.NoError(t, model.DB.AutoMigrate(models...))
+					}
+					if upgrade {
+						var saved model.CommunityMessage
+						require.NoError(t, model.DB.First(&saved, original.ID).Error)
+						assert.Equal(t, original.Text, saved.Text)
+						assert.Equal(t, original.ClientID, saved.ClientID)
+						duplicate := original
+						duplicate.ID = 0
+						assert.Error(t, model.DB.Create(&duplicate).Error)
+					}
+					require.NoError(t, model.SaveCommunityConfig(model.CommunityConfig{Enabled: true}))
+					member, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "event-test")
+					require.NoError(t, err)
+					admin := model.User{Username: "event-admin", AffCode: "evadmin", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, AuthVersion: 1}
+					require.NoError(t, model.DB.Create(&admin).Error)
+					adminSession, err := service.CreateLoginSession(admin.Id, "password", "127.0.0.1", "event-test")
+					require.NoError(t, err)
+					router := gin.New()
+					routes := router.Group("/api/community", middleware.UserAuth(), middleware.DisableCache(), CommunityAccess)
+					routes.GET("/events", ListCommunityEvents)
+					routes.GET("/events/:id", GetCommunityEvent)
+					routes.POST("/events", middleware.AdminAuth(), CreateCommunityEvent)
+					routes.DELETE("/events/:id", middleware.AdminAuth(), CancelCommunityEvent)
+					request := func(method, path, token string, body any, status int) *httptest.ResponseRecorder {
+						payload, err := common.Marshal(body)
+						require.NoError(t, err)
+						req := httptest.NewRequest(method, path, bytes.NewReader(payload))
+						req.Header.Set("Content-Type", "application/json")
+						if token != "" {
+							req.Header.Set("Authorization", "Bearer "+token)
+						}
+						response := httptest.NewRecorder()
+						router.ServeHTTP(response, req)
+						require.Equal(t, status, response.Code, response.Body.String())
+						return response
+					}
+					now := time.Now().Unix()
+					input := model.CommunityEventInput{Title: "Community evening", Description: "Meet in the chat", Kind: "red_packet", StartsAt: now + 3600, EndsAt: now + 7200}
+					request("GET", "/api/community/events", "", nil, 401)
+					request("POST", "/api/community/events", member.AccessToken, input, 403)
+					for _, invalid := range []model.CommunityEventInput{
+						{Title: " ", Kind: "event", StartsAt: input.StartsAt, EndsAt: input.EndsAt},
+						{Title: "Past", Kind: "event", StartsAt: now - 1, EndsAt: input.EndsAt},
+						{Title: "Reverse", Kind: "event", StartsAt: input.EndsAt, EndsAt: input.StartsAt},
+						{Title: "Unknown", Kind: "unknown", StartsAt: input.StartsAt, EndsAt: input.EndsAt},
+						{Title: strings.Repeat("字", 81), Kind: "event", StartsAt: input.StartsAt, EndsAt: input.EndsAt},
+					} {
+						request("POST", "/api/community/events", adminSession.AccessToken, invalid, 400)
+					}
+					var announcementCount int64
+					require.NoError(t, model.DB.Model(&model.CommunityMessage{}).Where("kind = ?", "event").Count(&announcementCount).Error)
+					assert.Zero(t, announcementCount)
+					response := request("POST", "/api/community/events", adminSession.AccessToken, input, 200)
+					var result struct {
+						Data model.CommunityEvent `json:"data"`
+					}
+					require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+					event := result.Data
+					assert.Equal(t, admin.Id, event.UserID)
+					path := fmt.Sprintf("/api/community/events/%d", event.ID)
+					request("GET", path, member.AccessToken, nil, 200)
+					list := request("GET", "/api/community/events", member.AccessToken, nil, 200)
+					assert.Contains(t, list.Body.String(), input.Title)
+					assert.Contains(t, list.Header().Get("Cache-Control"), "no-store")
+					for range 2 {
+						require.NoError(t, model.DB.AutoMigrate(models...))
+					}
+					history, err := model.RecentCommunityMessages()
+					require.NoError(t, err)
+					announcement := history[len(history)-1]
+					require.NotNil(t, announcement.Event)
+					assert.Equal(t, event, *announcement.Event)
+					assert.Equal(t, event.ID, announcement.ID)
+					request("DELETE", path, member.AccessToken, nil, 403)
+					for range 2 {
+						request("DELETE", path, adminSession.AccessToken, nil, 200)
+					}
+					detail := request("GET", path, member.AccessToken, nil, 200)
+					assert.Contains(t, detail.Body.String(), `"cancelled":true`)
+					list = request("GET", "/api/community/events", member.AccessToken, nil, 200)
+					assert.NotContains(t, list.Body.String(), input.Title)
+					history, err = model.RecentCommunityMessages()
+					require.NoError(t, err)
+					assert.True(t, history[len(history)-1].Event.Cancelled)
+					active, err := model.CreateCommunityEvent(admin.Id, input)
+					require.NoError(t, err)
+					require.NoError(t, model.DB.Model(&model.CommunityEvent{}).Where("id = ?", active.ID).Update("ends_at", now-1).Error)
+					list = request("GET", "/api/community/events", member.AccessToken, nil, 200)
+					assert.NotContains(t, list.Body.String(), input.Title)
+					require.NoError(t, model.DB.Model(&model.CommunityMessage{}).Where("id = ?", event.ID).Update("deleted", true).Error)
+					request("GET", path, member.AccessToken, nil, 404)
+					history, err = model.RecentCommunityMessages()
+					require.NoError(t, err)
+					for _, message := range history {
+						if message.ID == event.ID {
+							assert.Nil(t, message.Event)
+						}
+					}
+					clearEvent, err := model.CreateCommunityEvent(admin.Id, input)
+					require.NoError(t, err)
+					require.NoError(t, model.DB.Model(&model.CommunityConfig{}).Where("id = 1").Update("cleared_through_id", clearEvent.ID).Error)
+					list = request("GET", "/api/community/events", member.AccessToken, nil, 200)
+					assert.NotContains(t, list.Body.String(), input.Title)
+					request("GET", fmt.Sprintf("/api/community/events/%d", clearEvent.ID), member.AccessToken, nil, 404)
+					require.NoError(t, model.SaveCommunityConfig(model.CommunityConfig{Enabled: false}))
+					request("GET", "/api/community/events", member.AccessToken, nil, 403)
+					request("POST", "/api/community/events", adminSession.AccessToken, input, 403)
+					request("DELETE", path, adminSession.AccessToken, nil, 403)
+				})
+			}
+		})
+	}
+}
+
 func TestCommunityRedPacketSessionAuthorization(t *testing.T) {
 	user, _ := setupSecurityEnrollmentTest(t)
 	require.NoError(t, model.DB.AutoMigrate(&model.CommunityConfig{}, &model.CommunityMessage{}, &model.CommunityProfile{}, &model.CommunityRedPacket{}, &model.CommunityRedPacketItem{}, &model.Redemption{}))
@@ -1266,6 +1402,109 @@ func TestCommunityModerationAndClear(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, 401, request("POST", clearPath, `{"confirm":true}`, bundle.AccessToken).Code)
 			assert.Equal(t, 401, request("DELETE", deletePath, "", bundle.AccessToken).Code)
+		})
+	}
+}
+
+func TestCommunityRedPacketRetention(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			if dialect != "sqlite" && os.Getenv("TEST_"+strings.ToUpper(dialect)+"_DSN") == "" {
+				t.Skip("database DSN not configured")
+			}
+			t.Setenv("TEST_SECURITY_DIALECT", dialect)
+			for _, upgrade := range []bool{false, true} {
+				t.Run(fmt.Sprintf("upgrade=%t", upgrade), func(t *testing.T) {
+					user, _ := setupSecurityEnrollmentTest(t)
+					if upgrade {
+						// The latest release has no community tables. Also exercise
+						// existing installations with a config predating retention.
+						require.NoError(t, model.DB.Table("community_configs").AutoMigrate(&communityConfigBeforeHistory{}))
+						require.NoError(t, model.DB.Table("community_configs").Create(&communityConfigBeforeHistory{ID: 1, Name: "Existing lounge", Enabled: true, BotName: "helper"}).Error)
+					}
+					models := []any{&model.CommunityConfig{}, &model.CommunityMessage{}, &model.CommunityRedPacket{}, &model.CommunityRedPacketItem{}}
+					for range 2 {
+						require.NoError(t, model.DB.AutoMigrate(models...))
+					}
+					config, err := model.GetCommunityConfig()
+					require.NoError(t, err)
+					require.NotNil(t, config.RedPacketRetentionMinutes)
+					assert.Equal(t, 10, *config.RedPacketRetentionMinutes)
+					if upgrade {
+						assert.Equal(t, "Existing lounge", config.Name)
+					}
+					router := gin.New()
+					router.Use(func(c *gin.Context) { c.Set("id", user.Id); c.Set("role", common.RoleRootUser); c.Next() })
+					router.PUT("/settings", UpdateCommunitySettings)
+					router.GET("/settings", GetCommunitySettings)
+					router.GET("/status", GetCommunityStatus)
+					for _, value := range []string{"-1", "1441", "1.5", "\"bad\"", "1440", "25", "0"} {
+						rr := httptest.NewRecorder()
+						router.ServeHTTP(rr, httptest.NewRequest("PUT", "/settings", strings.NewReader(`{"enabled":true,"bot_name":"helper","red_packet_retention_minutes":`+value+`}`)))
+						minutes, err := strconv.Atoi(value)
+						if err != nil || minutes < 0 || minutes > 1440 {
+							assert.Equal(t, 400, rr.Code)
+							continue
+						}
+						require.Equal(t, 200, rr.Code, rr.Body.String())
+						for range 2 {
+							require.NoError(t, model.DB.AutoMigrate(models...))
+						}
+						for _, path := range []string{"/status", "/settings"} {
+							rr = httptest.NewRecorder()
+							router.ServeHTTP(rr, httptest.NewRequest("GET", path, nil))
+							var response struct {
+								Data struct {
+									Minutes *int `json:"red_packet_retention_minutes"`
+								} `json:"data"`
+							}
+							require.NoError(t, common.Unmarshal(rr.Body.Bytes(), &response))
+							require.NotNil(t, response.Data.Minutes)
+							assert.Equal(t, minutes, *response.Data.Minutes)
+						}
+					}
+					rr := httptest.NewRecorder()
+					router.ServeHTTP(rr, httptest.NewRequest("PUT", "/settings", strings.NewReader(`{"enabled":true,"bot_name":"helper"}`)))
+					require.Equal(t, 200, rr.Code)
+					config, err = model.GetCommunityConfig()
+					require.NoError(t, err)
+					assert.Equal(t, 0, *config.RedPacketRetentionMinutes, "omitted values preserve explicit immediate archival")
+
+					for _, packet := range []model.CommunityRedPacket{
+						{ID: 1, Total: 2, Claimed: 2, CreatedAt: 100, ExpiresAt: 9000},
+						{ID: 2, Total: 2, Claimed: 1, CreatedAt: 100, ExpiresAt: 9000},
+						{ID: 3, Total: 1, Claimed: 0, CreatedAt: 100, ExpiresAt: 200},
+					} {
+						require.NoError(t, model.DB.Create(&model.CommunityMessage{ID: packet.ID, Kind: "red_packet", Text: "Gift", CreatedAt: 100}).Error)
+						require.NoError(t, model.DB.Create(&packet).Error)
+					}
+					for _, item := range []model.CommunityRedPacketItem{
+						{PacketID: 1, RedemptionID: 1, UserID: new(11), ClaimedAt: 300},
+						{PacketID: 1, RedemptionID: 2, UserID: new(12), ClaimedAt: 600},
+						{PacketID: 2, RedemptionID: 3, UserID: new(11), ClaimedAt: 500},
+					} {
+						require.NoError(t, model.DB.Create(&item).Error)
+					}
+					for range 2 {
+						require.NoError(t, model.DB.AutoMigrate(models...))
+					}
+					packets, err := model.ListCommunityRedPackets(0)
+					require.NoError(t, err)
+					require.Len(t, packets, 3)
+					assert.Zero(t, packets[0].CompletedAt, "expired unclaimed packets have no completion time")
+					assert.Zero(t, packets[1].CompletedAt, "partial claims do not start retention")
+					assert.Equal(t, int64(600), packets[2].CompletedAt, "retention starts with the last claim, including old packets")
+					detail, err := model.GetCommunityRedPacket(1, 0)
+					require.NoError(t, err)
+					assert.Equal(t, packets[2].CompletedAt, detail.CompletedAt)
+					assert.Len(t, detail.Records, 2, "archival preserves claim records")
+					require.NoError(t, model.DB.Model(&model.CommunityMessage{}).Where("id = ?", 1).Update("deleted", true).Error)
+					packets, err = model.ListCommunityRedPackets(3)
+					require.NoError(t, err)
+					require.Len(t, packets, 1)
+					assert.Equal(t, int64(2), packets[0].ID, "deleted packets stay hidden in older pages")
+				})
+			}
 		})
 	}
 }
