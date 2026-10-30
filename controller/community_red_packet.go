@@ -72,3 +72,18 @@ func ClaimCommunityRedPacket(c *gin.Context) {
 	recordManageAudit(c, "community.red_packet_claim", map[string]any{"packet_id": id})
 	GetCommunityRedPacket(c)
 }
+
+func GetCommunityRedPacketCodes(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		communityError(c, 400, "Red packet is unavailable")
+		return
+	}
+	codes, err := model.GetCommunityRedPacketCodes(id, c.GetInt("id"))
+	if err != nil {
+		communityError(c, 404, "Red packet is unavailable")
+		return
+	}
+	c.JSON(200, gin.H{"success": true, "data": codes})
+}

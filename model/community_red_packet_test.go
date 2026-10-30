@@ -125,11 +125,31 @@ func TestCommunityRedPacketDatabaseMatrix(t *testing.T) {
 					require.NoError(t, db.First(&message, packet.ID).Error)
 					assert.Equal(t, "red_packet", message.Kind)
 					assert.Equal(t, "Good luck", message.Text)
+					inventory, err := GetCommunityRedPacketCodes(packet.ID, users[0].Id)
+					require.NoError(t, err)
+					require.Len(t, inventory, 2)
+					assert.Equal(t, codes[0].Key, inventory[0].Code)
+					assert.Equal(t, codes[1].Key, inventory[1].Code)
+					assert.Equal(t, 100, inventory[0].Quota)
+					assert.Equal(t, "unclaimed", inventory[0].Status)
+					assert.Nil(t, inventory[0].UserID)
+					for _, viewer := range []int{0, users[1].Id} {
+						denied, err := GetCommunityRedPacketCodes(packet.ID, viewer)
+						require.ErrorIs(t, err, ErrRedPacketUnavailable)
+						assert.Nil(t, denied)
+					}
 					_, err = CreateCommunityRedPacket(users[0].Id, "duplicate", []string{codes[0].Key})
 					require.ErrorIs(t, err, ErrRedPacketCodes)
 					_, err = Redeem(codes[0].Key, users[1].Id)
 					require.ErrorIs(t, err, ErrRedeemFailed)
 					require.NoError(t, ClaimCommunityRedPacket(packet.ID, users[1].Id))
+					inventory, err = GetCommunityRedPacketCodes(packet.ID, users[0].Id)
+					require.NoError(t, err)
+					assert.Equal(t, "redeemed", inventory[0].Status)
+					assert.Equal(t, &users[1].Id, inventory[0].UserID)
+					assert.Equal(t, "alice", inventory[0].Name)
+					assert.Positive(t, inventory[0].ClaimedAt)
+					assert.Positive(t, inventory[0].RedeemedAt)
 					var wg sync.WaitGroup
 					results := make(chan error, 3)
 					for i := range 3 {
@@ -159,9 +179,12 @@ func TestCommunityRedPacketDatabaseMatrix(t *testing.T) {
 					}
 					_, err = Redeem(detail.MyCode, users[0].Id)
 					require.ErrorIs(t, err, ErrRedeemFailed)
-					quota, err := Redeem(detail.MyCode, users[1].Id)
+					inventory, err = GetCommunityRedPacketCodes(packet.ID, users[0].Id)
 					require.NoError(t, err)
-					assert.Equal(t, 100, quota)
+					assert.Equal(t, "redeemed", inventory[0].Status)
+					assert.Equal(t, users[1].Id, inventory[0].RedeemedBy)
+					assert.Positive(t, inventory[0].RedeemedAt)
+					assert.Equal(t, "redeemed", inventory[1].Status)
 					_, err = Redeem(detail.MyCode, users[1].Id)
 					require.ErrorIs(t, err, ErrRedeemFailed)
 					var alice User
@@ -192,6 +215,92 @@ func TestCommunityRedPacketDatabaseMatrix(t *testing.T) {
 					require.ErrorIs(t, ClaimCommunityRedPacket(expiring.ID, users[1].Id), ErrRedPacketUnavailable)
 					_, err = Redeem(codes[2].Key, users[0].Id)
 					require.NoError(t, err, "unclaimed codes return to ordinary redemption after expiry")
+					inventory, err = GetCommunityRedPacketCodes(expiring.ID, users[0].Id)
+					require.NoError(t, err)
+					require.Len(t, inventory, 1)
+					assert.Equal(t, "redeemed", inventory[0].Status)
+					assert.Nil(t, inventory[0].UserID)
+					assert.Equal(t, users[0].Id, inventory[0].RedeemedBy)
+					require.NoError(t, db.Delete(&codes[0]).Error)
+					inventory, err = GetCommunityRedPacketCodes(packet.ID, users[0].Id)
+					require.NoError(t, err)
+					assert.Equal(t, codes[0].Key, inventory[0].Code, "soft-deleted used codes remain in the inventory")
+					assert.Equal(t, "redeemed", inventory[0].Status)
+					for _, tc := range []struct {
+						changes map[string]any
+						status  string
+					}{
+						{map[string]any{"status": common.RedemptionCodeStatusDisabled}, "disabled"},
+						{map[string]any{"status": common.RedemptionCodeStatusEnabled, "expired_time": time.Now().Unix() - 1}, "expired"},
+						{map[string]any{"deleted_at": time.Now()}, "deleted"},
+					} {
+						require.NoError(t, db.Model(&codes[1]).Updates(tc.changes).Error)
+						inventory, err = GetCommunityRedPacketCodes(packet.ID, users[0].Id)
+						require.NoError(t, err)
+						assert.Equal(t, tc.status, inventory[1].Status)
+					}
+					for i, scenario := range []string{"wallet_limit", "monthly_limit", "legacy_claim", "duplicate_claim"} {
+						t.Run(scenario, func(t *testing.T) {
+							credit := Redemption{Key: fmt.Sprintf("%032d", 800+i), Name: scenario, Quota: 100}
+							require.NoError(t, credit.Insert())
+							gift, err := CreateCommunityRedPacket(users[0].Id, scenario, []string{credit.Key})
+							require.NoError(t, err)
+							owner := users[1].Id
+							require.NoError(t, db.Model(&User{}).Where("id = ?", owner).Update("quota", 0).Error)
+							if scenario == "wallet_limit" || scenario == "monthly_limit" {
+								if scenario == "wallet_limit" {
+									require.NoError(t, db.Model(&User{}).Where("id = ?", owner).Update("quota", common.MaxWalletQuota).Error)
+									require.ErrorIs(t, ClaimCommunityRedPacket(gift.ID, owner), ErrTopUpQuotaLimitExceeded)
+								} else {
+									operation_setting.GetPaymentSetting().MonthlyTopUpLimitEnabled = true
+									operation_setting.GetPaymentSetting().MonthlyTopUpLimit = 0.0001
+									require.ErrorIs(t, ClaimCommunityRedPacket(gift.ID, owner), ErrMonthlyTopUpLimitExceeded)
+									operation_setting.GetPaymentSetting().MonthlyTopUpLimitEnabled = false
+								}
+								failed, err := GetCommunityRedPacket(gift.ID, owner)
+								require.NoError(t, err)
+								assert.Zero(t, failed.Claimed)
+								assert.Empty(t, failed.MyCode)
+								unchanged, err := GetRedemptionById(credit.Id)
+								require.NoError(t, err)
+								assert.Equal(t, common.RedemptionCodeStatusEnabled, unchanged.Status)
+								assert.Zero(t, unchanged.UsedUserId)
+								require.NoError(t, db.Model(&User{}).Where("id = ?", owner).Update("quota", 0).Error)
+							}
+							if scenario == "legacy_claim" {
+								require.NoError(t, db.Model(&CommunityRedPacketItem{}).Where("packet_id = ?", gift.ID).Updates(map[string]any{"user_id": owner, "name": "alice", "claimed_at": 1700000000}).Error)
+								require.NoError(t, db.Model(&gift).Updates(map[string]any{"claimed": 1, "expires_at": time.Now().Unix() - 1}).Error)
+								legacy, err := GetCommunityRedPacketCodes(gift.ID, users[0].Id)
+								require.NoError(t, err)
+								assert.Equal(t, "claimed", legacy[0].Status)
+								assert.Zero(t, legacy[0].RedeemedAt)
+							}
+							var wg sync.WaitGroup
+							results := make(chan error, 2)
+							for range 2 {
+								wg.Go(func() { results <- ClaimCommunityRedPacket(gift.ID, owner) })
+							}
+							wg.Wait()
+							close(results)
+							for err := range results {
+								require.NoError(t, err)
+							}
+							var balance User
+							require.NoError(t, db.First(&balance, owner).Error)
+							assert.Equal(t, 100, balance.Quota, "concurrent retries credit exactly once")
+							used, err := GetRedemptionById(credit.Id)
+							require.NoError(t, err)
+							assert.Equal(t, common.RedemptionCodeStatusUsed, used.Status, "redemption management sees the same consumed code")
+							assert.Equal(t, owner, used.UsedUserId)
+							assert.Positive(t, used.RedeemedTime)
+							_, err = Redeem(credit.Key, owner)
+							require.ErrorIs(t, err, ErrRedeemFailed)
+							var logs []Log
+							require.NoError(t, db.Where("user_id = ? AND type = ? AND content LIKE ?", owner, LogTypeTopup, "%兑换码ID "+fmt.Sprint(credit.Id)).Find(&logs).Error)
+							require.Len(t, logs, 1)
+							assert.NotContains(t, logs[0].Content, credit.Key)
+						})
+					}
 					for range 2 {
 						require.NoError(t, db.AutoMigrate(models...))
 					}

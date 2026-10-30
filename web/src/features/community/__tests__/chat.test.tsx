@@ -2801,7 +2801,7 @@ test('event previews in chat and the mobile board share details and locate the a
   expect(draft).toHaveValue('Keep writing')
 })
 
-test('claiming disables repeat requests, shows the assigned code and updates shared progress', async () => {
+test('claiming credits the wallet, disables repeat requests and updates shared progress', async () => {
   const { RedPacketDetailDialog } = await import('../red-packet-detail')
   const user = userEvent.setup()
   vi.mocked(api.get).mockResolvedValue({
@@ -2826,7 +2826,8 @@ test('claiming disables repeat requests, shows the assigned code and updates sha
           ...giftPacket,
           claimed: 1,
           my_code: '11111111111111111111111111111111',
-          my_quota: 100,
+          my_quota: 5000000,
+          redeemed: true,
           records: [{ user_id: 1, name: 'Alice', claimed_at: 1700000000 }],
         },
       },
@@ -2836,9 +2837,131 @@ test('claiming disables repeat requests, shows the assigned code and updates sha
     await screen.findByText('11111111111111111111111111111111')
   ).toBeInTheDocument()
   expect(screen.getByText('1 / 2 claimed')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Redeem to wallet' })).toBeEnabled()
+  expect(screen.getByText('Added to balance')).toBeInTheDocument()
+  expect(screen.getByText('$10')).toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: 'Redeem to wallet' })
+  ).not.toBeInTheDocument()
   expect(screen.getByText('Alice')).toBeInTheDocument()
   expect(api.post).toHaveBeenCalledTimes(1)
+})
+
+test('administrators can reopen a packet to inspect codes and their current redemption status', async () => {
+  const { RedPacketDetailDialog } = await import('../red-packet-detail')
+  useAuthStore.setState((state) => ({
+    auth: { ...state.auth, user: { id: 1, username: 'Admin', role: 10 } },
+  }))
+  const user = userEvent.setup()
+  let redeemed = false
+  vi.mocked(api.get).mockImplementation(async (url) => ({
+    data: {
+      success: true,
+      data: url.endsWith('/codes')
+        ? [
+            {
+              code: '11111111111111111111111111111111',
+              quota: 100,
+              status: 'unclaimed',
+              user_id: null,
+              name: '',
+              claimed_at: 0,
+              redeemed_at: 0,
+              redeemed_by: 0,
+            },
+            {
+              code: '22222222222222222222222222222222',
+              quota: 200,
+              status: redeemed ? 'redeemed' : 'claimed',
+              user_id: 2,
+              name: 'Alice',
+              claimed_at: 1700000000,
+              redeemed_at: redeemed ? 1700000010 : 0,
+              redeemed_by: redeemed ? 2 : 0,
+            },
+          ]
+        : giftPacket,
+    },
+  }))
+  const view = show(
+    <RedPacketDetailDialog id={80} onClose={() => {}} onLocate={() => {}} />
+  )
+  expect(
+    await screen.findByRole('tab', { name: 'Redemption codes' })
+  ).toHaveAttribute('aria-selected', 'true')
+  expect(
+    await screen.findByText('11111111111111111111111111111111')
+  ).toBeInTheDocument()
+  expect(screen.getByText('Unclaimed')).toBeInTheDocument()
+  expect(screen.getByText('Claimed, not redeemed')).toBeInTheDocument()
+  expect(screen.getByText(/Claimed by Alice/)).toBeInTheDocument()
+  await user.click(
+    screen.getAllByRole('button', { name: 'Copy redemption code' })[0]
+  )
+  expect(await navigator.clipboard.readText()).toBe(
+    '11111111111111111111111111111111'
+  )
+  await user.click(screen.getByRole('tab', { name: 'Claim records' }))
+  expect(screen.getByRole('region', { name: 'Claim records' })).toBeVisible()
+  view.unmount()
+  redeemed = true
+  show(<RedPacketDetailDialog id={80} onClose={() => {}} onLocate={() => {}} />)
+  expect(await screen.findByText('Redeemed')).toBeInTheDocument()
+  expect(screen.queryByText('Claimed, not redeemed')).not.toBeInTheDocument()
+})
+
+test('members cannot request the administrator code inventory', async () => {
+  const { RedPacketDetailDialog } = await import('../red-packet-detail')
+  vi.mocked(api.get).mockResolvedValue({
+    data: { success: true, data: giftPacket },
+  })
+  show(<RedPacketDetailDialog id={80} onClose={() => {}} onLocate={() => {}} />)
+  await screen.findByRole('region', { name: 'Claim records' })
+  expect(
+    screen.queryByRole('tab', { name: 'Redemption codes' })
+  ).not.toBeInTheDocument()
+  expect(
+    vi.mocked(api.get).mock.calls.some(([url]) => url.endsWith('/codes'))
+  ).toBe(false)
+})
+
+test('a failed inventory refresh hides cached codes and allows a fresh retry', async () => {
+  const { RedPacketCodes } = await import('../red-packet-codes')
+  const user = userEvent.setup()
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  const code = '11111111111111111111111111111111'
+  vi.mocked(api.get).mockResolvedValue({
+    data: {
+      success: true,
+      data: [
+        {
+          code,
+          quota: 100,
+          status: 'unclaimed',
+          user_id: null,
+          name: '',
+          claimed_at: 0,
+          redeemed_at: 0,
+          redeemed_by: 0,
+        },
+      ],
+    },
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <RedPacketCodes id={80} />
+    </QueryClientProvider>
+  )
+  expect(await screen.findByText(code)).toBeInTheDocument()
+  vi.mocked(api.get).mockRejectedValue(new Error('Forbidden'))
+  await act(async () => {
+    await client.invalidateQueries({ queryKey: ['community-red-packet-codes'] })
+  })
+  await waitFor(() => expect(screen.queryByText(code)).not.toBeInTheDocument())
+  vi.mocked(api.get).mockResolvedValue({ data: { success: true, data: [] } })
+  await user.click(screen.getByRole('button', { name: 'Retry' }))
+  expect(await screen.findByText('No Data')).toBeInTheDocument()
 })
 
 test.each(['expired', 'exhausted'])(

@@ -234,6 +234,7 @@ func SetApiRouter(router *gin.Engine) {
 		communityRoute.DELETE("/events/:id", controller.CommunityAccess, middleware.AdminAuth(), middleware.UserCriticalRateLimit("community-event-cancel"), controller.CancelCommunityEvent)
 		communityRoute.GET("/red-packets", controller.CommunityAccess, controller.ListCommunityRedPackets)
 		communityRoute.GET("/red-packets/:id", controller.CommunityAccess, controller.GetCommunityRedPacket)
+		communityRoute.GET("/red-packets/:id/codes", controller.CommunityAccess, middleware.AdminAuth(), controller.GetCommunityRedPacketCodes)
 		communityRoute.POST("/red-packets", controller.CommunityAccess, middleware.AdminAuth(), middleware.UserCriticalRateLimit("community-red-packet-create"), controller.CreateCommunityRedPacket)
 		communityRoute.POST("/red-packets/:id/claim", controller.CommunityAccess, middleware.UserCriticalRateLimit("community-red-packet-claim"), controller.ClaimCommunityRedPacket)
 		communityRoute.GET("/messages", controller.GetCommunityMessages)

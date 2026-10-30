@@ -11,7 +11,7 @@ import { LoadingState } from '@/components/loading-state'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { useRedemption } from '@/features/wallet/hooks/use-redemption'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toIntlLocale } from '@/i18n/languages'
 import { getUserAvatarFallback } from '@/lib/avatar'
 import { formatNumber, formatQuota } from '@/lib/format'
@@ -19,6 +19,7 @@ import { handleServerError } from '@/lib/handle-server-error'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { claimRedPacket, getRedPacket } from './red-packet-api'
+import { RedPacketCodes } from './red-packet-codes'
 
 export function RedPacketDetailDialog(props: {
   id: number
@@ -28,6 +29,7 @@ export function RedPacketDetailDialog(props: {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const userId = useAuthStore((s) => s.auth.user?.id)
+  const isAdmin = useAuthStore((s) => (s.auth.user?.role || 0) >= 10)
   const client = useQueryClient()
   const locating = useRef(false)
   const key = ['community-red-packet', userId, props.id]
@@ -37,7 +39,6 @@ export function RedPacketDetailDialog(props: {
     gcTime: 0,
     refetchInterval: 5000,
   })
-  const wallet = useRedemption()
   const claim = useMutation({
     mutationFn: () => claimRedPacket(props.id),
     retry: false,
@@ -46,6 +47,11 @@ export function RedPacketDetailDialog(props: {
       await client.cancelQueries({ queryKey: key })
       client.setQueryData(key, packet)
       void client.invalidateQueries({ queryKey: ['community-red-packets'] })
+      void client.invalidateQueries({
+        queryKey: ['community-red-packet-codes'],
+      })
+      void client.invalidateQueries({ queryKey: ['redemptions'] })
+      void client.invalidateQueries({ queryKey: ['checkin-balance'] })
     },
     onError: (error) => {
       handleServerError(error, t('Red packet is unavailable'))
@@ -60,11 +66,55 @@ export function RedPacketDetailDialog(props: {
   if (packet?.deleted) claimLabel = t('Message deleted')
   else if (exhausted) claimLabel = t('All claimed')
   else if (expired) claimLabel = t('Expired')
+  const claimRecords = packet ? (
+    <section className='flex flex-col gap-3' aria-label={t('Claim records')}>
+      <div className='flex flex-wrap items-center justify-between gap-2'>
+        <h3 className='font-medium'>{t('Claim records')}</h3>
+        <span className='text-muted-foreground text-xs'>
+          {t('{{claimed}} / {{total}} claimed', {
+            claimed: formatNumber(packet.claimed, locale),
+            total: formatNumber(packet.total, locale),
+          })}
+        </span>
+      </div>
+      {packet.records.length === 0 && (
+        <EmptyState
+          className='min-h-0 py-4'
+          icon={Gift}
+          title={t('No claims yet')}
+        />
+      )}
+      <ul className='no-scrollbar flex max-h-56 flex-col gap-3 overflow-y-auto'>
+        {packet.records.map((record) => (
+          <li key={record.user_id} className='flex items-center gap-3'>
+            <Avatar className='size-8'>
+              <AvatarFallback>
+                {getUserAvatarFallback(record.name)}
+              </AvatarFallback>
+            </Avatar>
+            <span className='min-w-0 flex-1 text-sm break-words'>
+              {record.name}
+            </span>
+            {record.user_id === userId && (
+              <Badge variant='outline'>{t('You')}</Badge>
+            )}
+            <time
+              className='text-muted-foreground shrink-0 text-xs'
+              dateTime={new Date(record.claimed_at * 1000).toISOString()}
+            >
+              {new Date(record.claimed_at * 1000).toLocaleTimeString(locale)}
+            </time>
+          </li>
+        ))}
+      </ul>
+    </section>
+  ) : null
   return (
     <Dialog
       open
       title={t('Quota red packet')}
-      contentClassName='sm:max-w-md'
+      contentClassName='no-scrollbar sm:max-w-md'
+      scrollAreaClassName='no-scrollbar'
       finalFocus={() => !locating.current}
       onOpenChange={(open) => {
         if (!open) props.onClose()
@@ -88,7 +138,9 @@ export function RedPacketDetailDialog(props: {
           {packet.my_code ? (
             <div className='flex flex-col gap-3'>
               <p className='text-center text-sm'>
-                {t('You received a redemption code')}
+                {packet.redeemed
+                  ? t('Added to balance')
+                  : t('You received a redemption code')}
               </p>
               <p className='text-center text-3xl font-semibold tabular-nums'>
                 {formatQuota(packet.my_quota || 0)}
@@ -106,20 +158,18 @@ export function RedPacketDetailDialog(props: {
                 </Badge>
               ) : (
                 <Button
-                  disabled={wallet.redeeming}
-                  onClick={async () => {
-                    if (await wallet.redeemCode(packet.my_code || '')) {
-                      await detail.refetch()
-                    }
-                  }}
+                  disabled={claim.isPending}
+                  onClick={() => claim.mutate()}
                 >
-                  {wallet.redeeming
+                  {claim.isPending
                     ? t('Processing...')
-                    : t('Redeem to wallet')}
+                    : t('Receive to balance')}
                 </Button>
               )}
               <p className='text-muted-foreground text-center text-xs'>
-                {t('Only you can view and redeem this code.')}
+                {t(
+                  'Red packet claims are credited to your balance automatically.'
+                )}
               </p>
             </div>
           ) : (
@@ -134,52 +184,20 @@ export function RedPacketDetailDialog(props: {
               {claim.isPending ? <LoadingState inline size='sm' /> : claimLabel}
             </Button>
           )}
-          <section
-            className='flex flex-col gap-3'
-            aria-label={t('Claim records')}
-          >
-            <div className='flex flex-wrap items-center justify-between gap-2'>
-              <h3 className='font-medium'>{t('Claim records')}</h3>
-              <span className='text-muted-foreground text-xs'>
-                {t('{{claimed}} / {{total}} claimed', {
-                  claimed: formatNumber(packet.claimed, locale),
-                  total: formatNumber(packet.total, locale),
-                })}
-              </span>
-            </div>
-            {packet.records.length === 0 && (
-              <EmptyState
-                className='min-h-0 py-4'
-                icon={Gift}
-                title={t('No claims yet')}
-              />
-            )}
-            <ul className='flex max-h-56 flex-col gap-3 overflow-y-auto'>
-              {packet.records.map((record) => (
-                <li key={record.user_id} className='flex items-center gap-3'>
-                  <Avatar className='size-8'>
-                    <AvatarFallback>
-                      {getUserAvatarFallback(record.name)}
-                    </AvatarFallback>
-                  </Avatar>
-                  <span className='min-w-0 flex-1 text-sm break-words'>
-                    {record.name}
-                  </span>
-                  {record.user_id === userId && (
-                    <Badge variant='outline'>{t('You')}</Badge>
-                  )}
-                  <time
-                    className='text-muted-foreground shrink-0 text-xs'
-                    dateTime={new Date(record.claimed_at * 1000).toISOString()}
-                  >
-                    {new Date(record.claimed_at * 1000).toLocaleTimeString(
-                      locale
-                    )}
-                  </time>
-                </li>
-              ))}
-            </ul>
-          </section>
+          {isAdmin ? (
+            <Tabs defaultValue='codes'>
+              <TabsList className='w-full' aria-label={t('Quota red packet')}>
+                <TabsTrigger value='codes'>{t('Redemption codes')}</TabsTrigger>
+                <TabsTrigger value='claims'>{t('Claim records')}</TabsTrigger>
+              </TabsList>
+              <TabsContent value='codes'>
+                <RedPacketCodes id={props.id} />
+              </TabsContent>
+              <TabsContent value='claims'>{claimRecords}</TabsContent>
+            </Tabs>
+          ) : (
+            claimRecords
+          )}
           <p className='text-muted-foreground text-xs'>
             {t('Available until {{time}}', {
               time: new Date(packet.expires_at * 1000).toLocaleString(locale),

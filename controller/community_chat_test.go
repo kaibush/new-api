@@ -170,7 +170,8 @@ func TestCommunityEvents(t *testing.T) {
 
 func TestCommunityRedPacketSessionAuthorization(t *testing.T) {
 	user, _ := setupSecurityEnrollmentTest(t)
-	require.NoError(t, model.DB.AutoMigrate(&model.CommunityConfig{}, &model.CommunityMessage{}, &model.CommunityProfile{}, &model.CommunityRedPacket{}, &model.CommunityRedPacketItem{}, &model.Redemption{}))
+	require.NoError(t, model.LOG_DB.AutoMigrate(&model.Log{}))
+	require.NoError(t, model.DB.AutoMigrate(&model.CommunityConfig{}, &model.CommunityMessage{}, &model.CommunityProfile{}, &model.CommunityRedPacket{}, &model.CommunityRedPacketItem{}, &model.Redemption{}, &model.TopUp{}))
 	require.NoError(t, model.SaveCommunityConfig(model.CommunityConfig{Enabled: true}))
 	member, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "packet-test")
 	require.NoError(t, err)
@@ -182,6 +183,7 @@ func TestCommunityRedPacketSessionAuthorization(t *testing.T) {
 	routes := router.Group("/api/community", middleware.UserAuth(), middleware.DisableCache(), CommunityAccess)
 	routes.POST("/red-packets", middleware.AdminAuth(), CreateCommunityRedPacket)
 	routes.GET("/red-packets/:id", GetCommunityRedPacket)
+	routes.GET("/red-packets/:id/codes", middleware.AdminAuth(), GetCommunityRedPacketCodes)
 	routes.POST("/red-packets/:id/claim", ClaimCommunityRedPacket)
 	code := model.Redemption{Key: "abababababababababababababababab", Name: "gift", Quota: 100}
 	require.NoError(t, code.Insert())
@@ -209,6 +211,12 @@ func TestCommunityRedPacketSessionAuthorization(t *testing.T) {
 		status              int
 		hasCode             bool
 	}{
+		{path + "/codes", http.MethodGet, "", 401, false},
+		{path + "/codes", http.MethodGet, member.AccessToken, 403, false},
+		{path + "/codes?user_id=" + strconv.Itoa(admin.Id), http.MethodGet, member.AccessToken, 403, false},
+		{path + "/codes", http.MethodGet, adminSession.AccessToken, 200, true},
+		{"/api/community/red-packets/0/codes", http.MethodGet, adminSession.AccessToken, 400, false},
+		{"/api/community/red-packets/99999/codes", http.MethodGet, adminSession.AccessToken, 404, false},
 		{path + "/claim", http.MethodPost, "", 401, false},
 		{path, http.MethodGet, member.AccessToken, 200, false},
 		{path + "/claim", http.MethodPost, member.AccessToken, 200, true},
@@ -237,6 +245,27 @@ func TestCommunityRedPacketSessionAuthorization(t *testing.T) {
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, req)
 	assert.Equal(t, 401, response.Code)
+	for _, changes := range []map[string]any{
+		{"role": common.RoleCommonUser},
+		{"role": common.RoleAdminUser, "status": common.UserStatusDisabled},
+	} {
+		require.NoError(t, model.DB.Model(&admin).Updates(changes).Error)
+		req = httptest.NewRequest(http.MethodGet, path+"/codes", nil)
+		req.Header.Set("Authorization", "Bearer "+adminSession.AccessToken)
+		response = httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		assert.NotEqual(t, 200, response.Code)
+		assert.NotContains(t, response.Body.String(), code.Key)
+	}
+	require.NoError(t, model.DB.Model(&admin).Updates(map[string]any{"role": common.RoleAdminUser, "status": common.UserStatusEnabled}).Error)
+	_, err = model.RevokeAllUserSessions(admin.Id, "packet-test")
+	require.NoError(t, err)
+	req = httptest.NewRequest(http.MethodGet, path+"/codes", nil)
+	req.Header.Set("Authorization", "Bearer "+adminSession.AccessToken)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+	assert.Equal(t, 401, response.Code)
+	assert.NotContains(t, response.Body.String(), code.Key)
 	require.NoError(t, model.SaveCommunityConfig(model.CommunityConfig{Enabled: false}))
 	req = httptest.NewRequest(http.MethodPost, path+"/claim", nil)
 	req.Header.Set("Authorization", "Bearer "+member.AccessToken)

@@ -154,51 +154,7 @@ func Redeem(key string, userId int) (quota int, err error) {
 		if err != nil {
 			return errors.New("无效的兑换码")
 		}
-		if redemption.Status != common.RedemptionCodeStatusEnabled {
-			return errors.New("该兑换码已被使用")
-		}
-		if redemption.ExpiredTime != 0 && redemption.ExpiredTime < common.GetTimestamp() {
-			return errors.New("该兑换码已过期")
-		}
-		if redemption.RedPacketID != nil {
-			var item CommunityRedPacketItem
-			if err := lockForUpdate(tx).Where("redemption_id = ?", redemption.Id).First(&item).Error; err != nil {
-				return err
-			}
-			if item.UserID != nil && *item.UserID != userId {
-				return errors.New("red packet code belongs to another user")
-			}
-			if item.UserID == nil {
-				var packet CommunityRedPacket
-				if err := tx.First(&packet, *redemption.RedPacketID).Error; err != nil {
-					return err
-				}
-				if packet.ExpiresAt > common.GetTimestamp() {
-					return errors.New("red packet code has not been claimed")
-				}
-			}
-		}
-		redemption.RedeemedTime = common.GetTimestamp()
-		if err := validateMonthlyTopUpQuota(tx, userId, redemption.Quota, true, redemption.RedeemedTime); err != nil {
-			return err
-		}
-		// Compare-and-swap on status: only the transaction that flips
-		// enabled -> used may credit quota, so a concurrent redeem of the
-		// same code loses here even without a row lock (e.g. on SQLite).
-		result := tx.Model(&Redemption{}).
-			Where("id = ? AND status = ?", redemption.Id, common.RedemptionCodeStatusEnabled).
-			Updates(map[string]any{
-				"redeemed_time": redemption.RedeemedTime,
-				"status":        common.RedemptionCodeStatusUsed,
-				"used_user_id":  userId,
-			})
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			return errors.New("该兑换码已被使用")
-		}
-		return creditTopUpQuota(tx, userId, redemption.Quota, nil)
+		return redeemCodeToWallet(tx, redemption, userId)
 	})
 	if err != nil {
 		common.SysError("redemption failed: " + err.Error())
@@ -207,6 +163,56 @@ func Redeem(key string, userId int) (quota int, err error) {
 	syncCreditUserQuotaCache(userId, redemption.Quota, "redemption")
 	RecordLog(userId, LogTypeTopup, fmt.Sprintf("通过兑换码充值 %s，兑换码ID %d", logger.LogQuota(redemption.Quota), redemption.Id))
 	return redemption.Quota, nil
+}
+
+// redeemCodeToWallet requires the wallet and redemption row locks. The caller
+// commits code consumption and wallet credit together, including packet claims.
+func redeemCodeToWallet(tx *gorm.DB, redemption *Redemption, userId int) error {
+	if redemption.Status != common.RedemptionCodeStatusEnabled {
+		return errors.New("该兑换码已被使用")
+	}
+	if redemption.ExpiredTime != 0 && redemption.ExpiredTime < common.GetTimestamp() {
+		return errors.New("该兑换码已过期")
+	}
+	if redemption.RedPacketID != nil {
+		var item CommunityRedPacketItem
+		if err := lockForUpdate(tx).Where("redemption_id = ?", redemption.Id).First(&item).Error; err != nil {
+			return err
+		}
+		if item.UserID != nil && *item.UserID != userId {
+			return errors.New("red packet code belongs to another user")
+		}
+		if item.UserID == nil {
+			var packet CommunityRedPacket
+			if err := tx.First(&packet, *redemption.RedPacketID).Error; err != nil {
+				return err
+			}
+			if packet.ExpiresAt > common.GetTimestamp() {
+				return errors.New("red packet code has not been claimed")
+			}
+		}
+	}
+	redemption.RedeemedTime = common.GetTimestamp()
+	if err := validateMonthlyTopUpQuota(tx, userId, redemption.Quota, true, redemption.RedeemedTime); err != nil {
+		return err
+	}
+	// Compare-and-swap on status: only the transaction that flips
+	// enabled -> used may credit quota, so a concurrent redeem of the
+	// same code loses here even without a row lock (e.g. on SQLite).
+	result := tx.Model(&Redemption{}).
+		Where("id = ? AND status = ?", redemption.Id, common.RedemptionCodeStatusEnabled).
+		Updates(map[string]any{
+			"redeemed_time": redemption.RedeemedTime,
+			"status":        common.RedemptionCodeStatusUsed,
+			"used_user_id":  userId,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("该兑换码已被使用")
+	}
+	return creditTopUpQuota(tx, userId, redemption.Quota, nil)
 }
 
 func (redemption *Redemption) Insert() error {

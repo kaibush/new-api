@@ -21,6 +21,33 @@ export type RedPacketDetail = RedPacket & {
   redeemed: boolean
 }
 
+export type RedPacketCode = {
+  code: string
+  quota: number
+  status:
+    | 'unclaimed'
+    | 'claimed'
+    | 'redeemed'
+    | 'disabled'
+    | 'expired'
+    | 'deleted'
+  user_id: number | null
+  name: string
+  claimed_at: number
+  redeemed_at: number
+  redeemed_by: number
+}
+
+export async function getRedPacketCodes(id: number, signal?: AbortSignal) {
+  const res = await api.get<{ success: boolean; data: RedPacketCode[] }>(
+    `/api/community/red-packets/${id}/codes`,
+    { signal }
+  )
+  const codes = requireServerSuccess(res.data).data
+  if (!Array.isArray(codes)) throw new Error('Could not load redemption codes')
+  return codes
+}
+
 export async function listRedPackets(beforeId = 0, signal?: AbortSignal) {
   const res = await api.get<{ success: boolean; data: RedPacket[] }>(
     '/api/community/red-packets',

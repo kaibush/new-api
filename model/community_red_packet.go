@@ -2,11 +2,13 @@ package model
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/logger"
 	"gorm.io/gorm"
 )
 
@@ -42,6 +44,88 @@ type CommunityRedPacketDetail struct {
 	MyCode   string                   `json:"my_code,omitempty"`
 	MyQuota  int                      `json:"my_quota,omitempty"`
 	Redeemed bool                     `json:"redeemed"`
+}
+
+// This inventory is only returned by the administrator endpoint. Public packet
+// details must continue to expose only the current recipient's code.
+type CommunityRedPacketCode struct {
+	Code       string `json:"code"`
+	Quota      int    `json:"quota"`
+	Status     string `json:"status"`
+	UserID     *int   `json:"user_id"`
+	Name       string `json:"name"`
+	ClaimedAt  int64  `json:"claimed_at"`
+	RedeemedAt int64  `json:"redeemed_at"`
+	RedeemedBy int    `json:"redeemed_by"`
+}
+
+func GetCommunityRedPacketCodes(id int64, viewerID int) ([]CommunityRedPacketCode, error) {
+	if id <= 0 || viewerID <= 0 {
+		return nil, ErrRedPacketUnavailable
+	}
+	codes := []CommunityRedPacketCode{}
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		// Check the current account state, including role revocation, before
+		// reading any codes. Do not rely on a role supplied by the client.
+		var viewer User
+		if err := tx.Select("id", "role", "status").First(&viewer, viewerID).Error; err != nil {
+			return err
+		}
+		if viewer.Role < common.RoleAdminUser || viewer.Status != common.UserStatusEnabled {
+			return ErrRedPacketUnavailable
+		}
+		var packet CommunityRedPacket
+		if err := tx.First(&packet, id).Error; err != nil {
+			return err
+		}
+		var items []CommunityRedPacketItem
+		if err := tx.Where("packet_id = ?", id).Order("id").Find(&items).Error; err != nil {
+			return err
+		}
+		ids := make([]int, 0, len(items))
+		for _, item := range items {
+			ids = append(ids, item.RedemptionID)
+		}
+		var redemptions []Redemption
+		// Preserve the history of codes soft-deleted from redemption management.
+		if err := tx.Unscoped().Where("id IN ?", ids).Find(&redemptions).Error; err != nil {
+			return err
+		}
+		byID := make(map[int]Redemption, len(redemptions))
+		for _, redemption := range redemptions {
+			byID[redemption.Id] = redemption
+		}
+		now := time.Now().Unix()
+		for _, item := range items {
+			redemption, ok := byID[item.RedemptionID]
+			if !ok {
+				return ErrRedPacketUnavailable
+			}
+			status := "unclaimed"
+			switch {
+			case redemption.Status == common.RedemptionCodeStatusUsed:
+				status = "redeemed"
+			case redemption.DeletedAt.Valid:
+				status = "deleted"
+			case redemption.Status != common.RedemptionCodeStatusEnabled:
+				status = "disabled"
+			case redemption.ExpiredTime != 0 && redemption.ExpiredTime < now:
+				status = "expired"
+			case item.UserID != nil:
+				status = "claimed"
+			}
+			codes = append(codes, CommunityRedPacketCode{
+				Code: redemption.Key, Quota: redemption.Quota, Status: status,
+				UserID: item.UserID, Name: item.Name, ClaimedAt: item.ClaimedAt,
+				RedeemedAt: redemption.RedeemedTime, RedeemedBy: redemption.UsedUserId,
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return codes, nil
 }
 
 func CreateCommunityRedPacket(userID int, greeting string, codes []string) (CommunityRedPacket, error) {
@@ -202,7 +286,15 @@ func ClaimCommunityRedPacket(id int64, userID int) error {
 	if userID <= 0 {
 		return ErrRedPacketUnavailable
 	}
-	return DB.Transaction(func(tx *gorm.DB) error {
+	var credited Redemption
+	err := userWalletTransaction(userID, func(tx *gorm.DB) error {
+		var user User
+		if err := lockForUpdate(tx).First(&user, userID).Error; err != nil {
+			return err
+		}
+		if user.Status != common.UserStatusEnabled {
+			return ErrRedPacketUnavailable
+		}
 		if err := tx.Model(&CommunityRedPacket{}).Where("id = ?", id).UpdateColumn("claimed", gorm.Expr("claimed")).Error; err != nil {
 			return err
 		}
@@ -213,20 +305,29 @@ func ClaimCommunityRedPacket(id int64, userID int) error {
 		var previous CommunityRedPacketItem
 		err := tx.Where("packet_id = ? AND user_id = ?", id, userID).First(&previous).Error
 		if err == nil {
+			// Repeated claims never credit twice. Older claims that have not yet
+			// been redeemed use the same credit path, even after packet expiry.
+			var code Redemption
+			if err := lockForUpdate(tx.Unscoped()).First(&code, previous.RedemptionID).Error; err != nil {
+				return err
+			}
+			if code.Status == common.RedemptionCodeStatusUsed && code.UsedUserId == userID {
+				return nil
+			}
+			if code.DeletedAt.Valid {
+				return ErrRedPacketUnavailable
+			}
+			if err := redeemCodeToWallet(tx, &code, userID); err != nil {
+				return err
+			}
+			credited = code
 			return nil
-		} // Retries return the original claim, even after expiry.
+		}
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
 		now := time.Now().Unix()
 		if packet.ExpiresAt <= now || packet.Claimed >= packet.Total {
-			return ErrRedPacketUnavailable
-		}
-		var user User
-		if err := tx.First(&user, userID).Error; err != nil {
-			return err
-		}
-		if user.Status != common.UserStatusEnabled {
 			return ErrRedPacketUnavailable
 		}
 		var message CommunityMessage
@@ -269,6 +370,18 @@ func ClaimCommunityRedPacket(id int64, userID int) error {
 		if result.RowsAffected != 1 {
 			return ErrRedPacketUnavailable
 		}
+		if err := redeemCodeToWallet(tx, &code, userID); err != nil {
+			return err
+		}
+		credited = code
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if credited.Id != 0 {
+		syncCreditUserQuotaCache(userID, credited.Quota, "red packet")
+		RecordLog(userID, LogTypeTopup, fmt.Sprintf("通过红包充值 %s，红包ID %d，兑换码ID %d", logger.LogQuota(credited.Quota), id, credited.Id))
+	}
+	return nil
 }

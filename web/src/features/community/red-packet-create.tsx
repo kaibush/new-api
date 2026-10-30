@@ -155,7 +155,7 @@ export function RedPacketCreate(props: {
           </p>
           <p className='text-muted-foreground text-xs'>
             {t(
-              'Codes are reserved when sent. Recipients redeem them in their wallet. Unclaimed codes can be redeemed normally after 24 hours.'
+              'Codes are reserved when sent. Claims are credited to the recipient’s balance automatically. Unclaimed codes can be redeemed normally after 24 hours.'
             )}
           </p>
         </FieldGroup>
