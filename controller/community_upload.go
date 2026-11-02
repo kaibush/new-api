@@ -86,19 +86,6 @@ func sanitizeCommunityUpload(data []byte, extension string, visual bool) ([]byte
 		return nil, "", "", invalid
 	}
 	if !visual {
-		detected := http.DetectContentType(data)
-		valid := false
-		switch extension {
-		case ".txt", ".csv":
-			valid = utf8.Valid(data) && !bytes.Contains(data, []byte{0})
-		case ".pdf":
-			valid = strings.HasPrefix(detected, "application/pdf")
-		case ".zip", ".docx", ".xlsx", ".pptx":
-			valid = bytes.HasPrefix(data, []byte{'P', 'K', 3, 4})
-		}
-		if !valid {
-			return nil, "", "", invalid
-		}
 		return data, "application/octet-stream", extension, nil
 	}
 	if len(data) > 5<<20 {

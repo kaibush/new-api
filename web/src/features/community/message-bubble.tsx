@@ -2,9 +2,11 @@ import { useTranslation } from 'react-i18next'
 
 import { MessageContent } from '@/components/ai-elements/message'
 import { DataTableRowActionMenu } from '@/components/data-table'
+import { Dialog } from '@/components/dialog'
 import { LoadingState } from '@/components/loading-state'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { toIntlLocale } from '@/i18n/languages'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
@@ -155,23 +157,36 @@ export function ChatMessageBubble(props: {
                 )}
               {message.url &&
                 (message.kind === 'image' || message.kind === 'sticker') && (
-                  <a
-                    className='max-w-full'
-                    href={message.url}
-                    target='_blank'
-                    rel='noopener noreferrer'
+                  <Dialog
+                    title={t('Image Preview')}
+                    description={message.filename}
+                    contentClassName='sm:max-w-5xl'
+                    trigger={
+                      <Button
+                        type='button'
+                        variant='ghost'
+                        className='h-auto max-w-full cursor-zoom-in p-0'
+                        aria-label={message.filename || t('Image Preview')}
+                      >
+                        <img
+                          src={message.url}
+                          alt={message.filename}
+                          loading='lazy'
+                          className={
+                            message.kind === 'sticker'
+                              ? 'max-h-40 max-w-[min(10rem,100%)] rounded-md object-contain'
+                              : 'max-h-80 max-w-full rounded-md object-contain'
+                          }
+                        />
+                      </Button>
+                    }
                   >
                     <img
                       src={message.url}
                       alt={message.filename}
-                      loading='lazy'
-                      className={
-                        message.kind === 'sticker'
-                          ? 'max-h-40 max-w-[min(10rem,100%)] rounded-md object-contain'
-                          : 'max-h-80 max-w-full rounded-md object-contain'
-                      }
+                      className='max-h-[75dvh] w-full rounded-md object-contain'
                     />
-                  </a>
+                  </Dialog>
                 )}
               {message.url && message.kind === 'file' && (
                 <a

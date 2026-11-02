@@ -20,6 +20,7 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { CommunityChat } from '..'
 import { CommunityBotFeedback } from '../bot-feedback'
+import { ChatMessageBubble } from '../message-bubble'
 import { CommunityProvider } from '../provider'
 import { CommunitySettings } from '../settings'
 
@@ -3052,3 +3053,66 @@ test('the compact board entry opens the public content without replacing the com
     screen.queryByRole('button', { name: 'Send a red packet' })
   ).not.toBeInTheDocument()
 })
+
+test('arbitrary file formats can be staged as attachments', async () => {
+  const user = userEvent.setup()
+  show(<CommunityChat />)
+  await user.click(await screen.findByRole('button', { name: 'File' }))
+  await user.upload(
+    screen.getByLabelText('Upload attachment'),
+    new File(['binary content'], 'archive.7z', {
+      type: 'application/x-7z-compressed',
+    })
+  )
+  expect(await screen.findByText('archive.7z')).toBeInTheDocument()
+  expect(api.post).not.toHaveBeenCalled()
+})
+
+test.each(['image', 'sticker'] as const)(
+  '%s opens in a dialog and Escape returns focus to the thumbnail',
+  async (kind) => {
+    const user = userEvent.setup()
+    show(
+      <ChatMessageBubble
+        message={{
+          id: 901,
+          user_id: 1,
+          name: 'Alice',
+          avatar: '',
+          text: '',
+          kind,
+          url: 'https://files.example.com/photo.png',
+          filename: 'photo.png',
+          size: 123,
+          created_at: 1700000000,
+          deleted: false,
+        }}
+      />
+    )
+    const thumbnail = screen.getByRole('button', { name: 'photo.png' })
+    thumbnail.focus()
+    await user.keyboard('{Enter}')
+    const dialog = await screen.findByRole('dialog', { name: 'Image Preview' })
+    expect(within(dialog).getByAltText('photo.png')).toHaveAttribute(
+      'src',
+      'https://files.example.com/photo.png'
+    )
+    expect(
+      screen.queryByRole('link', { name: 'photo.png' })
+    ).not.toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    )
+    expect(thumbnail).toHaveFocus()
+    await user.click(thumbnail)
+    await user.click(
+      within(await screen.findByRole('dialog')).getByRole('button', {
+        name: 'Close',
+      })
+    )
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    )
+  }
+)

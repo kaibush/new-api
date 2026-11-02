@@ -251,9 +251,7 @@ export function ChatComposer(props: {
               kind.current = item
               if (input.current) {
                 input.current.accept =
-                  item === 'image'
-                    ? '.png,.jpg,.jpeg,.webp,.gif'
-                    : '.pdf,.txt,.csv,.zip,.docx,.xlsx,.pptx'
+                  item === 'image' ? '.png,.jpg,.jpeg,.webp,.gif' : ''
                 input.current.click()
               }
             }}

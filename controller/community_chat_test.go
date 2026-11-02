@@ -428,13 +428,29 @@ func TestCommunityUploadSanitization(t *testing.T) {
 	}{
 		{"mismatched extension", ".jpg", original.Bytes(), true},
 		{"active SVG", ".svg", []byte(`<svg onload="bad()"/>`), true},
-		{"HTML download", ".html", []byte("<html>bad</html>"), false},
-		{"executable renamed PDF", ".pdf", []byte("MZbad"), false},
 		{"oversized", ".txt", bytes.Repeat([]byte("x"), (10<<20)+1), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, _, err := sanitizeCommunityUpload(tc.data, tc.ext, tc.visual)
 			assert.Error(t, err)
+		})
+	}
+	for _, tc := range []struct {
+		name, ext string
+		data      []byte
+	}{
+		{"HTML download", ".html", []byte("<html>example</html>")},
+		{"arbitrary binary", ".bin", []byte{0, 1, 255}},
+		{"unrecognized extension", ".custom", []byte("content")},
+		{"no extension", "", []byte("content")},
+		{"executable renamed PDF", ".pdf", []byte("MZdata")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data, contentType, ext, err := sanitizeCommunityUpload(tc.data, tc.ext, false)
+			require.NoError(t, err)
+			assert.Equal(t, tc.data, data)
+			assert.Equal(t, "application/octet-stream", contentType)
+			assert.Equal(t, tc.ext, ext)
 		})
 	}
 	_, mime, _, err = sanitizeCommunityUpload([]byte("hello"), ".txt", false)
