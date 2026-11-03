@@ -21,7 +21,8 @@ import { getRouteApi } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
 import { Skeleton } from '@/components/ui/skeleton'
-import { formatLogQuota } from '@/lib/format'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatLogQuota, formatNumber } from '@/lib/format'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
@@ -49,12 +50,17 @@ function StatBadge(props: {
 }
 
 export function CommonLogsStats() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const { isAdminView: isAdmin } = useLogsViewScope()
   const searchParams = route.useSearch()
   const { sensitiveVisible } = useUsageLogsContext()
 
-  const { data: stats, isLoading } = useQuery({
+  const {
+    data: stats,
+    isLoading,
+    isError,
+  } = useQuery({
     queryKey: ['usage-logs-stats', isAdmin, searchParams],
     queryFn: async () => {
       const params = buildApiParams({
@@ -73,16 +79,24 @@ export function CommonLogsStats() {
         ? result.data || DEFAULT_LOG_STATS
         : DEFAULT_LOG_STATS
     },
-    placeholderData: (previousData) => previousData,
   })
 
   if (isLoading) {
     return (
-      <div className='flex items-center gap-2'>
+      <div className='flex flex-wrap items-center gap-2' aria-busy='true'>
         <Skeleton className='h-7 w-[150px] rounded-md' />
         <Skeleton className='h-7 w-[100px] rounded-md' />
         <Skeleton className='h-7 w-[120px] rounded-md' />
+        <Skeleton className='h-7 w-[150px] rounded-md' />
+        <Skeleton className='h-7 w-[150px] rounded-md' />
+        <Skeleton className='h-7 w-[150px] rounded-md' />
       </div>
+    )
+  }
+
+  if (isError) {
+    return (
+      <span className='text-destructive text-xs'>{t('Failed to load')}</span>
     )
   }
 
@@ -93,6 +107,27 @@ export function CommonLogsStats() {
         value={sensitiveVisible ? formatLogQuota(stats?.quota || 0) : '••••'}
         accent='bg-sky-500/70'
       />
+      <div
+        role='group'
+        aria-label={t('Token usage')}
+        className='flex flex-wrap items-center gap-2'
+      >
+        <StatBadge
+          label={t('Total Tokens')}
+          value={formatNumber(stats?.total_tokens ?? 0, locale)}
+          accent='bg-primary/70'
+        />
+        <StatBadge
+          label={t('Input Tokens')}
+          value={formatNumber(stats?.prompt_tokens ?? 0, locale)}
+          accent='bg-primary/50'
+        />
+        <StatBadge
+          label={t('Output Tokens')}
+          value={formatNumber(stats?.completion_tokens ?? 0, locale)}
+          accent='bg-primary/35'
+        />
+      </div>
       <StatBadge
         label={t('RPM')}
         value={stats?.rpm || 0}
