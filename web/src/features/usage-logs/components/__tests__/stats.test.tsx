@@ -178,3 +178,40 @@ it('shows a load error instead of reporting zero usage when the stats request fa
   expect(await screen.findByText('Failed to load')).toBeVisible()
   expect(screen.queryByText('0')).not.toBeInTheDocument()
 })
+
+it('keeps billion-token totals in a two-column mobile layout with an inline rate row', async () => {
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        quota: 918293500,
+        rpm: 3,
+        tpm: 523859,
+        prompt_tokens: 4803417113,
+        completion_tokens: 52147694,
+        total_tokens: 4855564807,
+      },
+    },
+  })
+  await renderStats()
+  const total = await screen.findByText('4,855,564,807')
+  expect(total).toBeVisible()
+  expect(screen.getByText('4,803,417,113')).toBeVisible()
+  expect(screen.getByText('52,147,694')).toBeVisible()
+  expect(screen.getByRole('group', { name: 'Usage' })).toHaveClass(
+    'grid',
+    'grid-cols-2',
+    'sm:flex'
+  )
+  expect(total).toHaveClass('break-all')
+  expect(screen.getByText('523,859')).toBeVisible()
+  expect(screen.getByText('RPM').parentElement).toHaveClass('flex-row')
+})
+
+it('keeps loading statistics in the same two-column mobile grid', async () => {
+  vi.spyOn(api, 'get').mockImplementation(() => new Promise(() => {}))
+  await renderStats()
+  const loading = await screen.findByRole('group', { name: 'Usage' })
+  expect(loading).toHaveAttribute('aria-busy', 'true')
+  expect(loading).toHaveClass('grid', 'grid-cols-2', 'sm:flex')
+})
