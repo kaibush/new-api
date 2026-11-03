@@ -276,6 +276,9 @@ export interface LogOtherData {
  * Log statistics data
  */
 export interface LogStatistics {
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
   quota: number
   rpm: number
   tpm: number
