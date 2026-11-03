@@ -37,12 +37,30 @@ function StatBadge(props: {
   label: string
   value: string | number
   accent: string
+  inlineOnMobile?: boolean
 }) {
   return (
-    <span className='border-border/60 bg-muted/25 inline-flex h-7 items-center gap-2 rounded-md border px-2.5 text-xs shadow-xs'>
-      <span className={cn('h-3.5 w-0.5 rounded-full', props.accent)} />
-      <span className='text-muted-foreground'>{props.label}</span>
-      <span className='text-foreground/85 font-mono font-semibold tabular-nums'>
+    <span
+      className={cn(
+        'flex min-w-0 text-xs sm:inline-flex sm:h-7 sm:flex-row sm:items-center sm:gap-2 sm:rounded-md sm:border sm:border-border/60 sm:bg-muted/25 sm:px-2.5 sm:shadow-xs',
+        props.inlineOnMobile
+          ? 'flex-row items-center gap-1.5'
+          : 'flex-col gap-0.5'
+      )}
+    >
+      <span
+        aria-hidden='true'
+        className={cn('hidden h-3.5 w-0.5 rounded-full sm:block', props.accent)}
+      />
+      <span className='text-muted-foreground text-[11px] leading-4 sm:text-xs sm:leading-normal'>
+        {props.label}
+      </span>
+      <span
+        className={cn(
+          'text-foreground/85 min-w-0 font-mono font-semibold break-all tabular-nums sm:text-xs sm:leading-normal sm:break-normal',
+          props.inlineOnMobile ? 'text-xs leading-4' : 'text-sm leading-5'
+        )}
+      >
         {props.value}
       </span>
     </span>
@@ -83,13 +101,20 @@ export function CommonLogsStats() {
 
   if (isLoading) {
     return (
-      <div className='flex flex-wrap items-center gap-2' aria-busy='true'>
-        <Skeleton className='h-7 w-[150px] rounded-md' />
-        <Skeleton className='h-7 w-[100px] rounded-md' />
-        <Skeleton className='h-7 w-[120px] rounded-md' />
-        <Skeleton className='h-7 w-[150px] rounded-md' />
-        <Skeleton className='h-7 w-[150px] rounded-md' />
-        <Skeleton className='h-7 w-[150px] rounded-md' />
+      <div
+        role='group'
+        aria-label={t('Usage')}
+        className='grid w-full min-w-0 grid-cols-2 gap-x-4 gap-y-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:gap-2'
+        aria-busy='true'
+      >
+        <Skeleton className='h-9 w-full rounded-md sm:h-7 sm:w-[150px]' />
+        <Skeleton className='h-9 w-full rounded-md sm:h-7 sm:w-[150px]' />
+        <Skeleton className='h-9 w-full rounded-md sm:h-7 sm:w-[150px]' />
+        <Skeleton className='h-9 w-full rounded-md sm:h-7 sm:w-[150px]' />
+        <div className='col-span-2 flex items-center gap-4 sm:contents'>
+          <Skeleton className='h-4 w-16 rounded-md sm:h-7 sm:w-[100px]' />
+          <Skeleton className='h-4 w-24 rounded-md sm:h-7 sm:w-[120px]' />
+        </div>
       </div>
     )
   }
@@ -101,7 +126,11 @@ export function CommonLogsStats() {
   }
 
   return (
-    <div className='flex flex-wrap items-center gap-2'>
+    <div
+      role='group'
+      aria-label={t('Usage')}
+      className='grid w-full min-w-0 grid-cols-2 gap-x-4 gap-y-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:gap-2'
+    >
       <StatBadge
         label={t('Usage')}
         value={sensitiveVisible ? formatLogQuota(stats?.quota || 0) : '••••'}
@@ -110,7 +139,7 @@ export function CommonLogsStats() {
       <div
         role='group'
         aria-label={t('Token usage')}
-        className='flex flex-wrap items-center gap-2'
+        className='contents sm:flex sm:flex-wrap sm:items-center sm:gap-2'
       >
         <StatBadge
           label={t('Total Tokens')}
@@ -128,16 +157,20 @@ export function CommonLogsStats() {
           accent='bg-primary/35'
         />
       </div>
-      <StatBadge
-        label={t('RPM')}
-        value={stats?.rpm || 0}
-        accent='bg-rose-500/65'
-      />
-      <StatBadge
-        label={t('TPM')}
-        value={stats?.tpm || 0}
-        accent='bg-slate-400/70'
-      />
+      <div className='col-span-2 flex items-center gap-4 sm:contents'>
+        <StatBadge
+          label={t('RPM')}
+          value={formatNumber(stats?.rpm ?? 0, locale)}
+          accent='bg-rose-500/65'
+          inlineOnMobile
+        />
+        <StatBadge
+          label={t('TPM')}
+          value={formatNumber(stats?.tpm ?? 0, locale)}
+          accent='bg-slate-400/70'
+          inlineOnMobile
+        />
+      </div>
     </div>
   )
 }
