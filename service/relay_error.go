@@ -86,6 +86,21 @@ func ProcessChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		other.SetPublic("error_type", err.GetErrorType())
 		other.SetPublic("error_code", err.GetErrorCode())
 		other.SetPublic("status_code", err.StatusCode)
+		publicMessage := err.MaskSensitiveErrorWithStatusCode()
+		if policy := PublicErrorPolicy(); policy.Enabled() {
+			body, _ := common.Marshal(gin.H{"error": err.ToOpenAIError()})
+			input := ErrorFilterInput(c, err.StatusCode, err.Error(), "", "")
+			input.ChannelID = channelError.ChannelId
+			_, filtered := RewritePublicError(policy, input, body, true)
+			if filtered.Action != "preserve" {
+				other.SetAdmin("original_error", publicMessage)
+				other.SetAdmin("original_error_type", err.GetErrorType())
+				other.SetAdmin("original_error_code", err.GetErrorCode())
+				publicMessage = filtered.Message
+				other.SetPublic("error_type", filtered.Type)
+				other.SetPublic("error_code", filtered.Code)
+			}
+		}
 		AppendRelayLogAdminInfo(c, relayInfo, other)
 		AppendResponseModelLogInfo(relayInfo, other)
 		AppendTaskPluginContextAuditInfo(c, other)
@@ -94,6 +109,6 @@ func ProcessChannelError(c *gin.Context, channelError types.ChannelError, err *t
 			startTime = time.Now()
 		}
 		useTimeSeconds := int(time.Since(startTime).Seconds())
-		model.RecordErrorLog(c, userId, channelError.ChannelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
+		model.RecordErrorLog(c, userId, channelError.ChannelId, modelName, tokenName, publicMessage, tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
 	}
 }

@@ -213,6 +213,16 @@ func UpdateOption(c *gin.Context) {
 	default:
 		option.Value = fmt.Sprintf("%v", option.Value)
 	}
+	if strings.HasPrefix(option.Key, "error_filter.") {
+		if option.Key != setting.ErrorFilterOptionKey {
+			common.ApiErrorMsg(c, "Unknown error filter option")
+			return
+		}
+		if _, _, err := setting.ParseErrorFilter(option.Value.(string)); err != nil {
+			common.ApiErrorMsg(c, err.Error())
+			return
+		}
+	}
 	if option.Key == "GrokIQBaseURL" {
 		if err := validateGrokIQURL(option.Value.(string)); err != nil {
 			common.ApiErrorMsg(c, err.Error())

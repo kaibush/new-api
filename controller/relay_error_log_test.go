@@ -2,15 +2,20 @@ package controller
 
 import (
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/errorfilter"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting"
+	settingconfig "github.com/QuantumNous/new-api/setting/config"
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -96,4 +101,63 @@ func TestProcessChannelErrorUsesSnapshotWithoutLeakingChannelMetadata(t *testing
 	for _, key := range []string{"channel_id", "channel_name", "channel_type"} {
 		assert.NotContains(t, userOther, key)
 	}
+
+	t.Run("saved error policy protects user logs and keeps administrator diagnostics", func(t *testing.T) {
+		require.NoError(t, database.AutoMigrate(&model.Option{}))
+		previousConfig := setting.ErrorFilterConfig()
+		common.OptionMapRWMutex.Lock()
+		previousOptions := common.OptionMap
+		common.OptionMap = maps.Clone(previousOptions)
+		if common.OptionMap == nil {
+			common.OptionMap = make(map[string]string)
+		}
+		common.OptionMapRWMutex.Unlock()
+		t.Cleanup(func() {
+			common.OptionMapRWMutex.Lock()
+			defer common.OptionMapRWMutex.Unlock()
+			common.OptionMap = previousOptions
+			settingconfig.UpdateConfigFromMap(settingconfig.GlobalConfig.Get("error_filter"), map[string]string{"config": previousConfig})
+		})
+
+		policy := errorfilter.Defaults()
+		policy.Enabled = true
+		policy.Rules = []errorfilter.Rule{{Name: "hide provider", Enabled: true, Channels: []int{101}, Field: "message", Match: "contains", Pattern: "tokenharbor", Action: "replace", Replacement: "请求过大，请精简对话。"}}
+		encoded, err := common.Marshal(policy)
+		require.NoError(t, err)
+		saveResponse := httptest.NewRecorder()
+		saveContext, _ := gin.CreateTestContext(saveResponse)
+		saveContext.Request = httptest.NewRequest(http.MethodPut, "/api/option/error_filter", strings.NewReader(string(encoded)))
+		UpdateErrorFilter(saveContext)
+		assert.Equal(t, http.StatusOK, saveResponse.Code)
+		assert.Contains(t, saveResponse.Body.String(), `"success":true`)
+		storedConfig := setting.ErrorFilterConfig()
+		assert.JSONEq(t, string(encoded), storedConfig)
+		var option model.Option
+		require.NoError(t, database.Where("key = ?", setting.ErrorFilterOptionKey).First(&option).Error)
+		assert.JSONEq(t, storedConfig, option.Value)
+
+		policy.Rules[0].Replacement = "preview only"
+		previewBody, err := common.Marshal(gin.H{"config": policy, "sample": errorfilter.Input{Message: "tokenharbor: free account limit", Status: 413, ChannelID: 101}})
+		require.NoError(t, err)
+		previewResponse := httptest.NewRecorder()
+		previewContext, _ := gin.CreateTestContext(previewResponse)
+		previewContext.Request = httptest.NewRequest(http.MethodPost, "/api/option/error_filter/preview", strings.NewReader(string(previewBody)))
+		PreviewErrorFilter(previewContext)
+		assert.Contains(t, previewResponse.Body.String(), "preview only")
+		assert.Equal(t, storedConfig, setting.ErrorFilterConfig())
+
+		providerErr := types.NewOpenAIError(errors.New("tokenharbor: free account limit"), types.ErrorCodeBadResponseStatusCode, 413)
+		processChannelError(ctx, channelSnapshot, providerErr, nil)
+		var latest model.Log
+		require.NoError(t, database.Order("id DESC").First(&latest).Error)
+		assert.Equal(t, "请求过大，请精简对话。", latest.Content)
+		assert.Equal(t, "tokenharbor: free account limit", providerErr.Error())
+		assert.Contains(t, latest.Other, "tokenharbor")
+		logs, _, err := model.GetUserLogs(7, model.LogTypeError, 0, 0, "", "", 0, 10, "", "", "")
+		require.NoError(t, err)
+		for _, entry := range logs {
+			assert.NotContains(t, entry.Other, "tokenharbor")
+			assert.NotContains(t, entry.Content, "tokenharbor")
+		}
+	})
 }
