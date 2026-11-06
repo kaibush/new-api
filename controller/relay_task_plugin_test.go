@@ -433,13 +433,18 @@ func TestExecuteTaskSubmissionDisconnectAfterDurableInsertDoesNotRefund(t *testi
 func setupTaskSubmissionDatabase(t *testing.T, migrate bool, events *[]string) *gorm.DB {
 	t.Helper()
 	previousDB := model.DB
-	var models []any
+	models := []any{
+		&model.User{}, &model.Channel{},
+		&model.CheckinAccount{}, &model.CheckinUsage{}, &model.CheckinUsageDay{},
+	}
 	if migrate {
 		models = append(models, &model.Task{})
 	}
 	database, _ := openTaskDialectDatabase(t, models...)
-	require.NoError(t, database.Callback().Create().Before("gorm:create").Register("test:task-submit-order", func(*gorm.DB) {
-		*events = append(*events, "insert")
+	require.NoError(t, database.Callback().Create().Before("gorm:create").Register("test:task-submit-order", func(tx *gorm.DB) {
+		if _, isTask := tx.Statement.Dest.(*model.Task); isTask {
+			*events = append(*events, "insert")
+		}
 	}))
 	model.DB = database
 	t.Cleanup(func() { model.DB = previousDB })

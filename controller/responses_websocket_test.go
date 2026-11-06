@@ -353,7 +353,12 @@ func newResponsesWSBillingTest(t *testing.T, expression string, handle func(*web
 		"group_ratio_setting.group_ratio": `{"default":1}`,
 		"perf_metrics_setting.enabled":    "true",
 	}))
-	require.NoError(t, model.DB.AutoMigrate(&model.Channel{}, &model.Ability{}))
+	// Billing checks the check-in balance and records settlement even when the
+	// user has no check-in rewards.
+	require.NoError(t, model.DB.AutoMigrate(
+		&model.Channel{}, &model.Ability{}, &model.CheckinGrant{},
+		&model.CheckinAccount{}, &model.CheckinUsage{}, &model.CheckinUsageDay{},
+	))
 	require.NoError(t, model.LOG_DB.AutoMigrate(&model.Log{}))
 	require.NoError(t, model.DB.Model(user).Updates(map[string]any{"quota": 100000, "setting": `{"billing_preference":"wallet_only"}`}).Error)
 	require.NoError(t, model.DB.Model(token).Update("remain_quota", 3000).Error)
@@ -398,6 +403,9 @@ func newResponsesWSBillingTest(t *testing.T, expression string, handle func(*web
 	require.NoError(t, model.DB.Create(&model.Ability{ChannelId: channel.Id, Model: "ws-billing", Group: "default", Enabled: true}).Error)
 	t.Cleanup(func() {
 		require.NoError(t, model.LOG_DB.Where("token_id = ?", token.Id).Delete(&model.Log{}).Error)
+		for _, entry := range []any{&model.CheckinUsageDay{}, &model.CheckinUsage{}, &model.CheckinAccount{}} {
+			require.NoError(t, model.DB.Where("user_id = ?", user.Id).Delete(entry).Error)
+		}
 		require.NoError(t, model.DB.Where("channel_id = ?", channel.Id).Delete(&model.Ability{}).Error)
 		require.NoError(t, model.DB.Delete(channel).Error)
 	})
@@ -692,8 +700,14 @@ func TestResponsesWebSocketDialsNativeResponsesChannelTypes(t *testing.T) {
 			require.NoError(t, model.DB.Model(fixture.channel).Updates(map[string]any{"type": tc.channelType, "settings": fixture.channel.OtherSettings}).Error)
 
 			require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.create","model":"ws-billing","input":"hi"}`)))
-			assert.Equal(t, "response.completed", readResponsesWSTestEvent(t, fixture.client)["type"])
-			assert.Equal(t, tc.want("upstream-first"), <-targets)
+			event := readResponsesWSTestEvent(t, fixture.client)
+			require.Equal(t, "response.completed", event["type"], "unexpected response: %v", event)
+			select {
+			case target := <-targets:
+				assert.Equal(t, tc.want("upstream-first"), target)
+			case <-time.After(3 * time.Second):
+				t.Fatal("upstream did not receive the WebSocket request")
+			}
 
 			request, err := http.NewRequest(http.MethodPost, fixture.gatewayURL+"/v1/responses", strings.NewReader(`{"model":"ws-billing","input":"hi","stream":true}`))
 			require.NoError(t, err)
@@ -712,7 +726,12 @@ func TestResponsesWebSocketDialsNativeResponsesChannelTypes(t *testing.T) {
 				t.Fatal("HTTP request did not finish")
 			}
 			// The polling multi-key channel rotates to its second key for the HTTP request.
-			assert.Equal(t, tc.want("upstream-second"), <-targets)
+			select {
+			case target := <-targets:
+				assert.Equal(t, tc.want("upstream-second"), target)
+			case <-time.After(3 * time.Second):
+				t.Fatal("upstream did not receive the HTTP request")
+			}
 			fixture.closeAndWait(t)
 			assertResponsesWSAccounting(t, fixture, []int{1000, 1000})
 		})
