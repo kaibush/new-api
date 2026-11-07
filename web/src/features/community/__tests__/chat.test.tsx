@@ -213,6 +213,169 @@ test('disabled chat hides the composer and does not open a socket', async () => 
   expect(FakeSocket.instances).toHaveLength(0)
 })
 
+test('the current avatar is visible without messages and opens the full image with keyboard focus restored', async () => {
+  vi.spyOn(HTMLImageElement.prototype, 'complete', 'get').mockReturnValue(true)
+  vi.spyOn(HTMLImageElement.prototype, 'naturalWidth', 'get').mockReturnValue(
+    200
+  )
+  const user = userEvent.setup()
+  show(<CommunityChat />)
+  const editor = await screen.findByRole('textbox', { name: 'Message' })
+  expect(screen.getByRole('button', { name: 'Current avatar' })).toBeDisabled()
+  act(() =>
+    FakeSocket.instances[0].onmessage?.({
+      data: JSON.stringify({
+        type: 'presence',
+        users: [
+          {
+            user_id: 1,
+            name: 'Alice',
+            avatar: 'https://files.example.com/avatar.png',
+          },
+        ],
+      }),
+    })
+  )
+  const avatar = screen.getByRole('button', { name: 'Current avatar' })
+  expect(await within(avatar).findByRole('img')).toHaveAttribute(
+    'src',
+    'https://files.example.com/avatar.png'
+  )
+  await user.type(editor, 'Keep my draft')
+  avatar.focus()
+  await user.keyboard('{Enter}')
+  const dialog = await screen.findByRole('dialog', { name: 'Image Preview' })
+  expect(within(dialog).getByRole('img')).toHaveAttribute(
+    'src',
+    'https://files.example.com/avatar.png'
+  )
+  expect(within(dialog).getByRole('img')).toHaveClass('object-contain')
+  await user.keyboard('{Escape}')
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  expect(avatar).toHaveFocus()
+  expect(editor).toHaveValue('Keep my draft')
+  expect(api.post).not.toHaveBeenCalled()
+})
+
+test('avatar upload shows the saved image immediately and keeps it after a later upload fails', async () => {
+  vi.spyOn(HTMLImageElement.prototype, 'complete', 'get').mockReturnValue(true)
+  vi.spyOn(HTMLImageElement.prototype, 'naturalWidth', 'get').mockReturnValue(
+    200
+  )
+  const user = userEvent.setup()
+  let completeUpload!: (response: unknown) => void
+  vi.mocked(api.post).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        completeUpload = resolve
+      })
+  )
+  show(<CommunityChat />)
+  await screen.findByRole('textbox', { name: 'Message' })
+  act(() =>
+    FakeSocket.instances[0].onmessage?.({
+      data: JSON.stringify({
+        type: 'presence',
+        users: [
+          {
+            user_id: 1,
+            name: 'Alice',
+            avatar: 'https://files.example.com/old.png',
+          },
+        ],
+      }),
+    })
+  )
+  const avatar = screen.getByRole('button', { name: 'Current avatar' })
+  const input = screen.getByLabelText('Upload avatar', { selector: 'input' })
+  const file = new File(['avatar'], 'avatar.png', { type: 'image/png' })
+  await user.upload(input, file)
+  expect(screen.getByRole('button', { name: 'Upload avatar' })).toBeDisabled()
+  expect(within(avatar).getByRole('img')).toHaveAttribute(
+    'src',
+    'https://files.example.com/old.png'
+  )
+  const body = vi.mocked(api.post).mock.calls[0][1] as FormData
+  expect(body.get('kind')).toBe('avatar')
+  expect(body.get('file')).toBe(file)
+  await act(async () =>
+    completeUpload({
+      data: {
+        success: true,
+        data: { url: 'https://files.example.com/new.png' },
+      },
+    })
+  )
+  await waitFor(() =>
+    expect(within(avatar).getByRole('img')).toHaveAttribute(
+      'src',
+      'https://files.example.com/new.png'
+    )
+  )
+  await user.click(avatar)
+  expect(
+    within(await screen.findByRole('dialog')).getByRole('img')
+  ).toHaveAttribute('src', 'https://files.example.com/new.png')
+  await user.keyboard('{Escape}')
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  vi.mocked(api.post).mockRejectedValueOnce(new Error('Upload failed'))
+  await user.upload(input, file)
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Upload avatar' })).toBeEnabled()
+  )
+  expect(within(avatar).getByRole('img')).toHaveAttribute(
+    'src',
+    'https://files.example.com/new.png'
+  )
+  expect(api.post).toHaveBeenCalledTimes(2)
+  expect(screen.getByText('No messages yet')).toBeInTheDocument()
+  act(() =>
+    FakeSocket.instances[0].onmessage?.({
+      data: JSON.stringify({
+        type: 'presence',
+        users: [
+          {
+            user_id: 1,
+            name: 'Alice',
+            avatar: 'https://files.example.com/another-tab.png',
+          },
+        ],
+      }),
+    })
+  )
+  await waitFor(() =>
+    expect(within(avatar).getByRole('img')).toHaveAttribute(
+      'src',
+      'https://files.example.com/another-tab.png'
+    )
+  )
+})
+
+test('a message avatar opens its original image instead of requiring another message', async () => {
+  const user = userEvent.setup()
+  show(
+    <ChatMessageBubble
+      message={{
+        ...historyMessage(902, 'Hello'),
+        name: 'Alice',
+        avatar: 'https://files.example.com/avatar.png',
+      }}
+    />
+  )
+  await user.click(
+    screen.getByRole('button', { name: 'View avatar for Alice' })
+  )
+  expect(
+    within(
+      await screen.findByRole('dialog', { name: 'Image Preview' })
+    ).getByRole('img')
+  ).toHaveAttribute('src', 'https://files.example.com/avatar.png')
+})
+
 test('images are staged and can be removed before uploading', async () => {
   const user = userEvent.setup()
   vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:preview')

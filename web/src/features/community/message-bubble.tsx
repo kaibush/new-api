@@ -1,15 +1,14 @@
 import { useTranslation } from 'react-i18next'
 
 import { MessageContent } from '@/components/ai-elements/message'
+import { AvatarPreview } from '@/components/avatar-preview'
 import { DataTableRowActionMenu } from '@/components/data-table'
 import { Dialog } from '@/components/dialog'
 import { LoadingState } from '@/components/loading-state'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { toIntlLocale } from '@/i18n/languages'
-import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
@@ -52,12 +51,11 @@ export function ChatMessageBubble(props: {
         }
       )}
     >
-      <Avatar className='size-9 shrink-0'>
-        <AvatarImage src={message.avatar || undefined} alt={message.name} />
-        <AvatarFallback style={getUserAvatarStyle(message.name)}>
-          {getUserAvatarFallback(message.name)}
-        </AvatarFallback>
-      </Avatar>
+      <AvatarPreview
+        src={message.avatar}
+        name={message.name}
+        className='size-9'
+      />
       <div
         className={cn('flex min-w-0 max-w-[min(80%,42rem)] flex-col gap-1', {
           'items-end': message.user_id === props.currentUserId,

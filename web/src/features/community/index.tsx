@@ -1,4 +1,3 @@
-import { useMutation } from '@tanstack/react-query'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -10,12 +9,12 @@ import { Main } from '@/components/layout'
 import { LoadingState } from '@/components/loading-state'
 import { ScrollToBottomButton } from '@/components/scroll-to-bottom-button'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { uploadChatFile, type ChatMessage } from './api'
+import type { ChatMessage } from './api'
+import { ChatAvatar } from './chat-avatar'
 import { ChatComposer } from './chat-composer'
 import { CommunityBoard } from './community-board'
 import { EventCreate } from './event-create'
@@ -70,13 +69,8 @@ export function CommunityChat() {
   const [remove, setRemove] = useState<ChatMessage | null>(null)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
-  const fileInput = useRef<HTMLInputElement>(null)
   const scroll = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
-  const upload = useMutation({
-    mutationFn: (file: File) => uploadChatFile(file, 'avatar'),
-    onSuccess: () => toast.success(t('Upload successful')),
-  })
   const previousScroll = useRef({ firstId: 0, height: 0 })
   useLayoutEffect(() => {
     const el = scroll.current
@@ -157,13 +151,11 @@ export function CommunityChat() {
               {t('Chat records')}
             </Button>
           )}
-          <Button
-            variant='outline'
-            disabled={upload.isPending}
-            onClick={() => fileInput.current?.click()}
-          >
-            {t('Upload avatar')}
-          </Button>
+          <ChatAvatar
+            key={user?.id}
+            avatar={members.get(user?.id ?? 0)?.avatar}
+            name={user?.display_name || user?.username || ''}
+          />
         </header>
         <div className='grid min-h-0 flex-1 gap-6 lg:grid-cols-[minmax(0,1fr)_300px] lg:gap-8 xl:grid-cols-[minmax(0,1fr)_320px]'>
           <section
@@ -394,18 +386,6 @@ export function CommunityChat() {
             }}
           />
         )}
-        <Input
-          ref={fileInput}
-          type='file'
-          accept='.png,.jpg,.jpeg,.webp,.gif'
-          className='hidden'
-          aria-label={t('Upload avatar')}
-          onChange={(event) => {
-            const file = event.target.files?.[0]
-            event.target.value = ''
-            if (file) upload.mutate(file)
-          }}
-        />
         <ChatModerationDialog
           target={remove}
           onClose={() => setRemove(null)}
