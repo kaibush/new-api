@@ -8,6 +8,7 @@ import { EmptyState } from '@/components/empty-state'
 import { ErrorState } from '@/components/error-state'
 import { Main } from '@/components/layout'
 import { LoadingState } from '@/components/loading-state'
+import { ScrollToBottomButton } from '@/components/scroll-to-bottom-button'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { toIntlLocale } from '@/i18n/languages'
@@ -68,6 +69,7 @@ export function CommunityChat() {
   const [reply, setReply] = useState<ChatMessage | null>(null)
   const [remove, setRemove] = useState<ChatMessage | null>(null)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
   const scroll = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
@@ -84,6 +86,9 @@ export function CommunityChat() {
     else if (firstId > 0 && firstId < previousScroll.current.firstId) {
       el.scrollTop += el.scrollHeight - previousScroll.current.height
     }
+    setShowScrollToBottom(
+      el.scrollHeight - el.scrollTop - el.clientHeight >= 80
+    )
     previousScroll.current = { firstId, height: el.scrollHeight }
   }, [messages])
   useEffect(() => {
@@ -171,56 +176,78 @@ export function CommunityChat() {
                 { days: formatNumber(status.data.history_days || 1, locale) }
               )}
             </p>
-            <div
-              ref={scroll}
-              className='no-scrollbar -mx-1 min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-1 [overflow-anchor:none]'
-              role='log'
-              aria-label={t('Chat messages')}
-              aria-live='polite'
-              onScroll={() => {
-                const el = scroll.current
-                if (el) {
+            <div className='relative min-h-0 flex-1'>
+              <div
+                ref={scroll}
+                className='h-full [scrollbar-gutter:stable] overflow-y-auto overscroll-contain rounded-xl border p-3 [overflow-anchor:none] sm:p-4'
+                role='log'
+                aria-label={t('Chat messages')}
+                aria-live='polite'
+                tabIndex={0}
+                onScroll={(event) => {
+                  const el = event.currentTarget
                   stickToBottom.current =
                     el.scrollHeight - el.scrollTop - el.clientHeight < 80
-                }
-              }}
-            >
-              {hasMore && (
-                <div className='flex justify-center'>
-                  <Button
-                    variant='outline'
-                    disabled={loadingEarlier}
-                    onClick={() => {
-                      stickToBottom.current = false
-                      loadEarlier()
-                    }}
-                  >
-                    {loadingEarlier ? (
-                      <LoadingState inline size='sm' />
-                    ) : (
-                      t('Load earlier messages')
-                    )}
-                  </Button>
+                  setShowScrollToBottom(!stickToBottom.current)
+                }}
+              >
+                <div className='flex flex-col gap-4'>
+                  {hasMore && (
+                    <div className='flex justify-center'>
+                      <Button
+                        variant='outline'
+                        disabled={loadingEarlier}
+                        onClick={() => {
+                          stickToBottom.current = false
+                          loadEarlier()
+                        }}
+                      >
+                        {loadingEarlier ? (
+                          <LoadingState inline size='sm' />
+                        ) : (
+                          t('Load earlier messages')
+                        )}
+                      </Button>
+                    </div>
+                  )}
+                  {historyError && (
+                    <ErrorState className='min-h-0' onRetry={loadEarlier} />
+                  )}
+                  {messages.length === 0 && (
+                    <EmptyState title={t('No messages yet')} />
+                  )}
+                  {messages.map((message) => (
+                    <ChatMessageBubble
+                      key={`${message.user_id}:${message.client_id || message.id}`}
+                      message={message}
+                      currentUserId={user?.id}
+                      onReply={setReply}
+                      onOpenRedPacket={setPacketId}
+                      onOpenEvent={setEventId}
+                      redPacket={packetById.get(message.id)}
+                      onRemove={(user?.role ?? 0) >= 10 ? setRemove : undefined}
+                    />
+                  ))}
                 </div>
+              </div>
+              {showScrollToBottom && (
+                <ScrollToBottomButton
+                  size='sm'
+                  className='rounded-full shadow-sm'
+                  onClick={() => {
+                    setLocateId(null)
+                    stickToBottom.current = true
+                    const el = scroll.current
+                    if (el) {
+                      el.scrollTop = el.scrollHeight
+                      el.focus({ preventScroll: true })
+                    }
+                    setShowScrollToBottom(false)
+                  }}
+                >
+                  {t('Back to latest messages')}
+                </ScrollToBottomButton>
               )}
-              {historyError && (
-                <ErrorState className='min-h-0' onRetry={loadEarlier} />
-              )}
-              {messages.length === 0 && (
-                <EmptyState title={t('No messages yet')} />
-              )}
-              {messages.map((message) => (
-                <ChatMessageBubble
-                  key={`${message.user_id}:${message.client_id || message.id}`}
-                  message={message}
-                  currentUserId={user?.id}
-                  onReply={setReply}
-                  onOpenRedPacket={setPacketId}
-                  onOpenEvent={setEventId}
-                  redPacket={packetById.get(message.id)}
-                  onRemove={(user?.role ?? 0) >= 10 ? setRemove : undefined}
-                />
-              ))}
             </div>
             <ChatComposer
               connected={connected}

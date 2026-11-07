@@ -18,12 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 'use client'
 
-import { ArrowDownIcon } from 'lucide-react'
 import { type ComponentProps, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { StickToBottom, useStickToBottomContext } from 'use-stick-to-bottom'
 
-import { Button } from '@/components/ui/button'
+import { ScrollToBottomButton } from '@/components/scroll-to-bottom-button'
 import { cn } from '@/lib/utils'
 
 export type ConversationProps = ComponentProps<typeof StickToBottom>
@@ -93,12 +92,13 @@ export const ConversationEmptyState = ({
   )
 }
 
-export type ConversationScrollButtonProps = ComponentProps<typeof Button>
+export type ConversationScrollButtonProps = ComponentProps<
+  typeof ScrollToBottomButton
+>
 
-export const ConversationScrollButton = ({
-  className,
-  ...props
-}: ConversationScrollButtonProps) => {
+export const ConversationScrollButton = (
+  props: ConversationScrollButtonProps
+) => {
   const { isAtBottom, scrollToBottom } = useStickToBottomContext()
 
   const handleScrollToBottom = useCallback(() => {
@@ -107,20 +107,7 @@ export const ConversationScrollButton = ({
 
   return (
     !isAtBottom && (
-      <Button
-        className={cn(
-          'absolute bottom-4 left-[50%] translate-x-[-50%]',
-          className
-        )}
-        onClick={handleScrollToBottom}
-        size='icon'
-        type='button'
-        variant='outline'
-        aria-label='Scroll to bottom'
-        {...props}
-      >
-        <ArrowDownIcon className='size-4' aria-hidden='true' />
-      </Button>
+      <ScrollToBottomButton onClick={handleScrollToBottom} {...props} />
     )
   )
 }

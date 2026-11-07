@@ -1306,6 +1306,81 @@ function historyMessage(id: number, text: string) {
   }
 }
 
+test('returning to the latest messages resumes live scrolling without clearing the draft', async () => {
+  const user = userEvent.setup()
+  show(<CommunityChat />)
+  const editor = await screen.findByRole('textbox', { name: 'Message' })
+  const log = screen.getByRole('log', { name: 'Chat messages' })
+  expect(
+    screen.queryByRole('button', { name: 'Back to latest messages' })
+  ).not.toBeInTheDocument()
+  expect(log).toHaveClass('border', 'rounded-xl', 'overflow-y-auto')
+  expect(log).not.toHaveClass('no-scrollbar')
+  let height = 1000
+  Object.defineProperty(log, 'scrollHeight', { get: () => height })
+  Object.defineProperty(log, 'clientHeight', { value: 300 })
+  const socket = FakeSocket.instances[0]
+  act(() =>
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: 'history',
+        messages: [historyMessage(60, 'Recent discussion')],
+      }),
+    })
+  )
+  await user.type(editor, 'Keep my draft')
+  log.scrollTop = 100
+  fireEvent.scroll(log)
+  height = 1100
+  act(() =>
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: 'history',
+        messages: [historyMessage(61, 'New arrival')],
+      }),
+    })
+  )
+  expect(screen.getByText('New arrival')).toBeInTheDocument()
+  expect(log.scrollTop).toBe(100)
+  const back = screen.getByRole('button', { name: 'Back to latest messages' })
+  back.focus()
+  await user.keyboard('{Enter}')
+  expect(log.scrollTop).toBe(1100)
+  expect(log).toHaveFocus()
+  expect(editor).toHaveValue('Keep my draft')
+  expect(
+    screen.queryByRole('button', { name: 'Back to latest messages' })
+  ).not.toBeInTheDocument()
+  height = 1200
+  act(() =>
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: 'history',
+        messages: [historyMessage(62, 'Following live again')],
+      }),
+    })
+  )
+  expect(log.scrollTop).toBe(1200)
+})
+
+test('scrolling to the latest message manually hides the return button', async () => {
+  show(<CommunityChat />)
+  await screen.findByRole('textbox', { name: 'Message' })
+  const log = screen.getByRole('log', { name: 'Chat messages' })
+  Object.defineProperty(log, 'scrollHeight', { value: 1000 })
+  Object.defineProperty(log, 'clientHeight', { value: 300 })
+  log.scrollTop = 100
+  fireEvent.scroll(log)
+  expect(
+    screen.getByRole('button', { name: 'Back to latest messages' })
+  ).toBeVisible()
+  log.scrollTop = 700
+  fireEvent.scroll(log)
+  expect(
+    screen.queryByRole('button', { name: 'Back to latest messages' })
+  ).not.toBeInTheDocument()
+})
+
 test('a history window moving forward preserves loaded messages that are still in range', async () => {
   const user = userEvent.setup()
   show(<CommunityChat />)
@@ -2697,7 +2772,7 @@ test('red packets in the board and conversation open the same detail and preserv
   expect(board).toHaveClass('no-scrollbar', 'overflow-y-auto')
   expect(board).not.toHaveClass('border-l', 'pl-6')
   expect(screen.getByRole('log', { name: 'Chat messages' })).toHaveClass(
-    'no-scrollbar',
+    'border',
     'overflow-y-auto'
   )
   expect(
