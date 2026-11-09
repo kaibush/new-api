@@ -19,6 +19,19 @@ For commercial licensing, please contact support@quantumnous.com
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
+  'Select a valid console page.',
+  // Database maintenance API errors and task labels.
+  'A database cleanup is already running. Wait for it to finish.',
+  'Database cleanup',
+  'Database is unavailable.',
+  'Invalid cleanup target or retention period.',
+  'Invalid database cleanup preview.',
+  'Keep at least one day of recent data and preview the cleanup again.',
+  'No eligible records remain. Preview the cleanup again.',
+  'No eligible rows were deleted. Preview the cleanup again.',
+  'Retention must be between 1 and 3650 days.',
+  'This data cannot be cleaned from database maintenance.',
+
   'Monthly top-up limit must be a finite amount greater than 0',
   'Monthly top-up limit reached (including pending orders). Reduce the amount or try again next month.',
   'Check-in reward is currently restricted',

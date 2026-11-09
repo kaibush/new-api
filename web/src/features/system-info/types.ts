@@ -91,3 +91,36 @@ export type SystemTaskHistoryDeleteResponse = {
   message: string
   data?: { deleted_count: number }
 }
+
+export type DatabaseCleanupTarget = 'request_logs' | 'site_visits'
+
+export type DatabaseTableStorage = {
+  name: string
+  bytes: number | null
+  data_bytes: number | null
+  index_bytes: number | null
+  estimated_rows: number | null
+  cleanup_target?: DatabaseCleanupTarget
+}
+
+export type DatabaseStorage = {
+  scope: 'primary' | 'logs'
+  engine: string
+  name: string
+  available: boolean
+  bytes: number
+  tables: DatabaseTableStorage[]
+}
+
+export type DatabaseCleanupPreview = {
+  target: DatabaseCleanupTarget
+  before: number
+  max_id: number
+  count: number
+}
+
+export type DatabaseResponse<T> = {
+  success: boolean
+  message: string
+  data: T
+}

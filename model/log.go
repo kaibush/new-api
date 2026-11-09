@@ -748,7 +748,16 @@ func DeleteOldLogBatch(ctx context.Context, targetTimestamp int64, limit int) (i
 		return total, nil
 	}
 
-	result := LOG_DB.WithContext(ctx).Where("created_at < ?", targetTimestamp).Limit(limit).Delete(&Log{})
+	// DELETE ... LIMIT is not portable. Bound the actual write by selected IDs.
+	var ids []int64
+	if err := LOG_DB.WithContext(ctx).Model(&Log{}).Where("created_at < ?", targetTimestamp).
+		Order("id").Limit(limit).Pluck("id", &ids).Error; err != nil {
+		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	result := LOG_DB.WithContext(ctx).Where("id IN ? AND created_at < ?", ids, targetTimestamp).Delete(&Log{})
 	if nil != result.Error {
 		return 0, result.Error
 	}

@@ -16,10 +16,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { SystemTaskFilters } from '@/features/system-settings/types'
+import type {
+  SystemTaskFilters,
+  SystemTaskResponse,
+} from '@/features/system-settings/types'
 import { api } from '@/lib/api'
+import { requireServerSuccess } from '@/lib/server-error-message'
 
 import type {
+  DatabaseResponse,
+  DatabaseStorage,
+  DatabaseCleanupPreview,
+  DatabaseCleanupTarget,
   SystemInstanceDeleteResponse,
   SystemInstanceListResponse,
   SystemTaskHistoryDeleteResponse,
@@ -54,4 +62,30 @@ export async function deleteSystemTaskHistory(
     { params: filters }
   )
   return res.data
+}
+
+export async function getDatabaseStorage() {
+  const res = await api.get<DatabaseResponse<DatabaseStorage[]>>(
+    '/api/system-info/database'
+  )
+  return requireServerSuccess(res.data).data
+}
+
+export async function previewDatabaseCleanup(request: {
+  target: DatabaseCleanupTarget
+  retention_days: number
+}) {
+  const res = await api.post<DatabaseResponse<DatabaseCleanupPreview>>(
+    '/api/system-info/database/cleanup/preview',
+    request
+  )
+  return requireServerSuccess(res.data).data
+}
+
+export async function startDatabaseCleanup(preview: DatabaseCleanupPreview) {
+  const res = await api.post<SystemTaskResponse>(
+    '/api/system-info/database/cleanup',
+    preview
+  )
+  return requireServerSuccess(res.data).data
 }

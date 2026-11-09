@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -231,4 +232,51 @@ func TestEnqueueSystemTaskReportsCreatedAndExistingActive(t *testing.T) {
 	require.True(t, created)
 	require.NotNil(t, second)
 	assert.NotEqual(t, first.TaskID, second.TaskID)
+}
+
+func TestDatabaseCleanupHandlerLifecycle(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+	for _, invalidTarget := range []bool{false, true} {
+		t.Run(fmt.Sprintf("invalid_target_%v", invalidTarget), func(t *testing.T) {
+			rows := make([]model.Log, 201)
+			for i := range rows {
+				rows[i] = model.Log{CreatedAt: time.Now().AddDate(0, 0, -60).Unix(), Type: model.LogTypeError}
+			}
+			require.NoError(t, model.LOG_DB.CreateInBatches(&rows, 100).Error)
+			preview, err := model.PreviewDatabaseCleanup(ctx, model.DatabaseCleanupRequestLogs, 30)
+			require.NoError(t, err)
+			if invalidTarget {
+				preview.Target = "users"
+			}
+			task, created, err := EnqueueSystemTask(model.SystemTaskTypeDatabaseCleanup, preview)
+			require.NoError(t, err)
+			require.True(t, created)
+			claimed, ok, err := model.ClaimSystemTask(task.ID, task.Type, "maintenance-runner", common.GetTimestamp()+60)
+			require.NoError(t, err)
+			require.True(t, ok)
+			databaseCleanupHandler{}.Run(ctx, claimed, "maintenance-runner")
+			finished, err := model.GetLatestSystemTask(task.Type)
+			require.NoError(t, err)
+			require.NotNil(t, finished)
+			var remaining int64
+			require.NoError(t, model.LOG_DB.Model(&model.Log{}).Where("type = ?", model.LogTypeError).Count(&remaining).Error)
+			if invalidTarget {
+				assert.Equal(t, model.SystemTaskStatusFailed, finished.Status)
+				assert.EqualValues(t, 201, remaining)
+			} else {
+				assert.Equal(t, model.SystemTaskStatusSucceeded, finished.Status, finished.Error)
+				assert.Zero(t, remaining)
+				var state LogCleanupState
+				require.NoError(t, finished.DecodeState(&state))
+				assert.Equal(t, 100, state.Progress)
+				var result LogCleanupResult
+				require.NoError(t, common.UnmarshalJsonStr(finished.Result, &result))
+				assert.EqualValues(t, 201, result.DeletedCount)
+			}
+			active, err := model.GetActiveSystemTask(task.Type)
+			require.NoError(t, err)
+			assert.Nil(t, active)
+		})
+	}
 }

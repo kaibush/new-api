@@ -16,6 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import {
+  DEFAULT_SIDEBAR_MODULES,
+  type SidebarModulesAdminConfig,
+  type SidebarSectionConfig,
+} from '@/lib/sidebar-modules'
+
+export type {
+  SidebarModulesAdminConfig,
+  SidebarSectionConfig,
+} from '@/lib/sidebar-modules'
+
 export type HeaderNavAccessConfig = {
   enabled: boolean
   requireAuth: boolean
@@ -32,13 +43,6 @@ export type HeaderNavModulesConfig = {
   about: boolean
   [key: string]: boolean | HeaderNavAccessConfig
 }
-
-export type SidebarSectionConfig = {
-  enabled: boolean
-  [key: string]: boolean
-}
-
-export type SidebarModulesAdminConfig = Record<string, SidebarSectionConfig>
 
 export const HEADER_NAV_DEFAULT: HeaderNavModulesConfig = {
   home: true,
@@ -57,39 +61,7 @@ export const HEADER_NAV_DEFAULT: HeaderNavModulesConfig = {
   about: true,
 }
 
-export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
-  chat: {
-    enabled: true,
-    playground: true,
-    chat: true,
-  },
-  console: {
-    enabled: true,
-    detail: true,
-    channel_status: true,
-    token: true,
-    log: true,
-    audit: true,
-    midjourney: true,
-    task: true,
-  },
-  personal: {
-    enabled: true,
-    topup: true,
-    personal: true,
-    security: true,
-  },
-  admin: {
-    enabled: true,
-    channel: true,
-    models: true,
-    redemption: true,
-    user: true,
-    checkin: true,
-    setting: true,
-    subscription: true,
-  },
-}
+export const SIDEBAR_MODULES_DEFAULT = DEFAULT_SIDEBAR_MODULES
 
 const toBoolean = (value: unknown, fallback: boolean): boolean => {
   if (typeof value === 'boolean') return value
@@ -244,7 +216,11 @@ export function parseSidebarModulesAdmin(
 }
 
 export function serializeSidebarModulesAdmin(
-  config: SidebarModulesAdminConfig
+  config: SidebarModulesAdminConfig,
+  defaultPage?: string
 ): string {
+  if (defaultPage !== undefined) {
+    return JSON.stringify({ ...config, default_page: defaultPage })
+  }
   return JSON.stringify(config)
 }

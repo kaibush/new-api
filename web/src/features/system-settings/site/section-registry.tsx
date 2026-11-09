@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { parseConsoleDefaultPage } from '@/lib/console-landing'
+
 import { SystemInfoSection } from '../general/system-info-section'
 import {
   parseHeaderNavModules,
@@ -90,9 +92,14 @@ const SITE_SECTIONS = [
       const sidebarConfig = parseSidebarModulesAdmin(
         settings.SidebarModulesAdmin
       )
-      const sidebarSerialized = serializeSidebarModulesAdmin(sidebarConfig)
+      const defaultPage = parseConsoleDefaultPage(settings.SidebarModulesAdmin)
+      const sidebarSerialized = serializeSidebarModulesAdmin(
+        sidebarConfig,
+        defaultPage
+      )
       return (
         <SidebarModulesSection
+          defaultPage={defaultPage}
           config={sidebarConfig}
           initialSerialized={sidebarSerialized}
         />

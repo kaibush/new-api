@@ -18,13 +18,15 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { createFileRoute, redirect } from '@tanstack/react-router'
 
-import { DASHBOARD_DEFAULT_SECTION } from '@/features/dashboard/section-registry'
+import { getConsoleLandingForGuard } from '@/lib/console-landing'
+import { useAuthStore } from '@/stores/auth-store'
 
 export const Route = createFileRoute('/_authenticated/dashboard/')({
-  beforeLoad: () => {
-    throw redirect({
-      to: '/dashboard/$section',
-      params: { section: DASHBOARD_DEFAULT_SECTION },
-    })
+  beforeLoad: async ({ context }) => {
+    const href = await getConsoleLandingForGuard(
+      context.queryClient,
+      useAuthStore.getState().auth.user
+    )
+    throw redirect({ href, replace: true })
   },
 })

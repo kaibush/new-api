@@ -20,8 +20,10 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { updateUserSettings } from '../api'
+import { SidebarModulesCard } from '../components/sidebar-modules-card'
 import { NotificationTab } from '../components/tabs/notification-tab'
 import type { UserProfile } from '../types'
 
@@ -55,7 +57,10 @@ const settings = {
   upstream_model_update_notify_enabled: true,
 }
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.restoreAllMocks()
+  useAuthStore.getState().auth.reset()
+})
 
 describe('user settings saves across profile and security', () => {
   it('disabling IP recording sends the latest complete notification settings', async () => {
@@ -191,4 +196,34 @@ describe('user settings saves across profile and security', () => {
       record_ip_log: false,
     })
   })
+})
+
+it('saves the personal community sidebar switch without changing other visibility preferences', async () => {
+  useAuthStore.getState().auth.setUser({ id: 1, username: 'alice', role: 1 })
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: { sidebar_modules: '{"chat":{"enabled":true,"playground":false}}' },
+    },
+  })
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  render(<SidebarModulesCard />)
+  await waitFor(() =>
+    expect(screen.getByRole('switch', { name: 'Playground' })).not.toBeChecked()
+  )
+  const community = screen.getByRole('switch', { name: 'Community chat' })
+  expect(community).toBeChecked()
+  fireEvent.click(community)
+  fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  const request = put.mock.calls[0][1] as { sidebar_modules: string }
+  expect(JSON.parse(request.sidebar_modules)).toEqual({
+    chat: { enabled: true, playground: false, community: false },
+  })
+  expect(useAuthStore.getState().auth.user?.sidebar_modules).toBe(
+    request.sidebar_modules
+  )
+  useAuthStore.getState().auth.reset()
 })

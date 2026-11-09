@@ -63,6 +63,13 @@ export function SidebarModulesCard() {
       description: t('Playground and chat functions'),
       modules: [
         {
+          key: 'community',
+          title: t('Community chat'),
+          description: t(
+            'Show community chat in the sidebar when the feature is enabled.'
+          ),
+        },
+        {
           key: 'playground',
           title: t('Playground'),
           description: t('AI model testing environment'),
@@ -271,6 +278,7 @@ export function SidebarModulesCard() {
                       </p>
                     </div>
                     <Switch
+                      aria-label={mod.title}
                       checked={config[section.key]?.[mod.key] !== false}
                       onCheckedChange={(v) =>
                         toggleModule(section.key, mod.key, v)

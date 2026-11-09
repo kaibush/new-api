@@ -50,6 +50,7 @@ function sidebarFor(admin?: object, user?: object, canConfigure = true) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
+  client.setQueryData(['community-status'], { enabled: true, name: '' })
   client.setQueryData(['status'], {
     SidebarModulesAdmin: admin ? JSON.stringify(admin) : '',
   })
@@ -236,5 +237,44 @@ describe('user activity sidebar entry', () => {
       ?.items.map((item) => item.title)
     expect(titles).not.toContain('User activity')
     expect(titles).toContain('Users')
+  })
+})
+
+describe('community sidebar visibility', () => {
+  it('shows community for legacy configurations and preserves its display toggle when saving', () => {
+    const config = parseSidebarModulesAdmin('{}')
+    const { result, unmount } = sidebarFor(config)
+    expect(
+      result.current
+        .flatMap((group) => group.items)
+        .some((item) => 'url' in item && item.url === '/community')
+    ).toBe(true)
+    unmount()
+    config.chat.community = false
+    const saved = parseSidebarModulesAdmin(
+      serializeSidebarModulesAdmin(config, '/community')
+    )
+    const hidden = sidebarFor(saved)
+    expect(
+      hidden.result.current
+        .flatMap((group) => group.items)
+        .some((item) => 'url' in item && item.url === '/community')
+    ).toBe(false)
+    expect(
+      hidden.result.current
+        .flatMap((group) => group.items)
+        .some((item) => 'url' in item && item.url === '/playground')
+    ).toBe(true)
+  })
+  it('honors the chat section and personal community switches', () => {
+    const { result, unmount } = sidebarFor({ chat: { enabled: false } })
+    expect(result.current.some((group) => group.id === 'chat')).toBe(false)
+    unmount()
+    const narrowed = sidebarFor(undefined, { chat: { community: false } })
+    expect(
+      narrowed.result.current
+        .flatMap((group) => group.items)
+        .some((item) => 'url' in item && item.url === '/community')
+    ).toBe(false)
   })
 })

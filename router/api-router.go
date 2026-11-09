@@ -394,6 +394,9 @@ func SetApiRouter(router *gin.Engine) {
 		systemInfoRoute := apiRouter.Group("/system-info")
 		systemInfoRoute.Use(middleware.RootAuth())
 		{
+			systemInfoRoute.GET("/database", controller.GetDatabaseStorage)
+			systemInfoRoute.POST("/database/cleanup/preview", controller.PreviewDatabaseCleanup)
+			systemInfoRoute.POST("/database/cleanup", controller.StartDatabaseCleanup)
 			systemInfoRoute.GET("/instances", controller.ListSystemInstances)
 			systemInfoRoute.DELETE("/stale-instances", controller.DeleteStaleSystemInstances)
 			systemInfoRoute.DELETE("/instances/:node_name", controller.DeleteStaleSystemInstance)
