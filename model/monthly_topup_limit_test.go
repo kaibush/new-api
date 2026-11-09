@@ -227,25 +227,59 @@ func TestMonthlyTopUpLimitDatabaseMatrix(t *testing.T) {
 				})
 			}
 
-			t.Run("redemption shares capacity and rolls back without consuming the code", func(t *testing.T) {
-				user := monthlyTopUpTestUser(t)
-				code := Redemption{Key: "monthly-redemption", Quota: 600, Status: common.RedemptionCodeStatusEnabled}
-				require.NoError(t, code.Insert())
-				order := TopUp{UserId: user.Id, TradeNo: "reserved", Amount: 5, Status: common.TopUpStatusPending, PaymentProvider: PaymentProviderEpay}
-				require.NoError(t, order.Insert())
-				_, err := Redeem(code.Key, user.Id)
-				require.Error(t, err)
-				require.NoError(t, DB.First(&code, code.Id).Error)
-				assert.Equal(t, common.RedemptionCodeStatusEnabled, code.Status)
-				assert.Zero(t, getUserQuotaForPaymentGuardTest(t, user.Id))
-				require.NoError(t, UpdatePendingTopUpStatus(order.TradeNo, PaymentProviderEpay, common.TopUpStatusFailed))
-				quota, err := Redeem(code.Key, user.Id)
-				require.NoError(t, err)
-				assert.Equal(t, 600, quota)
-				require.NoError(t, DB.Delete(&code).Error)
-				require.NoError(t, ValidateTopUpQuotaCapacity(user.Id, 400))
-				assert.ErrorIs(t, ValidateTopUpQuotaCapacity(user.Id, 401), ErrMonthlyTopUpLimitExceeded)
-			})
+			for _, tc := range []struct {
+				name      string
+				credited  int64
+				pending   int64
+				remaining int
+			}{
+				{name: "unused online allowance", remaining: 1000},
+				{name: "pending online reservation", credited: 3, pending: 5, remaining: 200},
+				{name: "exhausted online allowance", credited: 10},
+				{name: "online credits above a lowered limit", credited: 15},
+			} {
+				t.Run("redemption ignores "+tc.name, func(t *testing.T) {
+					user := monthlyTopUpTestUser(t)
+					orders := []TopUp{
+						{UserId: user.Id, TradeNo: "credited", Amount: tc.credited, Status: common.TopUpStatusSuccess, CompleteTime: common.GetTimestamp(), PaymentProvider: PaymentProviderEpay},
+						{UserId: user.Id, TradeNo: "reserved", Amount: tc.pending, Status: common.TopUpStatusPending, PaymentProvider: PaymentProviderEpay},
+					}
+					require.NoError(t, db.Create(&orders).Error)
+					initialQuota := int(tc.credited) * 100
+					require.NoError(t, db.Model(user).UpdateColumn("quota", initialQuota).Error)
+					before, err := GetMonthlyTopUpLimitStatus(user.Id)
+					require.NoError(t, err)
+					assert.Equal(t, tc.remaining, before.RemainingQuota)
+
+					code := Redemption{Key: "monthly-redemption", Quota: 1500, Status: common.RedemptionCodeStatusEnabled}
+					require.NoError(t, code.Insert())
+					quota, err := Redeem(code.Key, user.Id)
+					require.NoError(t, err)
+					assert.Equal(t, 1500, quota)
+					assert.Equal(t, initialQuota+1500, getUserQuotaForPaymentGuardTest(t, user.Id))
+					require.NoError(t, db.First(&code, code.Id).Error)
+					assert.Equal(t, common.RedemptionCodeStatusUsed, code.Status)
+					assert.Equal(t, user.Id, code.UsedUserId)
+					_, err = Redeem(code.Key, user.Id)
+					require.ErrorIs(t, err, ErrRedeemFailed)
+					assert.Equal(t, initialQuota+1500, getUserQuotaForPaymentGuardTest(t, user.Id))
+
+					after, err := GetMonthlyTopUpLimitStatus(user.Id)
+					require.NoError(t, err)
+					assert.Equal(t, before, after, "redemption must not use online allowance")
+					if tc.remaining > 0 {
+						require.NoError(t, ValidateTopUpQuotaCapacity(user.Id, tc.remaining))
+						order := TopUp{UserId: user.Id, TradeNo: "remaining", Amount: int64(tc.remaining / 100), Status: common.TopUpStatusPending, PaymentProvider: PaymentProviderEpay}
+						require.NoError(t, order.Insert())
+						_, err := RechargeEpay(order.TradeNo, "alipay", "")
+						require.NoError(t, err)
+						assert.Equal(t, initialQuota+1500+tc.remaining, getUserQuotaForPaymentGuardTest(t, user.Id))
+					}
+					assert.ErrorIs(t, ValidateTopUpQuotaCapacity(user.Id, 1), ErrMonthlyTopUpLimitExceeded)
+					order := TopUp{UserId: user.Id, TradeNo: "over-limit", Amount: 1, Status: common.TopUpStatusPending, PaymentProvider: PaymentProviderEpay}
+					assert.ErrorIs(t, order.Insert(), ErrMonthlyTopUpLimitExceeded)
+				})
+			}
 
 			for _, settle := range []bool{false, true} {
 				t.Run(fmt.Sprintf("concurrent orders cannot exceed cap, settlement=%t", settle), func(t *testing.T) {

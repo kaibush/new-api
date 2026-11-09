@@ -230,7 +230,7 @@ export function RechargeFormCard({
       {monthlyLimit?.enabled && (
         <Alert role='status'>
           <AlertTitle>
-            {t('Remaining top-up allowance this month: {{amount}}', {
+            {t('Remaining online top-up allowance this month: {{amount}}', {
               amount: formatQuotaWithCurrency(
                 monthlyLimit.remaining_quota,
                 quotaFormat
@@ -240,7 +240,7 @@ export function RechargeFormCard({
           <AlertDescription>
             <div>
               {t(
-                'Monthly limit: {{limit}} · Credited: {{used}} · Pending orders: {{pending}}',
+                'Monthly online limit: {{limit}} · Credited online: {{used}} · Pending orders: {{pending}}',
                 {
                   limit: formatQuotaWithCurrency(
                     monthlyLimit.limit_quota,
@@ -259,7 +259,7 @@ export function RechargeFormCard({
             </div>
             <div>
               {t(
-                'Limits apply to wallet credit, including redemption codes, per UTC calendar month.'
+                'Online top-ups are limited per UTC calendar month. Redemption codes and red packets do not use this allowance.'
               )}
             </div>
             {monthlyLimit.pending_quota > 0 && (

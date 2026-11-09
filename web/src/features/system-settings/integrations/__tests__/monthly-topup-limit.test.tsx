@@ -113,7 +113,7 @@ async function renderSettings(enabled = false) {
     </QueryClientProvider>
   )
   return screen.findByRole('spinbutton', {
-    name: 'Monthly top-up limit per user (USD)',
+    name: 'Monthly online top-up limit per user (USD)',
   })
 }
 
@@ -126,7 +126,7 @@ test('enabling the monthly limit by keyboard unlocks the input and saves the amo
   const input = await renderSettings()
   expect(input).toBeDisabled()
   const toggle = screen.getByRole('switch', {
-    name: 'Limit monthly top-ups per user',
+    name: 'Limit monthly online top-ups per user',
   })
   expect(toggle).not.toBeChecked()
   toggle.focus()
@@ -169,7 +169,9 @@ test('disabling a saved monthly limit preserves the configured amount', async ()
   expect(input).toBeEnabled()
   expect(input).toHaveValue(1000)
   await user.click(
-    screen.getByRole('switch', { name: 'Limit monthly top-ups per user' })
+    screen.getByRole('switch', {
+      name: 'Limit monthly online top-ups per user',
+    })
   )
   expect(input).toBeDisabled()
   await user.click(screen.getByRole('button', { name: 'Save all settings' }))

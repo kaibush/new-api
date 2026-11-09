@@ -167,6 +167,7 @@ func Redeem(key string, userId int) (quota int, err error) {
 
 // redeemCodeToWallet requires the wallet and redemption row locks. The caller
 // commits code consumption and wallet credit together, including packet claims.
+// Codes and red packets are exempt from the monthly online top-up limit.
 func redeemCodeToWallet(tx *gorm.DB, redemption *Redemption, userId int) error {
 	if redemption.Status != common.RedemptionCodeStatusEnabled {
 		return errors.New("该兑换码已被使用")
@@ -193,9 +194,6 @@ func redeemCodeToWallet(tx *gorm.DB, redemption *Redemption, userId int) error {
 		}
 	}
 	redemption.RedeemedTime = common.GetTimestamp()
-	if err := validateMonthlyTopUpQuota(tx, userId, redemption.Quota, true, redemption.RedeemedTime); err != nil {
-		return err
-	}
 	// Compare-and-swap on status: only the transaction that flips
 	// enabled -> used may credit quota, so a concurrent redeem of the
 	// same code loses here even without a row lock (e.g. on SQLite).

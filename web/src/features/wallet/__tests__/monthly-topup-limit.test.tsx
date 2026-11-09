@@ -1,4 +1,5 @@
 import { act, render, renderHook, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import i18next from 'i18next'
 import { toast } from 'sonner'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -59,7 +60,7 @@ it('shows the full 1000 allowance before any top-up and updates after a credit',
     />
   )
   expect(
-    screen.getByText('Remaining top-up allowance this month: $1,000')
+    screen.getByText('Remaining online top-up allowance this month: $1,000')
   ).toBeVisible()
   expect(screen.getByRole('button', { name: 'Test Pay' })).toBeEnabled()
   expect(
@@ -82,11 +83,11 @@ it('shows the full 1000 allowance before any top-up and updates after a credit',
     />
   )
   expect(
-    screen.getByText('Remaining top-up allowance this month: $0')
+    screen.getByText('Remaining online top-up allowance this month: $0')
   ).toBeVisible()
   expect(
     screen.getByText(
-      'Monthly limit: $1,000 · Credited: $1,000 · Pending orders: $0'
+      'Monthly online limit: $1,000 · Credited online: $1,000 · Pending orders: $0'
     )
   ).toBeVisible()
 })
@@ -105,6 +106,34 @@ it.each([undefined, { ...limit, enabled: false }])(
   }
 )
 
+it('allows redemption when the online allowance is exhausted and explains the exemption', async () => {
+  const user = userEvent.setup()
+  const onRedeem = vi.fn()
+  render(
+    <RechargeFormCard
+      {...formProps}
+      redemptionCode='purchased-code'
+      onRedeem={onRedeem}
+      topupInfo={{
+        ...topupInfo,
+        monthly_topup_limit: {
+          ...limit,
+          used_quota: limit.limit_quota,
+          remaining_quota: 0,
+        },
+      }}
+    />
+  )
+  expect(screen.getByRole('status')).toHaveTextContent(
+    'Online top-ups are limited per UTC calendar month. Redemption codes and red packets do not use this allowance.'
+  )
+  expect(screen.getByRole('textbox', { name: 'Have a Code?' })).toBeEnabled()
+  const redeem = screen.getByRole('button', { name: 'Redeem' })
+  expect(redeem).toBeEnabled()
+  await user.click(redeem)
+  expect(onRedeem).toHaveBeenCalledOnce()
+})
+
 it('updates the allowance message when the interface language changes', async () => {
   i18next.addResourceBundle('zhCN', 'translation', zh.translation)
   render(
@@ -114,10 +143,10 @@ it('updates the allowance message when the interface language changes', async ()
     />
   )
   expect(
-    screen.getByText('Remaining top-up allowance this month: $1,000')
+    screen.getByText('Remaining online top-up allowance this month: $1,000')
   ).toBeVisible()
   await i18next.changeLanguage('zhCN')
-  expect(await screen.findByText('本月还可充值：$1,000')).toBeVisible()
+  expect(await screen.findByText('本月还可在线充值：$1,000')).toBeVisible()
 })
 
 it.each(['zhCN', 'zhTW', 'en', 'fr', 'ru', 'ja', 'vi', 'invalid_locale'])(
@@ -165,7 +194,7 @@ it('does not round the remaining allowance up to an amount the server will rejec
     />
   )
   expect(
-    screen.getByText('Remaining top-up allowance this month: $1.999998')
+    screen.getByText('Remaining online top-up allowance this month: $1.999998')
   ).toBeVisible()
   expect(
     getServerErrorMessage({

@@ -247,16 +247,19 @@ func TestCommunityRedPacketDatabaseMatrix(t *testing.T) {
 							require.NoError(t, err)
 							owner := users[1].Id
 							require.NoError(t, db.Model(&User{}).Where("id = ?", owner).Update("quota", 0).Error)
-							if scenario == "wallet_limit" || scenario == "monthly_limit" {
-								if scenario == "wallet_limit" {
-									require.NoError(t, db.Model(&User{}).Where("id = ?", owner).Update("quota", common.MaxWalletQuota).Error)
-									require.ErrorIs(t, ClaimCommunityRedPacket(gift.ID, owner), ErrTopUpQuotaLimitExceeded)
-								} else {
-									operation_setting.GetPaymentSetting().MonthlyTopUpLimitEnabled = true
-									operation_setting.GetPaymentSetting().MonthlyTopUpLimit = 0.0001
-									require.ErrorIs(t, ClaimCommunityRedPacket(gift.ID, owner), ErrMonthlyTopUpLimitExceeded)
-									operation_setting.GetPaymentSetting().MonthlyTopUpLimitEnabled = false
-								}
+							if scenario == "monthly_limit" {
+								operation_setting.GetPaymentSetting().MonthlyTopUpLimitEnabled = true
+								operation_setting.GetPaymentSetting().MonthlyTopUpLimit = 0.0001
+								limit, err := operation_setting.GetPaymentSetting().MonthlyTopUpQuotaLimit()
+								require.NoError(t, err)
+								order := TopUp{UserId: owner, TradeNo: "packet-monthly-limit", Amount: int64(limit), PaymentProvider: PaymentProviderCreem, Status: common.TopUpStatusSuccess, CompleteTime: common.GetTimestamp()}
+								require.NoError(t, db.Create(&order).Error)
+								assert.ErrorIs(t, ValidateTopUpQuotaCapacity(owner, 1), ErrMonthlyTopUpLimitExceeded)
+								t.Cleanup(func() { operation_setting.GetPaymentSetting().MonthlyTopUpLimitEnabled = false })
+							}
+							if scenario == "wallet_limit" {
+								require.NoError(t, db.Model(&User{}).Where("id = ?", owner).Update("quota", common.MaxWalletQuota).Error)
+								require.ErrorIs(t, ClaimCommunityRedPacket(gift.ID, owner), ErrTopUpQuotaLimitExceeded)
 								failed, err := GetCommunityRedPacket(gift.ID, owner)
 								require.NoError(t, err)
 								assert.Zero(t, failed.Claimed)
@@ -288,6 +291,12 @@ func TestCommunityRedPacketDatabaseMatrix(t *testing.T) {
 							var balance User
 							require.NoError(t, db.First(&balance, owner).Error)
 							assert.Equal(t, 100, balance.Quota, "concurrent retries credit exactly once")
+							if scenario == "monthly_limit" {
+								status, err := GetMonthlyTopUpLimitStatus(owner)
+								require.NoError(t, err)
+								assert.Equal(t, status.LimitQuota, status.UsedQuota, "red packets must not use online allowance")
+								assert.Zero(t, status.RemainingQuota)
+							}
 							used, err := GetRedemptionById(credit.Id)
 							require.NoError(t, err)
 							assert.Equal(t, common.RedemptionCodeStatusUsed, used.Status, "redemption management sees the same consumed code")

@@ -72,8 +72,14 @@ it('opens wallet recharge on keyboard activation and closes with Escape', async 
   expect(
     await screen.findByPlaceholderText('Enter your redemption code')
   ).toBeVisible()
-  expect(screen.getByText('Remaining top-up allowance this month: $978')).toBeVisible()
-  expect(screen.getByText('Monthly limit: $1,000 · Credited: $0 · Pending orders: $22')).toBeVisible()
+  expect(
+    screen.getByText('Remaining online top-up allowance this month: $978')
+  ).toBeVisible()
+  expect(
+    screen.getByText(
+      'Monthly online limit: $1,000 · Credited online: $0 · Pending orders: $22'
+    )
+  ).toBeVisible()
   expect(screen.queryByText('Affiliate Rewards')).not.toBeInTheDocument()
   await user.keyboard('{Escape}')
   await waitFor(() =>
@@ -105,18 +111,20 @@ it('an over-limit top-up shows the remaining allowance and accepts a reduced amo
     if (amount <= 978) {
       return { data: { message: 'success', data: amount.toFixed(2) } }
     }
-    return { data: {
-      message: 'error',
-      data: 'monthly limit exceeded',
-      code: 'MONTHLY_TOPUP_LIMIT_EXCEEDED',
-      monthly_topup_limit: {
-        enabled: true,
-        limit_quota: 500_000_000,
-        used_quota: 0,
-        pending_quota: 11_000_000,
-        remaining_quota: 489_000_000,
+    return {
+      data: {
+        message: 'error',
+        data: 'monthly limit exceeded',
+        code: 'MONTHLY_TOPUP_LIMIT_EXCEEDED',
+        monthly_topup_limit: {
+          enabled: true,
+          limit_quota: 500_000_000,
+          used_quota: 0,
+          pending_quota: 11_000_000,
+          remaining_quota: 489_000_000,
+        },
       },
-    } }
+    }
   })
   const notify = vi.spyOn(toast, 'error').mockReturnValue('monthly-limit')
   const client = new QueryClient({
@@ -130,7 +138,9 @@ it('an over-limit top-up shows the remaining allowance and accepts a reduced amo
     </QueryClientProvider>
   )
   await user.click(screen.getByRole('button', { name: 'Online Top-up' }))
-  const amount = await screen.findByRole('spinbutton', { name: 'Custom Amount' })
+  const amount = await screen.findByRole('spinbutton', {
+    name: 'Custom Amount',
+  })
   await user.clear(amount)
   await user.type(amount, '1000')
   await user.click(await screen.findByRole('button', { name: 'Test Pay' }))
@@ -148,10 +158,14 @@ it('an over-limit top-up shows the remaining allowance and accepts a reduced amo
     expect.anything(),
     expect.anything()
   )
-  const reducedAmount = await screen.findByRole('spinbutton', { name: 'Custom Amount' })
+  const reducedAmount = await screen.findByRole('spinbutton', {
+    name: 'Custom Amount',
+  })
   await user.clear(reducedAmount)
   await user.type(reducedAmount, '978')
   await user.click(screen.getByRole('button', { name: 'Test Pay' }))
-  expect(await screen.findByRole('alertdialog', { name: 'Confirm Payment' })).toBeVisible()
+  expect(
+    await screen.findByRole('alertdialog', { name: 'Confirm Payment' })
+  ).toBeVisible()
   client.clear()
 })

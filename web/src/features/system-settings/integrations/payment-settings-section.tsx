@@ -986,11 +986,11 @@ export function PaymentSettingsSection({
                       <SettingsSwitchItem>
                         <SettingsSwitchContent>
                           <FormLabel>
-                            {t('Limit monthly top-ups per user')}
+                            {t('Limit monthly online top-ups per user')}
                           </FormLabel>
                           <FormDescription>
                             {t(
-                              'Limit wallet credit from online payments and redemption codes per UTC calendar month. Pending payment orders also reserve the allowance.'
+                              'Limit wallet credit from online payments per UTC calendar month, including pending orders. Redemption codes and red packets are exempt.'
                             )}
                           </FormDescription>
                         </SettingsSwitchContent>
@@ -1010,7 +1010,7 @@ export function PaymentSettingsSection({
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>
-                            {t('Monthly top-up limit per user (USD)')}
+                            {t('Monthly online top-up limit per user (USD)')}
                           </FormLabel>
                           <FormControl>
                             <Input

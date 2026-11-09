@@ -55,8 +55,9 @@ var (
 	ErrMonthlyTopUpLimitExceeded = errors.New("Monthly top-up limit reached (including pending orders). Reduce the amount or try again next month.")
 )
 
-// MonthlyTopUpLimitStatus uses wallet quota units, independent of payment
-// currency, discounts, display currency, and the user's current balance.
+// MonthlyTopUpLimitStatus counts online payment orders only, excluding
+// redemption codes and red packets. It uses wallet quota units, independent of
+// payment currency, discounts, display currency, and the user's current balance.
 type MonthlyTopUpLimitStatus struct {
 	Enabled        bool `json:"enabled"`
 	LimitQuota     int  `json:"limit_quota"`
@@ -178,20 +179,6 @@ func getMonthlyTopUpLimitStatus(tx *gorm.DB, userId int, includePending bool, co
 		} else {
 			status.UsedQuota += min(quota, common.MaxWalletQuota-status.UsedQuota)
 		}
-	}
-	// Used redemption codes remain part of the total after soft deletion.
-	redemptionQuery := tx.Unscoped().Where("used_user_id = ? AND status = ? AND redeemed_time >= ? AND redeemed_time < ?",
-		userId, common.RedemptionCodeStatusUsed, start.Unix(), start.AddDate(0, 1, 0).Unix())
-	var redemptions []Redemption
-	if err := redemptionQuery.Select("quota").Find(&redemptions).Error; err != nil {
-		return nil, err
-	}
-	for _, redemption := range redemptions {
-		if redemption.Quota <= 0 {
-			return nil, ErrInvalidTopUpQuota
-		}
-		status.limitExceeded = status.limitExceeded || redemption.Quota > limit-status.UsedQuota-status.PendingQuota
-		status.UsedQuota += min(redemption.Quota, common.MaxWalletQuota-status.UsedQuota)
 	}
 	status.RemainingQuota = max(0, limit-status.UsedQuota-status.PendingQuota)
 	return status, nil
