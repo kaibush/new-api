@@ -17,6 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import {
+  createMemoryHistory,
+  createRootRouteWithContext,
+  createRoute,
+  createRouter,
+} from '@tanstack/react-router'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -29,6 +35,7 @@ import {
   resolveConsoleLanding,
 } from '@/lib/console-landing'
 import { ROLE } from '@/lib/roles'
+import { Route as ConsoleRoute } from '@/routes/_authenticated/dashboard/index'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { SettingsPageProvider } from '../../components/settings-page-context'
@@ -268,3 +275,75 @@ it('refreshes invalidated settings before resolving console entry and reuses fre
     '/dashboard/overview'
   )
 })
+
+it.each([
+  ['/dashboard/overview', true, '/dashboard/overview'],
+  ['/dashboard/models', true, '/dashboard/models'],
+  ['/community', true, '/community'],
+  ['/community', false, '/dashboard/overview'],
+  ['/usage-logs/common', true, '/usage-logs/common'],
+  ['/usage-logs/task', true, '/usage-logs/task'],
+  ['/usage-logs/audit', true, '/usage-logs/audit'],
+  ['/models/metadata', true, '/models/metadata'],
+] as const)(
+  'preloads default %s (community enabled: %s) and resolves %s without a redirect cycle',
+  async (defaultPage, communityEnabled, destination) => {
+    client.setQueryData(['status'], {
+      SidebarModulesAdmin: JSON.stringify({ default_page: defaultPage }),
+    })
+    client.setQueryData(['community-status'], { enabled: communityEnabled })
+    const visited = new Set<string>()
+    const root = createRootRouteWithContext<{ queryClient: QueryClient }>()({
+      beforeLoad: ({ location, preload }) => {
+        if (!preload) return
+        // Stop a redirect cycle so a regression fails instead of locking the
+        // test worker in an endless microtask loop, as it would the browser.
+        if (visited.has(location.pathname)) {
+          throw new Error('Console preload redirected back to itself')
+        }
+        visited.add(location.pathname)
+      },
+    })
+    const consoleRoute = createRoute({
+      getParentRoute: () => root,
+      path: '/dashboard',
+      beforeLoad: ConsoleRoute.options.beforeLoad as (options: {
+        context: { queryClient: QueryClient }
+      }) => Promise<never>,
+    })
+    const overview = createRoute({
+      getParentRoute: () => root,
+      path: '/dashboard/$section',
+    })
+    const community = createRoute({
+      getParentRoute: () => root,
+      path: '/community',
+    })
+    const logs = createRoute({
+      getParentRoute: () => root,
+      path: '/usage-logs/$section',
+    })
+    const models = createRoute({
+      getParentRoute: () => root,
+      path: '/models/$section',
+    })
+    const router = createRouter({
+      routeTree: root.addChildren([
+        consoleRoute,
+        overview,
+        community,
+        logs,
+        models,
+      ]),
+      history: createMemoryHistory({ initialEntries: ['/'] }),
+      context: { queryClient: client },
+      defaultPreload: 'intent',
+      defaultPreloadStaleTime: 0,
+    })
+
+    const matches = await router.preloadRoute({ to: '/dashboard' })
+    expect(matches?.at(-1)?.pathname).toBe(destination)
+    expect(matches?.at(-1)?.status).toBe('success')
+    expect(router.state.location.pathname).toBe('/')
+  }
+)
