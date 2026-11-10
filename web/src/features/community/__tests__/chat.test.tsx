@@ -567,6 +567,15 @@ test('custom chat title and live online list reflect presence and disconnects', 
 })
 
 test('open-source emoji popup inserts an emoji and closes with Escape', async () => {
+  vi.stubGlobal(
+    'Image',
+    class extends Image {
+      constructor() {
+        super()
+        queueMicrotask(() => this.dispatchEvent(new Event('load')))
+      }
+    }
+  )
   const user = userEvent.setup()
   show(<CommunityChat />)
   const trigger = await screen.findByRole('button', { name: 'Insert emoji' })

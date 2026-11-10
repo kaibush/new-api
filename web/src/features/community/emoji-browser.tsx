@@ -1,7 +1,14 @@
-import data from '@emoji-mart/data/sets/15/twitter.json'
 import { Picker } from 'emoji-mart'
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+
+import { LoadingState } from '@/components/loading-state'
+
+import {
+  emojiData,
+  emojiSpritesheetUrl,
+  useEmojiSpritesheet,
+} from './emoji-assets'
 
 export default function EmojiBrowser(props: {
   onSelect: (emoji: string) => void
@@ -11,10 +18,11 @@ export default function EmojiBrowser(props: {
   const onSelect = useRef(props.onSelect)
   onSelect.current = props.onSelect
   const language = i18n.resolvedLanguage || i18n.language
+  const spritesheet = useEmojiSpritesheet()
   useEffect(() => {
-    if (!host.current) return
+    if (!host.current || spritesheet !== 'ready') return
     const picker = new Picker({
-      data,
+      data: emojiData,
       set: 'twitter',
       i18n: {
         search: t('Search'),
@@ -50,7 +58,7 @@ export default function EmojiBrowser(props: {
       perLine: 8,
       previewPosition: 'none',
       skinTonePosition: 'search',
-      getSpritesheetURL: () => '/emoji/twitter.png',
+      getSpritesheetURL: () => emojiSpritesheetUrl,
       onEmojiSelect: (emoji: { native: string }) =>
         onSelect.current(emoji.native),
     })
@@ -58,6 +66,12 @@ export default function EmojiBrowser(props: {
     element.style.width = '100%'
     host.current.appendChild(element)
     return () => element.remove()
-  }, [language, t])
-  return <div ref={host} className='w-full min-w-0' />
+  }, [language, t, spritesheet])
+  if (spritesheet === 'error') throw new Error('Emoji artwork failed to load')
+  return (
+    <>
+      {spritesheet === 'loading' && <LoadingState size='sm' />}
+      <div ref={host} className='w-full min-w-0' />
+    </>
+  )
 }
