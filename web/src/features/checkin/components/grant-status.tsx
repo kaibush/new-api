@@ -16,9 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { ColumnDef } from '@tanstack/react-table'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { StaticDataTable } from '@/components/data-table'
+import {
+  DataTablePagination,
+  DataTableView,
+  useDataTable,
+} from '@/components/data-table'
 import {
   Card,
   CardHeader,
@@ -29,7 +35,14 @@ import {
 import { formatQuotaWithCurrency } from '@/lib/currency'
 import dayjs from '@/lib/dayjs'
 
-import type { CheckinGrantSummary, CheckinUserBalance } from '../types'
+import type {
+  CheckinGrantStatus as CheckinGrantRecord,
+  CheckinGrantSummary,
+  CheckinUserBalance,
+} from '../types'
+
+const EMPTY_RECORDS: CheckinGrantRecord[] = []
+const PAGE_SIZE = 10
 
 export function CheckinGrantStatus(props: {
   grants: CheckinGrantSummary
@@ -37,6 +50,69 @@ export function CheckinGrantStatus(props: {
 }) {
   const { t } = useTranslation()
   const grants = props.grants
+  const records = grants.records ?? EMPTY_RECORDS
+  const [pageIndex, setPageIndex] = useState(0)
+  const currentPageIndex = Math.min(
+    pageIndex,
+    Math.max(0, Math.ceil(records.length / PAGE_SIZE) - 1)
+  )
+  const columns = useMemo<ColumnDef<CheckinGrantRecord>[]>(
+    () => [
+      {
+        id: 'claimed',
+        header: t('Claimed at'),
+        cell: ({ row }) =>
+          dayjs.unix(row.original.created_at).format('YYYY-MM-DD HH:mm:ss'),
+      },
+      {
+        id: 'expiry',
+        header: t('Expires at'),
+        cell: ({ row }) =>
+          dayjs.unix(row.original.expires_at).format('YYYY-MM-DD HH:mm:ss'),
+      },
+      {
+        id: 'reward',
+        header: t('Reward'),
+        cell: ({ row }) => formatQuotaWithCurrency(row.original.quota),
+      },
+      {
+        id: 'available',
+        header: t('Available'),
+        cell: ({ row }) => formatQuotaWithCurrency(row.original.available),
+      },
+      {
+        id: 'reserved',
+        header: t('Reserved quota'),
+        cell: ({ row }) => formatQuotaWithCurrency(row.original.reserved),
+      },
+      {
+        id: 'used',
+        header: t('Used'),
+        cell: ({ row }) => formatQuotaWithCurrency(row.original.used),
+      },
+      {
+        id: 'expired',
+        header: t('Expired'),
+        cell: ({ row }) => formatQuotaWithCurrency(row.original.expired),
+      },
+    ],
+    [t]
+  )
+  const { table } = useDataTable({
+    data: records,
+    columns,
+    getRowId: (row) => String(row.checkin_id),
+    enableRowSelection: false,
+    enableSorting: false,
+    autoResetPageIndex: false,
+    pagination: { pageIndex: currentPageIndex, pageSize: PAGE_SIZE },
+    onPaginationChange: (updater) => {
+      const current = { pageIndex: currentPageIndex, pageSize: PAGE_SIZE }
+      const next = typeof updater === 'function' ? updater(current) : updater
+      setPageIndex(next.pageIndex)
+    },
+  })
+
   return (
     <Card>
       <CardHeader>
@@ -113,49 +189,12 @@ export function CheckinGrantStatus(props: {
         <p className='text-muted-foreground text-sm'>
           {t('Recent expiring rewards (up to 100)')}
         </p>
-        <StaticDataTable
-          data={grants.records ?? []}
+        <DataTableView
+          table={table}
           emptyContent={t('No records')}
-          columns={[
-            {
-              id: 'claimed',
-              header: t('Claimed at'),
-              cell: (row) =>
-                dayjs.unix(row.created_at).format('YYYY-MM-DD HH:mm:ss'),
-            },
-            {
-              id: 'expiry',
-              header: t('Expires at'),
-              cell: (row) =>
-                dayjs.unix(row.expires_at).format('YYYY-MM-DD HH:mm:ss'),
-            },
-            {
-              id: 'reward',
-              header: t('Reward'),
-              cell: (row) => formatQuotaWithCurrency(row.quota),
-            },
-            {
-              id: 'available',
-              header: t('Available'),
-              cell: (row) => formatQuotaWithCurrency(row.available),
-            },
-            {
-              id: 'reserved',
-              header: t('Reserved quota'),
-              cell: (row) => formatQuotaWithCurrency(row.reserved),
-            },
-            {
-              id: 'used',
-              header: t('Used'),
-              cell: (row) => formatQuotaWithCurrency(row.used),
-            },
-            {
-              id: 'expired',
-              header: t('Expired'),
-              cell: (row) => formatQuotaWithCurrency(row.expired),
-            },
-          ]}
+          emptyCellClassName='h-24 text-center'
         />
+        <DataTablePagination table={table} compact />
       </CardContent>
     </Card>
   )

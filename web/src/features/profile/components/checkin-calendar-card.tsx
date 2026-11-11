@@ -312,11 +312,6 @@ export function CheckinCalendarCard({
         </div>
       </Dialog>
 
-      {checkinData?.grants &&
-        (eligibility?.mode === 2 ||
-          Boolean(checkinData.grants.records?.length)) && (
-          <CheckinGrantStatus grants={checkinData.grants} />
-        )}
       <Card data-card-hover='false' className='gap-0 overflow-hidden py-0'>
         {/* Header */}
         <div className='border-b p-4 sm:p-6'>
@@ -549,6 +544,11 @@ export function CheckinCalendarCard({
           </>
         ) : null}
       </Card>
+      {checkinData?.grants &&
+        (eligibility?.mode === 2 ||
+          Boolean(checkinData.grants.records?.length)) && (
+          <CheckinGrantStatus grants={checkinData.grants} />
+        )}
     </TooltipProvider>
   )
 }

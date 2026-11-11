@@ -539,6 +539,13 @@ test.each([
     if (mode === 2) {
       expect(screen.getByText('Expiring check-in quota')).toBeVisible()
       expect(screen.getByRole('table')).toBeVisible()
+      expect(
+        screen
+          .getByRole('button', { name: 'Check in now' })
+          .compareDocumentPosition(
+            screen.getByText('Recent expiring rewards (up to 100)')
+          ) & Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy()
     } else {
       expect(
         screen.queryByText('Expiring check-in quota')
