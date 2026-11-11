@@ -91,7 +91,8 @@ const limits = {
 
 function renderCheckin(
   decision: CheckinEligibility,
-  grants?: Record<string, unknown>
+  grants?: Record<string, unknown>,
+  options?: { embedded?: boolean }
 ) {
   vi.spyOn(api, 'get').mockResolvedValue({
     data: {
@@ -116,13 +117,14 @@ function renderCheckin(
   render(
     <QueryClientProvider client={client}>
       <CheckinCalendarCard
+        embedded={options?.embedded}
         checkinEnabled
         turnstileEnabled={false}
         turnstileSiteKey=''
       />
     </QueryClientProvider>
   )
-  return screen.findByText('Daily Check-in')
+  return screen.findByRole('button', { name: 'View check-in records' })
 }
 
 const configuration = {
@@ -130,6 +132,38 @@ const configuration = {
   observed_since: 1700000000,
   settings: { enabled: true, min_quota: 10, max_quota: 100, limits },
 }
+
+test('embedded expiring rewards keep their rules expandable and still show them before claiming', async () => {
+  await renderCheckin(
+    { ...eligibility, mode: 2, expiry_seconds: 3600 },
+    undefined,
+    { embedded: true }
+  )
+  const details = screen.getByRole('button', {
+    name: 'Check-in reward details',
+  })
+  expect(details).toHaveAttribute('aria-expanded', 'false')
+  expect(
+    screen.queryByText(
+      'Daily rewards are independent of activity and monthly caps. Expiring rewards are used first; recharged quota never expires.'
+    )
+  ).not.toBeInTheDocument()
+  fireEvent.click(details)
+  expect(details).toHaveAttribute('aria-expanded', 'true')
+  expect(
+    screen.getByText(
+      'Daily rewards are independent of activity and monthly caps. Expiring rewards are used first; recharged quota never expires.'
+    )
+  ).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Check in now' }))
+  const confirmation = screen.getByRole('alertdialog')
+  expect(
+    within(confirmation).getByText(
+      'Daily rewards are independent of activity and monthly caps. Expiring rewards are used first; recharged quota never expires.'
+    )
+  ).toBeVisible()
+  expect(api.post).not.toHaveBeenCalled()
+})
 
 beforeEach(() => {
   vi.spyOn(api, 'get').mockImplementation(async (url) => ({

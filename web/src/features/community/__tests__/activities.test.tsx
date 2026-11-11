@@ -274,6 +274,19 @@ test('cancelling an event requires confirmation and refreshes its detail', async
   ).not.toBeInTheDocument()
 })
 
+test('the check-in dialog separates sections and shows its title once', async () => {
+  const user = userEvent.setup()
+  show(<CommunityCheckin />)
+  await user.click(await screen.findByRole('button', { name: 'Open check-in' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Daily Check-in' })
+  await within(dialog).findByRole('button', { name: 'Check in now' })
+  expect(within(dialog).getAllByText('Daily Check-in')).toHaveLength(1)
+  const content = within(dialog).getByRole('region', {
+    name: 'Check-in reward details',
+  })
+  expect(content).toHaveClass('flex', 'flex-col', 'gap-4')
+})
+
 test('check-in from the board reuses reward confirmation and immediately refreshes the entry after claiming', async () => {
   const user = userEvent.setup()
   show(<CommunityCheckin />)

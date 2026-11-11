@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 
 import { CheckinGrantStatus } from '../components/grant-status'
 import type { CheckinGrantSummary } from '../types'
@@ -40,6 +40,42 @@ const grants: CheckinGrantSummary = {
     expires_at: Date.UTC(2026, 9, index + 1, 1) / 1000,
   })),
 }
+
+test('reward records scroll separately from the pagination controls', () => {
+  render(<CheckinGrantStatus grants={grants} />)
+  const records = screen.getByRole('region', {
+    name: 'Recent expiring rewards (up to 100)',
+  })
+  expect(records).toHaveAttribute('tabindex', '0')
+  expect(records).toHaveClass('max-h-[min(16rem,30dvh)]', 'overflow-auto')
+  expect(
+    within(records).queryByRole('button', { name: 'Go to next page' })
+  ).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Go to next page' })).toBeVisible()
+  expect(screen.getByRole('group', { name: 'Page' })).toHaveClass(
+    'sticky',
+    'bottom-0'
+  )
+})
+
+test('a narrow viewport shows all reward fields as a list and retains pagination', async () => {
+  const original = window.matchMedia
+  vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+    ...original(query),
+    matches: query === '(max-width: 640px)',
+  }))
+  const user = userEvent.setup()
+  render(<CheckinGrantStatus grants={grants} />)
+  const records = screen.getByRole('region', {
+    name: 'Recent expiring rewards (up to 100)',
+  })
+  expect(screen.queryByRole('table')).not.toBeInTheDocument()
+  expect(within(records).getAllByText('Expires at')).toHaveLength(10)
+  expect(within(records).getAllByText('Used')).toHaveLength(10)
+  expect(within(records).getAllByText('Expired')).toHaveLength(10)
+  await user.click(screen.getByRole('button', { name: 'Go to next page' }))
+  expect(screen.getByText('2 / 3')).toBeVisible()
+})
 
 test('21 rewards display ten per page and allow keyboard navigation to the partial last page', async () => {
   const user = userEvent.setup()

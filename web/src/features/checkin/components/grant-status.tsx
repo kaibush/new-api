@@ -20,9 +20,11 @@ import type { ColumnDef } from '@tanstack/react-table'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { TimestampCell } from '@/components/activity-time-cell'
 import {
   DataTablePagination,
   DataTableView,
+  MobileCardList,
   useDataTable,
 } from '@/components/data-table'
 import {
@@ -31,7 +33,9 @@ import {
   CardTitle,
   CardDescription,
   CardContent,
+  CardFooter,
 } from '@/components/ui/card'
+import { useMediaQuery } from '@/hooks/use-media-query'
 import { formatQuotaWithCurrency } from '@/lib/currency'
 import dayjs from '@/lib/dayjs'
 
@@ -50,6 +54,7 @@ export function CheckinGrantStatus(props: {
 }) {
   const { t } = useTranslation()
   const grants = props.grants
+  const isMobile = useMediaQuery('(max-width: 640px)')
   const records = grants.records ?? EMPTY_RECORDS
   const [pageIndex, setPageIndex] = useState(0)
   const currentPageIndex = Math.min(
@@ -61,19 +66,33 @@ export function CheckinGrantStatus(props: {
       {
         id: 'claimed',
         header: t('Claimed at'),
-        cell: ({ row }) =>
-          dayjs.unix(row.original.created_at).format('YYYY-MM-DD HH:mm:ss'),
+        cell: ({ row }) => (
+          <TimestampCell
+            timestamp={row.original.created_at}
+            format='absolute'
+            justNowLabel={t('Just now')}
+            className='w-24 whitespace-normal'
+          />
+        ),
+        meta: { mobileTitle: true },
       },
       {
         id: 'expiry',
         header: t('Expires at'),
-        cell: ({ row }) =>
-          dayjs.unix(row.original.expires_at).format('YYYY-MM-DD HH:mm:ss'),
+        cell: ({ row }) => (
+          <TimestampCell
+            timestamp={row.original.expires_at}
+            format='absolute'
+            justNowLabel={t('Just now')}
+            className='w-24 whitespace-normal'
+          />
+        ),
       },
       {
         id: 'reward',
         header: t('Reward'),
         cell: ({ row }) => formatQuotaWithCurrency(row.original.quota),
+        meta: { mobileBadge: true },
       },
       {
         id: 'available',
@@ -114,7 +133,7 @@ export function CheckinGrantStatus(props: {
   })
 
   return (
-    <Card>
+    <Card className='min-w-0 overflow-visible'>
       <CardHeader>
         <CardTitle>
           {props.balance ? t('Balance') : t('Expiring check-in quota')}
@@ -156,7 +175,7 @@ export function CheckinGrantStatus(props: {
             <h4 className='font-medium'>{t('Expiring check-in quota')}</h4>
           </>
         )}
-        <dl className='grid grid-cols-2 gap-4 sm:grid-cols-4'>
+        <dl className='bg-muted/40 grid grid-cols-2 gap-3 rounded-lg p-3 sm:grid-cols-4 [&_dd]:mt-1 [&_dd]:text-lg [&_dd]:font-semibold [&_dd]:tabular-nums'>
           <div>
             <dt className='text-muted-foreground text-sm'>{t('Available')}</dt>
             <dd>{formatQuotaWithCurrency(grants.available)}</dd>
@@ -189,13 +208,32 @@ export function CheckinGrantStatus(props: {
         <p className='text-muted-foreground text-sm'>
           {t('Recent expiring rewards (up to 100)')}
         </p>
-        <DataTableView
-          table={table}
-          emptyContent={t('No records')}
-          emptyCellClassName='h-24 text-center'
-        />
-        <DataTablePagination table={table} compact />
+        <div
+          role='region'
+          aria-label={t('Recent expiring rewards (up to 100)')}
+          tabIndex={0}
+          className='focus-visible:ring-ring max-h-[min(16rem,30dvh)] overflow-auto rounded-lg border outline-none focus-visible:ring-2'
+        >
+          {isMobile ? (
+            <MobileCardList table={table} emptyTitle={t('No records')} />
+          ) : (
+            <DataTableView
+              table={table}
+              containerClassName='rounded-none border-0'
+              tableHeaderClassName='bg-muted/50 [&_th]:whitespace-normal'
+              emptyContent={t('No records')}
+              emptyCellClassName='h-24 text-center'
+            />
+          )}
+        </div>
       </CardContent>
+      <CardFooter
+        role='group'
+        aria-label={t('Page')}
+        className='bg-card sticky bottom-0 z-10 p-3'
+      >
+        <DataTablePagination table={table} compact />
+      </CardFooter>
     </Card>
   )
 }

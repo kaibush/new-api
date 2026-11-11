@@ -16,8 +16,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { ChevronDown } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatQuotaWithCurrency } from '@/lib/currency'
 import dayjs from '@/lib/dayjs'
@@ -28,6 +36,7 @@ import type { CheckinEligibility } from '../types'
 
 export function CheckinRewardDetails(props: {
   eligibility: CheckinEligibility
+  compact?: boolean
 }) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
@@ -36,26 +45,68 @@ export function CheckinRewardDetails(props: {
     dayjs.unix(value).format('YYYY-MM-DD HH:mm:ss')
   if (e.mode === 2) {
     return (
-      <div className='flex flex-col gap-2 text-sm'>
-        <p>{t('Method 2: Expiring rewards')}</p>
-        <p>
-          {t(
-            'Daily rewards are independent of activity and monthly caps. Expiring rewards are used first; recharged quota never expires.'
+      <Collapsible
+        defaultOpen={!props.compact}
+        className='flex flex-col gap-3 text-sm'
+      >
+        <div className='flex flex-wrap items-center justify-between gap-2'>
+          <Badge variant='secondary'>{t('Method 2: Expiring rewards')}</Badge>
+          {props.compact && (
+            <CollapsibleTrigger
+              render={
+                <Button variant='ghost' size='sm' className='group min-h-11' />
+              }
+            >
+              {t('Check-in reward details')}
+              <ChevronDown
+                data-icon='inline-end'
+                aria-hidden='true'
+                className='transition-transform group-aria-expanded:rotate-180'
+              />
+            </CollapsibleTrigger>
           )}
-        </p>
-        <p>
-          {t('Reward validity: {{minutes}} minutes from claim time', {
-            minutes: formatNumber((e.expiry_seconds ?? 86400) / 60, locale),
-          })}
-        </p>
-        <p>
-          {t('Available reward: {{minimum}} – {{maximum}}', {
-            minimum: formatQuotaWithCurrency(e.min_quota),
-            maximum: formatQuotaWithCurrency(e.max_quota),
-          })}
-        </p>
+        </div>
+        {props.compact ? (
+          <dl className='grid grid-cols-2 gap-3'>
+            <div>
+              <dt className='text-muted-foreground'>{t('Reward validity')}</dt>
+              <dd className='mt-1 font-medium'>
+                {formatNumber((e.expiry_seconds ?? 86400) / 60, locale)}{' '}
+                {t('minutes')}
+              </dd>
+            </div>
+            <div>
+              <dt className='text-muted-foreground'>{t('Claimable reward')}</dt>
+              <dd className='mt-1 font-medium'>
+                {formatQuotaWithCurrency(e.min_quota)} –{' '}
+                {formatQuotaWithCurrency(e.max_quota)}
+              </dd>
+            </div>
+          </dl>
+        ) : (
+          <div className='grid gap-2 sm:grid-cols-2'>
+            <p>
+              {t('Reward validity: {{minutes}} minutes from claim time', {
+                minutes: formatNumber((e.expiry_seconds ?? 86400) / 60, locale),
+              })}
+            </p>
+            <p>
+              {t('Available reward: {{minimum}} – {{maximum}}', {
+                minimum: formatQuotaWithCurrency(e.min_quota),
+                maximum: formatQuotaWithCurrency(e.max_quota),
+              })}
+            </p>
+          </div>
+        )}
+        <CollapsibleContent>
+          <p className='text-muted-foreground leading-relaxed'>
+            {t(
+              'Daily rewards are independent of activity and monthly caps. Expiring rewards are used first; recharged quota never expires.'
+            )}
+          </p>
+        </CollapsibleContent>
         {!e.allowed && <p>{t('Check-in rewards are currently paused.')}</p>}
-      </div>
+      </Collapsible>
     )
   }
   return (

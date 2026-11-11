@@ -33,6 +33,7 @@ import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Dialog } from '@/components/dialog'
 import { Turnstile } from '@/components/turnstile'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { IconBadge } from '@/components/ui/icon-badge'
@@ -55,12 +56,14 @@ import { getCheckinStatus, performCheckin } from '../api'
 import type { CheckinRecord } from '../types'
 
 interface CheckinCalendarCardProps {
+  embedded?: boolean
   checkinEnabled: boolean
   turnstileEnabled: boolean
   turnstileSiteKey: string
 }
 
 export function CheckinCalendarCard({
+  embedded = false,
   checkinEnabled,
   turnstileEnabled,
   turnstileSiteKey,
@@ -136,9 +139,9 @@ export function CheckinCalendarCard({
     if (initialLoaded) return
     if (isLoading) return
     if (!checkinData) return
-    setCollapsed(checkedToday)
+    setCollapsed(embedded || checkedToday)
     setInitialLoaded(true)
-  }, [checkinData, checkedToday, initialLoaded, isLoading])
+  }, [checkinData, checkedToday, embedded, initialLoaded, isLoading])
 
   const shouldTriggerTurnstile = useCallback(
     (message?: string) => {
@@ -314,11 +317,13 @@ export function CheckinCalendarCard({
 
       <Card data-card-hover='false' className='gap-0 overflow-hidden py-0'>
         {/* Header */}
-        <div className='border-b p-4 sm:p-6'>
+        <div className='border-b p-4'>
           <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4'>
-            <button
-              type='button'
-              className='flex min-w-0 flex-1 items-start gap-3 rounded-lg text-left whitespace-normal outline-none'
+            <Button
+              variant='ghost'
+              aria-expanded={!collapsed}
+              aria-label={t('View check-in records')}
+              className='h-auto min-w-0 flex-1 items-start justify-start gap-3 p-0 text-left whitespace-normal'
               onClick={() => setCollapsed((v) => !v)}
             >
               <IconBadge tone='neutral' size='lg' className='sm:size-11'>
@@ -330,13 +335,13 @@ export function CheckinCalendarCard({
               <div className='min-w-0 flex-1'>
                 <div className='flex flex-wrap items-center gap-1.5 sm:gap-2'>
                   <h3 className='text-base font-semibold tracking-tight sm:text-lg'>
-                    {t('Daily Check-in')}
+                    {embedded ? t('Today') : t('Daily Check-in')}
                   </h3>
-                  {checkedToday && (
-                    <div className='inline-flex items-center gap-1 rounded-md bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-600 sm:gap-1.5 sm:px-2.5 sm:text-xs dark:text-emerald-400'>
-                      <Sparkles className='h-2.5 w-2.5 sm:h-3 sm:w-3' />
+                  {checkedToday && !embedded && (
+                    <Badge variant='secondary'>
+                      <Sparkles data-icon='inline-start' aria-hidden='true' />
                       {t('Checked in')}
-                    </div>
+                    </Badge>
                   )}
                   <span className='text-muted-foreground inline-flex items-center'>
                     {collapsed ? (
@@ -348,16 +353,16 @@ export function CheckinCalendarCard({
                 </div>
                 <p className='text-muted-foreground mt-1 line-clamp-2 text-xs sm:text-sm'>
                   {checkedToday && todayAward !== undefined
-                    ? `${t('Today')} +${formatQuotaWithCurrency(todayAward)}`
+                    ? `${embedded ? t('Reward') : t('Today')} +${formatQuotaWithCurrency(todayAward)}`
                     : t('Check in daily to receive random quota rewards')}
                 </p>
               </div>
-            </button>
+            </Button>
             <Button
               onClick={() => setRewardDialogOpen(true)}
               disabled={checkinLoading || checkedToday || !checkinData}
               size='sm'
-              className='w-full shrink-0 sm:w-auto'
+              className='min-h-11 w-full shrink-0 sm:min-h-9 sm:w-auto'
             >
               {checkinButtonLabel}
             </Button>
@@ -387,9 +392,12 @@ export function CheckinCalendarCard({
         )}
         {eligibility && (eligibility.limited || eligibility.mode === 2) && (
           <div className='px-4 pb-4 sm:px-6'>
-            <Alert>
+            <Alert className={embedded ? 'border-0 p-0' : undefined}>
               <AlertDescription>
-                <CheckinRewardDetails eligibility={eligibility} />
+                <CheckinRewardDetails
+                  eligibility={eligibility}
+                  compact={embedded}
+                />
               </AlertDescription>
             </Alert>
           </div>

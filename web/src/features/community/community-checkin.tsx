@@ -104,17 +104,25 @@ export function CommunityCheckin() {
         open={open}
         onOpenChange={setOpen}
         title={t('Daily Check-in')}
-        contentClassName='sm:max-w-2xl'
+        contentClassName='w-[calc(100%-2rem)] sm:max-w-4xl'
+        bodyClassName='flex flex-col gap-4'
       >
         {open && (
           <Suspense fallback={<LoadingState />}>
-            <CheckinCalendarCard
-              checkinEnabled={status?.checkin_enabled === true}
-              turnstileEnabled={
-                !!(status?.turnstile_check && status?.turnstile_site_key)
-              }
-              turnstileSiteKey={status?.turnstile_site_key || ''}
-            />
+            <div
+              role='region'
+              aria-label={t('Check-in reward details')}
+              className='flex min-w-0 flex-col gap-4'
+            >
+              <CheckinCalendarCard
+                embedded
+                checkinEnabled={status?.checkin_enabled === true}
+                turnstileEnabled={
+                  !!(status?.turnstile_check && status?.turnstile_site_key)
+                }
+                turnstileSiteKey={status?.turnstile_site_key || ''}
+              />
+            </div>
           </Suspense>
         )}
       </Dialog>
