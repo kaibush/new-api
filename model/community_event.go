@@ -37,7 +37,7 @@ func (input *CommunityEventInput) validate(now, originalStart int64) error {
 	input.Description = strings.TrimSpace(input.Description)
 	if input.Title == "" || utf8.RuneCountInString(input.Title) > 80 || utf8.RuneCountInString(input.Description) > 2000 ||
 		(input.Kind != "event" && input.Kind != "red_packet") ||
-		input.StartsAt > now+366*86400 || input.EndsAt <= max(now, input.StartsAt) || input.EndsAt > now+397*86400 {
+		input.EndsAt <= max(now, input.StartsAt) {
 		return ErrCommunityEventInput
 	}
 	if originalStart > 0 && originalStart <= now {

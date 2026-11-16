@@ -178,9 +178,7 @@ export function EventForm(props: {
                 ? t(
                     'An ongoing event keeps its original start time. Its end time must be in the future.'
                   )
-                : t(
-                    'Schedule within the next year. Times use your local time zone.'
-                  )}
+                : t('Times use your local time zone.')}
             </p>
             <Field data-invalid={!!form.formState.errors.description}>
               <FieldLabel htmlFor={`${id}-description`}>

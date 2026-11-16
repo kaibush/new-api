@@ -28,10 +28,7 @@ export function communityEventFormSchema(
       return false
     }
     return (
-      (start > now || start === originalStart) &&
-      start <= now + 366 * 86400000 &&
-      end > Math.max(now, start) &&
-      end <= now + 397 * 86400000
+      (start > now || start === originalStart) && end > Math.max(now, start)
     )
   })
 }

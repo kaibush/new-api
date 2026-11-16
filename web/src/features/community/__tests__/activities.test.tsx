@@ -20,6 +20,7 @@ import type { CommunityEvent, CommunityEventInput } from '../event-api'
 import { EventTiming } from '../event-card'
 import { EventDetail } from '../event-detail'
 import { EventForm } from '../event-form'
+import { communityEventFormSchema } from '../lib/event-form'
 import { useRedPackets } from '../use-red-packets'
 
 const event: CommunityEvent = {
@@ -389,6 +390,55 @@ test('editing an ongoing event retains its past start and allows saving changed 
     })
   )
 })
+
+test('event publication accepts start and end dates several years in the future', () => {
+  vi.spyOn(Date, 'now').mockReturnValue(
+    new Date('2026-11-16T00:00:00Z').getTime()
+  )
+  const values = {
+    title: 'Long-term community event',
+    description: 'Community announcements',
+    kind: 'event',
+    starts_at: new Date('2030-01-01T11:00:00Z'),
+    ends_at: new Date('2040-12-31T12:00:00Z'),
+  }
+  expect(communityEventFormSchema().parse(values)).toEqual(values)
+})
+
+test.each([
+  ['2026-11-09T11:00:00Z', '2027-12-31T12:00:00Z'],
+  ['2030-01-01T11:00:00Z', '2040-12-31T12:00:00Z'],
+])(
+  'editing an event starting at %s saves details with an end date beyond a year',
+  async (startsAt, endsAt) => {
+    vi.spyOn(Date, 'now').mockReturnValue(
+      new Date('2026-11-16T00:00:00Z').getTime()
+    )
+    const longEvent = {
+      ...event,
+      starts_at: new Date(startsAt).getTime() / 1000,
+      ends_at: new Date(endsAt).getTime() / 1000,
+    }
+    const saved = vi.fn()
+    const put = vi.spyOn(api, 'put').mockResolvedValue({
+      data: { success: true, data: longEvent },
+    })
+    show(<EventForm event={longEvent} onClose={vi.fn()} onSaved={saved} />)
+    fireEvent.change(screen.getByLabelText('Event details'), {
+      target: { value: 'Updated community announcement' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+    await waitFor(() => expect(saved).toHaveBeenCalledWith(longEvent))
+    expect(put).toHaveBeenCalledWith('/api/community/events/80', {
+      title: longEvent.title,
+      description: 'Updated community announcement',
+      kind: longEvent.kind,
+      starts_at: longEvent.starts_at,
+      ends_at: longEvent.ends_at,
+    })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  }
+)
 
 test('invalid event edits cannot be saved and cancelling the draft restores the original detail', async () => {
   vi.spyOn(Date, 'now').mockReturnValue((event.starts_at - 3600) * 1000)

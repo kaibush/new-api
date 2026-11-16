@@ -94,7 +94,8 @@ func TestCommunityEvents(t *testing.T) {
 						return response
 					}
 					now := time.Now().Unix()
-					input := model.CommunityEventInput{Title: "Community evening", Description: "Meet in the chat", Kind: "red_packet", StartsAt: now + 3600, EndsAt: now + 7200}
+					// Publication and edits support multi-year schedules without a horizon limit.
+					input := model.CommunityEventInput{Title: "Community evening", Description: "Meet in the chat", Kind: "red_packet", StartsAt: now + 2*365*86400, EndsAt: now + 4*365*86400}
 					request("GET", "/api/community/events", "", nil, 401)
 					request("POST", "/api/community/events", member.AccessToken, input, 403)
 					for _, invalid := range []model.CommunityEventInput{
@@ -116,6 +117,7 @@ func TestCommunityEvents(t *testing.T) {
 					require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
 					event := result.Data
 					assert.Equal(t, admin.Id, event.UserID)
+					assert.Equal(t, input, event.CommunityEventInput)
 					path := fmt.Sprintf("/api/community/events/%d", event.ID)
 					request("GET", path, member.AccessToken, nil, 200)
 					list := request("GET", "/api/community/events", member.AccessToken, nil, 200)
@@ -142,8 +144,6 @@ func TestCommunityEvents(t *testing.T) {
 							{Title: "Unknown", Kind: "unknown", StartsAt: input.StartsAt, EndsAt: input.EndsAt},
 							{Title: strings.Repeat("字", 81), Kind: "event", StartsAt: input.StartsAt, EndsAt: input.EndsAt},
 							{Title: "Long details", Description: strings.Repeat("字", 2001), Kind: "event", StartsAt: input.StartsAt, EndsAt: input.EndsAt},
-							{Title: "Too far", Kind: "event", StartsAt: now + 367*86400, EndsAt: now + 368*86400},
-							{Title: "Too long", Kind: "event", StartsAt: input.StartsAt, EndsAt: now + 398*86400},
 						} {
 							request("PUT", path, adminSession.AccessToken, invalid, 400)
 						}
@@ -161,7 +161,7 @@ func TestCommunityEvents(t *testing.T) {
 						saved, err = model.GetCommunityEvent(event.ID)
 						require.NoError(t, err)
 						assert.Equal(t, event, saved)
-						input = model.CommunityEventInput{Title: "Updated evening", Kind: "event", StartsAt: now + 7200, EndsAt: now + 10800}
+						input = model.CommunityEventInput{Title: "Updated evening", Kind: "event", StartsAt: now + 3*365*86400, EndsAt: now + 6*365*86400}
 						// Ignore attempts to overwrite immutable identity and state fields.
 						body := map[string]any{"title": " Updated evening ", "description": "", "kind": input.Kind, "starts_at": input.StartsAt, "ends_at": input.EndsAt, "id": 1, "user_id": user.Id, "name": "Impersonated", "created_at": 0, "cancelled": true}
 						for range 2 {
@@ -189,9 +189,12 @@ func TestCommunityEvents(t *testing.T) {
 						input.StartsAt = now - 3600
 						input.EndsAt = now - 1
 						request("PUT", path, adminSession.AccessToken, input, 400)
-						input.EndsAt = now + 14400
+						input.EndsAt = now + 10*365*86400
 						input.Description = "Extended gathering"
 						request("PUT", path, adminSession.AccessToken, input, 200)
+						saved, err = model.GetCommunityEvent(event.ID)
+						require.NoError(t, err)
+						assert.Equal(t, input, saved.CommunityEventInput)
 					})
 					input.StartsAt = now + 7200
 					request("DELETE", path, member.AccessToken, nil, 403)
