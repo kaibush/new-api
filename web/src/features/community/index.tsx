@@ -17,8 +17,8 @@ import type { ChatMessage } from './api'
 import { ChatAvatar } from './chat-avatar'
 import { ChatComposer } from './chat-composer'
 import { CommunityBoard } from './community-board'
-import { EventCreate } from './event-create'
 import { EventDetail } from './event-detail'
+import { EventForm } from './event-form'
 import { CommunityRecords } from './history'
 import { ChatMessageBubble } from './message-bubble'
 import { ChatModerationDialog } from './moderation-dialog'
@@ -341,9 +341,9 @@ export function CommunityChat() {
           />
         )}
         {eventCreateOpen && (
-          <EventCreate
+          <EventForm
             onClose={() => setEventCreateOpen(false)}
-            onCreated={(event) => {
+            onSaved={(event) => {
               setEventCreateOpen(false)
               stickToBottom.current = true
               onSending({

@@ -12,6 +12,7 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { cancelCommunityEvent, getCommunityEvent } from './event-api'
 import { EventTiming } from './event-card'
+import { EventForm } from './event-form'
 import { MessageText } from './message-text'
 
 export function EventDetail(props: {
@@ -23,6 +24,7 @@ export function EventDetail(props: {
   const client = useQueryClient()
   const role = useAuthStore((s) => s.auth.user?.role ?? 0)
   const [confirm, setConfirm] = useState(false)
+  const [editing, setEditing] = useState(false)
   const locating = useRef(false)
   const detail = useQuery({
     queryKey: ['community-event', props.id],
@@ -41,6 +43,15 @@ export function EventDetail(props: {
     },
   })
   const event = detail.data
+  if (editing && event) {
+    return (
+      <EventForm
+        event={event}
+        onClose={() => setEditing(false)}
+        onSaved={() => setEditing(false)}
+      />
+    )
+  }
   return (
     <Dialog
       open
@@ -92,9 +103,20 @@ export function EventDetail(props: {
             {t('View in chat')}
           </Button>
           {role >= 10 && !event.cancelled && (
-            <Button variant='ghost' onClick={() => setConfirm(true)}>
-              {t('Cancel event')}
-            </Button>
+            <>
+              {event.ends_at * 1000 > Date.now() && (
+                <Button
+                  variant='outline'
+                  onClick={() => setEditing(true)}
+                  disabled={cancel.isPending}
+                >
+                  {t('Edit event')}
+                </Button>
+              )}
+              <Button variant='ghost' onClick={() => setConfirm(true)}>
+                {t('Cancel event')}
+              </Button>
+            </>
           )}
           <ConfirmDialog
             open={confirm}

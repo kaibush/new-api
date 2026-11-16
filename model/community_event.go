@@ -12,6 +12,7 @@ import (
 
 var ErrCommunityEventInput = errors.New("Enter a title, an event type, and a future time range")
 var ErrCommunityEventUnavailable = errors.New("Event is unavailable")
+var ErrCommunityEventNotEditable = errors.New("Cancelled or ended events cannot be edited")
 
 type CommunityEventInput struct {
 	Title       string `json:"title" gorm:"type:varchar(80)"`
@@ -31,14 +32,29 @@ type CommunityEvent struct {
 	Cancelled bool   `json:"cancelled"`
 }
 
-func CreateCommunityEvent(userID int, input CommunityEventInput) (CommunityEvent, error) {
-	event := CommunityEvent{}
+func (input *CommunityEventInput) validate(now, originalStart int64) error {
 	input.Title = strings.TrimSpace(input.Title)
 	input.Description = strings.TrimSpace(input.Description)
-	now := time.Now().Unix()
 	if input.Title == "" || utf8.RuneCountInString(input.Title) > 80 || utf8.RuneCountInString(input.Description) > 2000 ||
-		(input.Kind != "event" && input.Kind != "red_packet") || input.StartsAt <= now || input.StartsAt > now+366*86400 || input.EndsAt <= input.StartsAt || input.EndsAt > now+397*86400 {
-		return event, ErrCommunityEventInput
+		(input.Kind != "event" && input.Kind != "red_packet") ||
+		input.StartsAt > now+366*86400 || input.EndsAt <= max(now, input.StartsAt) || input.EndsAt > now+397*86400 {
+		return ErrCommunityEventInput
+	}
+	if originalStart > 0 && originalStart <= now {
+		if input.StartsAt != originalStart {
+			return ErrCommunityEventInput
+		}
+	} else if input.StartsAt <= now {
+		return ErrCommunityEventInput
+	}
+	return nil
+}
+
+func CreateCommunityEvent(userID int, input CommunityEventInput) (CommunityEvent, error) {
+	event := CommunityEvent{}
+	now := time.Now().Unix()
+	if err := input.validate(now, 0); err != nil {
+		return event, err
 	}
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		var user User
@@ -62,6 +78,41 @@ func CreateCommunityEvent(userID int, input CommunityEventInput) (CommunityEvent
 		}
 		event = CommunityEvent{CommunityEventInput: input, ID: message.ID, UserID: userID, Name: name, CreatedAt: now}
 		return tx.Create(&event).Error
+	})
+	return event, err
+}
+
+func UpdateCommunityEvent(userID int, id int64, input CommunityEventInput) (CommunityEvent, error) {
+	event := CommunityEvent{}
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var user User
+		if err := tx.Select("role", "status").First(&user, userID).Error; err != nil {
+			return err
+		}
+		if user.Role < common.RoleAdminUser || user.Status != common.UserStatusEnabled {
+			return ErrCommunityEventUnavailable
+		}
+		var message CommunityMessage
+		if err := lockForUpdate(tx).Where("kind = ? AND deleted = ?", "event", false).
+			Where("id > COALESCE((?), 0)", tx.Model(&CommunityConfig{}).Select("cleared_through_id").Where("id = ?", 1)).
+			First(&message, id).Error; err != nil {
+			return err
+		}
+		if err := lockForUpdate(tx).First(&event, id).Error; err != nil {
+			return err
+		}
+		now := time.Now().Unix()
+		if event.Cancelled || event.EndsAt <= now {
+			return ErrCommunityEventNotEditable
+		}
+		if err := input.validate(now, event.StartsAt); err != nil {
+			return err
+		}
+		event.CommunityEventInput = input
+		if err := tx.Model(&event).Select("title", "description", "kind", "starts_at", "ends_at").Updates(&event).Error; err != nil {
+			return err
+		}
+		return tx.Model(&message).Update("text", input.Title).Error
 	})
 	return event, err
 }

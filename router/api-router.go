@@ -231,6 +231,7 @@ func SetApiRouter(router *gin.Engine) {
 		communityRoute.GET("/events", controller.CommunityAccess, controller.ListCommunityEvents)
 		communityRoute.GET("/events/:id", controller.CommunityAccess, controller.GetCommunityEvent)
 		communityRoute.POST("/events", controller.CommunityAccess, middleware.AdminAuth(), middleware.UserCriticalRateLimit("community-event-create"), controller.CreateCommunityEvent)
+		communityRoute.PUT("/events/:id", controller.CommunityAccess, middleware.AdminAuth(), middleware.UserCriticalRateLimit("community-event-update"), controller.UpdateCommunityEvent)
 		communityRoute.DELETE("/events/:id", controller.CommunityAccess, middleware.AdminAuth(), middleware.UserCriticalRateLimit("community-event-cancel"), controller.CancelCommunityEvent)
 		communityRoute.GET("/red-packets", controller.CommunityAccess, controller.ListCommunityRedPackets)
 		communityRoute.GET("/red-packets/:id", controller.CommunityAccess, controller.GetCommunityRedPacket)

@@ -16,10 +16,10 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { CommunityBoard } from '../community-board'
 import { CommunityCheckin } from '../community-checkin'
-import type { CommunityEvent } from '../event-api'
+import type { CommunityEvent, CommunityEventInput } from '../event-api'
 import { EventTiming } from '../event-card'
-import { EventCreate } from '../event-create'
 import { EventDetail } from '../event-detail'
+import { EventForm } from '../event-form'
 import { useRedPackets } from '../use-red-packets'
 
 const event: CommunityEvent = {
@@ -186,7 +186,7 @@ test('administrators can publish from an empty event board', async () => {
 test('event publication validates required fields and preserves edits after a failed request', async () => {
   const user = userEvent.setup()
   const created = vi.fn()
-  show(<EventCreate onClose={vi.fn()} onCreated={created} />)
+  show(<EventForm onClose={vi.fn()} onSaved={created} />)
   await user.click(screen.getByRole('button', { name: 'Publish event' }))
   expect(await screen.findByRole('alert')).toHaveTextContent(
     'Enter a title, an event type, and a future time range'
@@ -225,7 +225,7 @@ test('event publication validates required fields and preserves edits after a fa
 })
 
 test('clearing an event date prevents publication', async () => {
-  show(<EventCreate onClose={vi.fn()} onCreated={vi.fn()} />)
+  show(<EventForm onClose={vi.fn()} onSaved={vi.fn()} />)
   fireEvent.change(screen.getByLabelText('Event title'), {
     target: { value: 'Evening gifts' },
   })
@@ -273,6 +273,172 @@ test('cancelling an event requires confirmation and refreshes its detail', async
     screen.queryByRole('button', { name: 'Cancel event' })
   ).not.toBeInTheDocument()
 })
+
+test('administrators can edit a published event and refresh its board and detail', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue((event.starts_at - 3600) * 1000)
+  useAuthStore.setState((state) => ({
+    auth: { ...state.auth, user: { id: 1, username: 'Admin', role: 10 } },
+  }))
+  const put = vi.spyOn(api, 'put').mockImplementation(async (_url, input) => {
+    events = [{ ...event, ...(input as CommunityEventInput) }]
+    return { data: { success: true, data: events[0] } }
+  })
+  const user = userEvent.setup()
+  show(
+    <>
+      <BoardHarness onOpenEvent={vi.fn()} onCreateEvent={vi.fn()} />
+      <EventDetail id={80} onClose={vi.fn()} onLocate={vi.fn()} />
+    </>
+  )
+  await user.click(await screen.findByRole('button', { name: 'Edit event' }))
+  const form = screen.getByRole('dialog', { name: 'Edit event' })
+  expect(within(form).getByLabelText('Event title')).toHaveValue(event.title)
+  expect(within(form).getByLabelText('Event details')).toHaveValue(
+    event.description
+  )
+  await user.clear(within(form).getByLabelText('Event title'))
+  await user.type(within(form).getByLabelText('Event title'), 'Updated evening')
+  await user.clear(within(form).getByLabelText('Event details'))
+  await user.selectOptions(
+    within(form).getByLabelText('Event type'),
+    'red_packet'
+  )
+  const startsAt = new Date((event.starts_at + 1800) * 1000)
+  const endsAt = new Date((event.ends_at + 1800) * 1000)
+  fireEvent.change(within(form).getByLabelText('Starts at · Time'), {
+    target: { value: startsAt.toTimeString().slice(0, 5) },
+  })
+  fireEvent.change(within(form).getByLabelText('Ends at · Time'), {
+    target: { value: endsAt.toTimeString().slice(0, 5) },
+  })
+  await user.click(within(form).getByRole('button', { name: 'Save changes' }))
+  await screen.findByRole('dialog', { name: 'Event details' })
+  expect(put).toHaveBeenCalledWith('/api/community/events/80', {
+    title: 'Updated evening',
+    description: '',
+    kind: 'red_packet',
+    starts_at: event.starts_at + 1800,
+    ends_at: event.ends_at + 1800,
+  })
+  expect(api.post).not.toHaveBeenCalled()
+  expect(
+    await screen.findByRole('heading', { name: 'Updated evening' })
+  ).toBeInTheDocument()
+  expect(
+    await screen.findByRole('button', { name: /Updated evening/, hidden: true })
+  ).toBeInTheDocument()
+})
+
+test('saving an event preserves the draft on server failure and blocks duplicate submissions while pending', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue((event.starts_at - 3600) * 1000)
+  const user = userEvent.setup()
+  const saved = vi.fn()
+  const close = vi.fn()
+  const put = vi.spyOn(api, 'put').mockResolvedValueOnce({
+    data: { success: false, message: 'Event is unavailable' },
+  })
+  show(<EventForm event={event} onClose={close} onSaved={saved} />)
+  await user.clear(screen.getByLabelText('Event title'))
+  await user.type(screen.getByLabelText('Event title'), 'My revised event')
+  await user.click(screen.getByRole('button', { name: 'Save changes' }))
+  await waitFor(() => expect(put).toHaveBeenCalledOnce())
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled()
+  )
+  expect(screen.getByLabelText('Event title')).toHaveValue('My revised event')
+  expect(saved).not.toHaveBeenCalled()
+  let complete:
+    | ((response: { data: { success: boolean; data: CommunityEvent } }) => void)
+    | undefined
+  put.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        complete = resolve
+      })
+  )
+  await user.click(screen.getByRole('button', { name: 'Save changes' }))
+  await waitFor(() => expect(put).toHaveBeenCalledTimes(2))
+  expect(screen.getByRole('button', { name: 'Saving...' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
+  expect(screen.getByLabelText('Event title')).toBeDisabled()
+  await user.keyboard('{Escape}')
+  expect(close).not.toHaveBeenCalled()
+  const updated = { ...event, title: 'My revised event' }
+  await act(async () => complete?.({ data: { success: true, data: updated } }))
+  await waitFor(() => expect(saved).toHaveBeenCalledWith(updated))
+})
+
+test('editing an ongoing event retains its past start and allows saving changed details', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue((event.starts_at + 1800) * 1000)
+  const user = userEvent.setup()
+  const saved = vi.fn()
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true, data: event } })
+  show(<EventForm event={event} onClose={vi.fn()} onSaved={saved} />)
+  expect(screen.getByRole('button', { name: 'Starts at' })).toBeDisabled()
+  expect(screen.getByLabelText('Starts at · Time')).toBeDisabled()
+  await user.type(screen.getByLabelText('Event details'), ' — Updated agenda')
+  await user.click(screen.getByRole('button', { name: 'Save changes' }))
+  await waitFor(() => expect(saved).toHaveBeenCalledWith(event))
+  expect(put).toHaveBeenCalledWith(
+    '/api/community/events/80',
+    expect.objectContaining({
+      starts_at: event.starts_at,
+      description: 'Meet in the chat — Updated agenda',
+    })
+  )
+})
+
+test('invalid event edits cannot be saved and cancelling the draft restores the original detail', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue((event.starts_at - 3600) * 1000)
+  useAuthStore.setState((state) => ({
+    auth: { ...state.auth, user: { id: 1, username: 'Admin', role: 10 } },
+  }))
+  const put = vi.spyOn(api, 'put')
+  const user = userEvent.setup()
+  show(<EventDetail id={80} onClose={vi.fn()} onLocate={vi.fn()} />)
+  await user.click(await screen.findByRole('button', { name: 'Edit event' }))
+  await user.clear(screen.getByLabelText('Event title'))
+  await user.click(screen.getByRole('button', { name: 'Save changes' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'Enter a title, an event type, and a valid time range'
+  )
+  expect(screen.getByLabelText('Event title')).toHaveAttribute(
+    'aria-invalid',
+    'true'
+  )
+  await user.type(screen.getByLabelText('Event title'), 'Revised')
+  await user.click(screen.getByRole('button', { name: 'Clear · Ends at' }))
+  await user.click(screen.getByRole('button', { name: 'Save changes' }))
+  expect(screen.getByRole('alert')).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
+  expect(
+    await screen.findByRole('heading', { name: event.title })
+  ).toBeInTheDocument()
+  expect(put).not.toHaveBeenCalled()
+})
+
+test.each(['member', 'cancelled', 'ended'])(
+  '%s events do not expose editing controls',
+  async (state) => {
+    vi.spyOn(Date, 'now').mockReturnValue((event.starts_at - 3600) * 1000)
+    if (state !== 'member') {
+      useAuthStore.setState((current) => ({
+        auth: { ...current.auth, user: { id: 1, username: 'Admin', role: 10 } },
+      }))
+    }
+    if (state === 'cancelled') events[0].cancelled = true
+    if (state === 'ended') {
+      vi.mocked(Date.now).mockReturnValue(event.ends_at * 1000)
+    }
+    show(<EventDetail id={80} onClose={vi.fn()} onLocate={vi.fn()} />)
+    await screen.findByRole('heading', { name: event.title })
+    expect(
+      screen.queryByRole('button', { name: 'Edit event' })
+    ).not.toBeInTheDocument()
+  }
+)
 
 test('the check-in dialog separates sections and shows its title once', async () => {
   const user = userEvent.setup()

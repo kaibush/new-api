@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -30,6 +31,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestCommunityEvents(t *testing.T) {
@@ -76,6 +78,7 @@ func TestCommunityEvents(t *testing.T) {
 					routes.GET("/events", ListCommunityEvents)
 					routes.GET("/events/:id", GetCommunityEvent)
 					routes.POST("/events", middleware.AdminAuth(), CreateCommunityEvent)
+					routes.PUT("/events/:id", middleware.AdminAuth(), UpdateCommunityEvent)
 					routes.DELETE("/events/:id", middleware.AdminAuth(), CancelCommunityEvent)
 					request := func(method, path, token string, body any, status int) *httptest.ResponseRecorder {
 						payload, err := common.Marshal(body)
@@ -127,12 +130,77 @@ func TestCommunityEvents(t *testing.T) {
 					require.NotNil(t, announcement.Event)
 					assert.Equal(t, event, *announcement.Event)
 					assert.Equal(t, event.ID, announcement.ID)
+					t.Run("update", func(t *testing.T) {
+						request("PUT", path, "", input, 401)
+						request("PUT", path, member.AccessToken, input, 403)
+						request("PUT", "/api/community/events/invalid", adminSession.AccessToken, input, 400)
+						request("PUT", "/api/community/events/999999", adminSession.AccessToken, input, 404)
+						for _, invalid := range []model.CommunityEventInput{
+							{Title: " ", Kind: "event", StartsAt: input.StartsAt, EndsAt: input.EndsAt},
+							{Title: "Past", Kind: "event", StartsAt: now - 1, EndsAt: input.EndsAt},
+							{Title: "Reverse", Kind: "event", StartsAt: input.EndsAt, EndsAt: input.StartsAt},
+							{Title: "Unknown", Kind: "unknown", StartsAt: input.StartsAt, EndsAt: input.EndsAt},
+							{Title: strings.Repeat("字", 81), Kind: "event", StartsAt: input.StartsAt, EndsAt: input.EndsAt},
+							{Title: "Long details", Description: strings.Repeat("字", 2001), Kind: "event", StartsAt: input.StartsAt, EndsAt: input.EndsAt},
+							{Title: "Too far", Kind: "event", StartsAt: now + 367*86400, EndsAt: now + 368*86400},
+							{Title: "Too long", Kind: "event", StartsAt: input.StartsAt, EndsAt: now + 398*86400},
+						} {
+							request("PUT", path, adminSession.AccessToken, invalid, 400)
+						}
+						saved, err := model.GetCommunityEvent(event.ID)
+						require.NoError(t, err)
+						assert.Equal(t, event, saved)
+						announcementFailure := errors.New("announcement write failed")
+						require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register("event_test_announcement_failure", func(tx *gorm.DB) {
+							if _, ok := tx.Statement.Model.(*model.CommunityMessage); ok {
+								tx.AddError(announcementFailure)
+							}
+						}))
+						request("PUT", path, adminSession.AccessToken, model.CommunityEventInput{Title: "Failed revision", Kind: input.Kind, StartsAt: input.StartsAt, EndsAt: input.EndsAt}, 500)
+						require.NoError(t, model.DB.Callback().Update().Remove("event_test_announcement_failure"))
+						saved, err = model.GetCommunityEvent(event.ID)
+						require.NoError(t, err)
+						assert.Equal(t, event, saved)
+						input = model.CommunityEventInput{Title: "Updated evening", Kind: "event", StartsAt: now + 7200, EndsAt: now + 10800}
+						// Ignore attempts to overwrite immutable identity and state fields.
+						body := map[string]any{"title": " Updated evening ", "description": "", "kind": input.Kind, "starts_at": input.StartsAt, "ends_at": input.EndsAt, "id": 1, "user_id": user.Id, "name": "Impersonated", "created_at": 0, "cancelled": true}
+						for range 2 {
+							response := request("PUT", path, adminSession.AccessToken, body, 200)
+							require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+							assert.Equal(t, input, result.Data.CommunityEventInput)
+							assert.Equal(t, event.ID, result.Data.ID)
+							assert.Equal(t, event.UserID, result.Data.UserID)
+							assert.Equal(t, event.Name, result.Data.Name)
+							assert.Equal(t, event.CreatedAt, result.Data.CreatedAt)
+							assert.False(t, result.Data.Cancelled)
+						}
+						list := request("GET", "/api/community/events", member.AccessToken, nil, 200)
+						assert.Contains(t, list.Body.String(), input.Title)
+						assert.NotContains(t, list.Body.String(), event.Title)
+						history, err := model.RecentCommunityMessages()
+						require.NoError(t, err)
+						assert.Equal(t, input.Title, history[len(history)-1].Text)
+						assert.Equal(t, input, history[len(history)-1].Event.CommunityEventInput)
+						require.NoError(t, model.DB.Model(&model.CommunityMessage{}).Where("kind = ?", "event").Count(&announcementCount).Error)
+						assert.EqualValues(t, 1, announcementCount)
+						// Ongoing events can change details and their end time, retaining the start.
+						require.NoError(t, model.DB.Model(&model.CommunityEvent{}).Where("id = ?", event.ID).Update("starts_at", now-3600).Error)
+						request("PUT", path, adminSession.AccessToken, input, 400)
+						input.StartsAt = now - 3600
+						input.EndsAt = now - 1
+						request("PUT", path, adminSession.AccessToken, input, 400)
+						input.EndsAt = now + 14400
+						input.Description = "Extended gathering"
+						request("PUT", path, adminSession.AccessToken, input, 200)
+					})
+					input.StartsAt = now + 7200
 					request("DELETE", path, member.AccessToken, nil, 403)
 					for range 2 {
 						request("DELETE", path, adminSession.AccessToken, nil, 200)
 					}
 					detail := request("GET", path, member.AccessToken, nil, 200)
 					assert.Contains(t, detail.Body.String(), `"cancelled":true`)
+					request("PUT", path, adminSession.AccessToken, input, 409)
 					list = request("GET", "/api/community/events", member.AccessToken, nil, 200)
 					assert.NotContains(t, list.Body.String(), input.Title)
 					history, err = model.RecentCommunityMessages()
@@ -141,10 +209,12 @@ func TestCommunityEvents(t *testing.T) {
 					active, err := model.CreateCommunityEvent(admin.Id, input)
 					require.NoError(t, err)
 					require.NoError(t, model.DB.Model(&model.CommunityEvent{}).Where("id = ?", active.ID).Update("ends_at", now-1).Error)
+					request("PUT", fmt.Sprintf("/api/community/events/%d", active.ID), adminSession.AccessToken, input, 409)
 					list = request("GET", "/api/community/events", member.AccessToken, nil, 200)
 					assert.NotContains(t, list.Body.String(), input.Title)
 					require.NoError(t, model.DB.Model(&model.CommunityMessage{}).Where("id = ?", event.ID).Update("deleted", true).Error)
 					request("GET", path, member.AccessToken, nil, 404)
+					request("PUT", path, adminSession.AccessToken, input, 404)
 					history, err = model.RecentCommunityMessages()
 					require.NoError(t, err)
 					for _, message := range history {
@@ -158,10 +228,12 @@ func TestCommunityEvents(t *testing.T) {
 					list = request("GET", "/api/community/events", member.AccessToken, nil, 200)
 					assert.NotContains(t, list.Body.String(), input.Title)
 					request("GET", fmt.Sprintf("/api/community/events/%d", clearEvent.ID), member.AccessToken, nil, 404)
+					request("PUT", fmt.Sprintf("/api/community/events/%d", clearEvent.ID), adminSession.AccessToken, input, 404)
 					require.NoError(t, model.SaveCommunityConfig(model.CommunityConfig{Enabled: false}))
 					request("GET", "/api/community/events", member.AccessToken, nil, 403)
 					request("POST", "/api/community/events", adminSession.AccessToken, input, 403)
 					request("DELETE", path, adminSession.AccessToken, nil, 403)
+					request("PUT", path, adminSession.AccessToken, input, 403)
 				})
 			}
 		})

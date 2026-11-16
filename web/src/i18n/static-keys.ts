@@ -929,4 +929,5 @@ export const STATIC_I18N_KEYS = [
   'Confirm clearing all conversations',
   'Could not clear conversations',
   'Message not found',
+  'Cancelled or ended events cannot be edited',
 ] as const

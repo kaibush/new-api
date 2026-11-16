@@ -54,6 +54,17 @@ export async function createCommunityEvent(input: CommunityEventInput) {
   return requireServerSuccess(res.data).data
 }
 
+export async function updateCommunityEvent(
+  id: number,
+  input: CommunityEventInput
+): Promise<CommunityEvent> {
+  const res = await api.put<{ success: boolean; data: CommunityEvent }>(
+    `/api/community/events/${id}`,
+    input
+  )
+  return requireServerSuccess(res.data).data
+}
+
 export async function cancelCommunityEvent(id: number) {
   return requireServerSuccess(
     (await api.delete(`/api/community/events/${id}`)).data
