@@ -165,6 +165,7 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.GET("/topup", controller.GetAllTopUps)
 				adminRoute.POST("/topup/complete", controller.AdminCompleteTopUp)
 				adminRoute.GET("/search", controller.SearchUsers)
+				adminRoute.GET("/names", middleware.DisableCache(), controller.GetUserNames)
 				adminRoute.GET("/activity/overview", middleware.DisableCache(), controller.GetUserActivityOverview)
 				adminRoute.POST("/activity/users", middleware.DisableCache(), controller.ListUserActivity)
 				adminRoute.GET("/:id/activity", middleware.DisableCache(), controller.GetUserActivityDetail)

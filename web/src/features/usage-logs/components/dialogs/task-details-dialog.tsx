@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next'
 import { Dialog } from '@/components/dialog'
 import { StatusBadge } from '@/components/status-badge'
 import { Label } from '@/components/ui/label'
+import { UserIdentity } from '@/components/user-identity'
 import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
@@ -173,7 +174,12 @@ export function TaskDetailsDialog(props: TaskDetailsDialogProps) {
           >
             <DetailRow
               label={t('User')}
-              value={props.log.username || String(props.log.user_id)}
+              value={
+                <UserIdentity
+                  userId={props.log.user_id}
+                  username={props.log.username}
+                />
+              }
             />
             <DetailRow
               label={t('Channel')}

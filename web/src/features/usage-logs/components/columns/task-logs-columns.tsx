@@ -25,6 +25,7 @@ import { useTranslation } from 'react-i18next'
 
 import { StatusBadge } from '@/components/status-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { useUserName } from '@/hooks/use-user-name'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -129,7 +130,15 @@ export function useTaskLogsColumns(
               setUserInfoDialogOpen,
             } = useUsageLogsContext()
             const log = row.original
-            const displayName = log.username || String(log.user_id || '?')
+            const username = useUserName(
+              log.user_id,
+              log.username,
+              sensitiveVisible
+            )
+            const displayName = username || String(log.user_id || '?')
+            const userLabel = username
+              ? `${username} (#${log.user_id})`
+              : `#${log.user_id}`
 
             return (
               <button
@@ -159,7 +168,7 @@ export function useTaskLogsColumns(
                   </AvatarFallback>
                 </Avatar>
                 <span className='text-muted-foreground truncate text-sm hover:underline'>
-                  {sensitiveVisible ? displayName : '••••'}
+                  {sensitiveVisible ? userLabel : '••••'}
                 </span>
               </button>
             )

@@ -48,6 +48,7 @@ import {
   SheetDescription,
 } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
+import { UserIdentity } from '@/components/user-identity'
 import { formatQuota } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 
@@ -250,7 +251,10 @@ export function UserSubscriptionsDialog(props: Props) {
           <SheetHeader className={sideDrawerHeaderClassName()}>
             <SheetTitle>{t('User Subscription Management')}</SheetTitle>
             <SheetDescription>
-              {props.user?.username || '-'} (ID: {props.user?.id || '-'})
+              <UserIdentity
+                userId={props.user?.id ?? 0}
+                username={props.user?.username}
+              />
             </SheetDescription>
           </SheetHeader>
 

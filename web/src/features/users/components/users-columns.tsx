@@ -32,6 +32,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { UserIdentity } from '@/components/user-identity'
 import { getCurrencyDisplay } from '@/lib/currency'
 import { formatQuota } from '@/lib/format'
 import { useSystemConfigStore } from '@/stores/system-config-store'
@@ -264,7 +265,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
               )}
               {inviterId > 0 && (
                 <LongText className='text-muted-foreground'>
-                  {t('Inviter ID: {{id}}', { id: inviterId })}
+                  {t('Inviter')}: <UserIdentity userId={inviterId} />
                 </LongText>
               )}
             </div>

@@ -45,6 +45,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { UserIdentity } from '@/components/user-identity'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { formatCurrencyFromUSD } from '@/lib/currency'
 import { formatNumber } from '@/lib/format'
@@ -233,11 +234,12 @@ export function BillingHistoryDialog({
                             </Button>
                             {isAdmin && record.user_id != null && (
                               <StatusBadge
-                                label={`${t('User ID')}: ${record.user_id}`}
                                 variant='neutral'
                                 size='sm'
                                 copyText={String(record.user_id)}
-                              />
+                              >
+                                <UserIdentity userId={record.user_id} />
+                              </StatusBadge>
                             )}
                           </div>
                           <div className='text-muted-foreground text-xs'>

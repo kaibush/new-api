@@ -80,6 +80,121 @@ func setupManageUserTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
+func TestGetUserNames(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	previousLegacyRetireAt := model.LegacyAccessTokenRetireAt()
+	require.NoError(t, db.AutoMigrate(&model.Option{}))
+	require.NoError(t, model.EnsureLegacyAccessTokenRetireAt(time.Now().Unix()))
+	t.Cleanup(func() {
+		// A zero deadline is uninitialized and retired, as is a past deadline.
+		setLegacyAccessTokenRetireAt(t, max(1, previousLegacyRetireAt))
+	})
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/api/user/names", middleware.AdminAuth(), middleware.DisableCache(), GetUserNames)
+	legacy := "names-legacy-admin-credential"
+	admin := model.User{Username: "names-admin", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, AuthVersion: 1, AccessToken: &legacy}
+	alice := model.User{Username: "爱丽丝", Password: "secret-password", Email: "secret@example.com", DisplayName: "private display name", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AuthVersion: 1}
+	deleted := model.User{Username: "names-deleted", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AuthVersion: 1}
+	for _, user := range []*model.User{&admin, &alice, &deleted} {
+		user.AffCode = user.Username
+		require.NoError(t, db.Create(user).Error)
+	}
+	require.NoError(t, db.Delete(&deleted).Error)
+	_, adminJWT := createAccessTokenTestSession(t, admin.Id, "names-admin-session")
+	_, userJWT := createAccessTokenTestSession(t, alice.Id, "names-user-session")
+	pat, _ := createScopedAccessToken(t, admin.Id, time.Now().Unix()+3600, "user:read")
+	path := fmt.Sprintf("/api/user/names?ids=%d,%d,%d,%d,999999", admin.Id, alice.Id, alice.Id, deleted.Id)
+
+	t.Run("administrator receives only requested IDs and usernames", func(t *testing.T) {
+		response := accessTokenRequest(router, http.MethodGet, path, adminJWT, "", "")
+		require.Equal(t, http.StatusOK, response.Code)
+		assert.Contains(t, response.Header().Get("Cache-Control"), "no-store")
+		var body struct {
+			Success bool             `json:"success"`
+			Data    []map[string]any `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &body))
+		assert.True(t, body.Success)
+		assert.ElementsMatch(t, []map[string]any{
+			{"id": float64(admin.Id), "username": admin.Username},
+			{"id": float64(alice.Id), "username": alice.Username},
+		}, body.Data)
+	})
+	for _, tc := range []struct {
+		name       string
+		credential string
+		status     int
+	}{
+		{"anonymous", "", http.StatusUnauthorized},
+		{"invalid token", "invalid", http.StatusUnauthorized},
+		{"ordinary user", userJWT, http.StatusForbidden},
+		{"scoped admin token", pat, http.StatusForbidden},
+		{"legacy admin token", legacy, http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := accessTokenRequest(router, http.MethodGet, path, tc.credential, "", "")
+			assert.Equal(t, tc.status, response.Code)
+			assert.NotContains(t, response.Body.String(), alice.Username)
+			assert.NotContains(t, response.Body.String(), `"data"`)
+		})
+	}
+	for _, ids := range []string{"", "0", "-1", "1.5", "1,,2", "1%20OR%201=1", "999999999999999999999999", strings.Repeat("1,", 100) + "1"} {
+		t.Run("invalid IDs "+ids, func(t *testing.T) {
+			response := accessTokenRequest(router, http.MethodGet, "/api/user/names?ids="+ids, adminJWT, "", "")
+			assert.Equal(t, http.StatusBadRequest, response.Code)
+		})
+	}
+	t.Run("missing users return an empty list", func(t *testing.T) {
+		response := accessTokenRequest(router, http.MethodGet, "/api/user/names?ids=999999", adminJWT, "", "")
+		assert.JSONEq(t, `{"success":true,"message":"","data":[]}`, response.Body.String())
+	})
+	t.Run("accepts the batch limit and deduplicates IDs", func(t *testing.T) {
+		ids := strings.Repeat(strconv.Itoa(alice.Id)+",", 99) + strconv.Itoa(alice.Id)
+		response := accessTokenRequest(router, http.MethodGet, "/api/user/names?ids="+ids, adminJWT, "", "")
+		assert.JSONEq(t, fmt.Sprintf(`{"success":true,"message":"","data":[{"id":%d,"username":"爱丽丝"}]}`, alice.Id), response.Body.String())
+	})
+	for _, tc := range []struct {
+		name    string
+		role    int
+		updates map[string]any
+		status  int
+	}{
+		{"root session", common.RoleRootUser, nil, http.StatusOK},
+		{"expired session", common.RoleAdminUser, map[string]any{"expires_at": time.Now().Unix() - 1}, http.StatusUnauthorized},
+		{"revoked session", common.RoleAdminUser, map[string]any{"status": model.UserSessionStatusRevoked}, http.StatusUnauthorized},
+		{"demoted administrator", common.RoleCommonUser, nil, http.StatusForbidden},
+		{"disabled administrator", common.RoleAdminUser, nil, http.StatusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			user := model.User{Username: tc.name, Role: common.RoleAdminUser, Status: common.UserStatusEnabled, AuthVersion: 1}
+			user.AffCode = user.Username
+			if tc.role == common.RoleRootUser {
+				user.Role = tc.role
+			}
+			require.NoError(t, db.Create(&user).Error)
+			identity, jwt := createAccessTokenTestSession(t, user.Id, "names-"+tc.name)
+			require.Equal(t, http.StatusOK, accessTokenRequest(router, http.MethodGet, path, jwt, "", "").Code)
+			if tc.updates != nil {
+				require.NoError(t, db.Model(&model.UserSession{}).Where("sid = ?", identity.SessionID).Updates(tc.updates).Error)
+			}
+			if tc.role == common.RoleCommonUser {
+				require.NoError(t, db.Model(&user).Update("role", tc.role).Error)
+				require.NoError(t, model.PublishUserAuthCache(user.Id))
+			}
+			if tc.name == "disabled administrator" {
+				require.NoError(t, db.Model(&user).Update("status", common.UserStatusDisabled).Error)
+				require.NoError(t, model.PublishUserAuthCache(user.Id))
+			}
+			response := accessTokenRequest(router, http.MethodGet, path, jwt, "", "")
+			assert.Equal(t, tc.status, response.Code)
+			if tc.status != http.StatusOK {
+				assert.NotContains(t, response.Body.String(), alice.Username)
+			}
+		})
+	}
+}
+
 func performManageUserRequest(t *testing.T, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	return performVerifiedManageUserRequest(t, body, service.AuthIdentity{UserID: 9999}, "")

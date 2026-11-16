@@ -46,6 +46,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useUserName } from '@/hooks/use-user-name'
 import { handleServerError } from '@/lib/handle-server-error'
 import { cn } from '@/lib/utils'
 
@@ -231,6 +232,10 @@ export function PaymentSettingsSection({
   complianceDefaults,
 }: PaymentSettingsSectionProps) {
   const { t } = useTranslation()
+  const confirmedUsername = useUserName(complianceDefaults.confirmedBy)
+  const confirmedUser = confirmedUsername
+    ? `${complianceDefaults.confirmedBy} (${confirmedUsername})`
+    : complianceDefaults.confirmedBy || '-'
   const queryClient = useQueryClient()
   const updateOption = useUpdateOption()
   const initialFormValues = React.useMemo<PaymentFormValues>(
@@ -867,7 +872,7 @@ export function PaymentSettingsSection({
                     complianceDefaults.confirmedAt * 1000
                   ).toLocaleString()
                 : '-',
-              userId: complianceDefaults.confirmedBy || '-',
+              userId: confirmedUser,
             })}
           </AlertDescription>
         </Alert>
