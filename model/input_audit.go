@@ -33,19 +33,27 @@ type InputAudit struct {
 }
 
 type InputAuditSettings struct {
-	Enabled       bool `json:"enabled"`
-	RetentionDays int  `json:"retention_days"`
-	MaxRecords    int  `json:"max_records"`
-	MaxChars      int  `json:"max_chars"`
+	Enabled            bool  `json:"enabled"`
+	RetentionDays      int   `json:"retention_days"`
+	MaxRecords         int   `json:"max_records"`
+	MaxChars           int   `json:"max_chars"`
+	EvidenceEnabled    bool  `json:"evidence_enabled"`
+	EvidenceMaxChars   int   `json:"evidence_max_chars"`
+	EvidenceMaxRecords int   `json:"evidence_max_records"`
+	EvidenceMaxBytes   int64 `json:"evidence_max_bytes"`
+	CaseRetentionDays  int   `json:"case_retention_days"`
 }
 
 func DefaultInputAuditSettings() InputAuditSettings {
-	return InputAuditSettings{RetentionDays: 7, MaxRecords: 20000, MaxChars: 2048}
+	return InputAuditSettings{RetentionDays: 7, MaxRecords: 20000, MaxChars: 2048, EvidenceEnabled: true, EvidenceMaxChars: 32768, EvidenceMaxRecords: 1000, EvidenceMaxBytes: 64 << 20, CaseRetentionDays: 30}
 }
 
 func (s InputAuditSettings) Validate() error {
 	if s.RetentionDays < 1 || s.RetentionDays > 90 || s.MaxRecords < 100 || s.MaxRecords > 1000000 || s.MaxChars < 256 || s.MaxChars > 8192 {
 		return errors.New("input audit limits: retention 1–90 days, records 100–1000000, characters 256–8192")
+	}
+	if s.EvidenceMaxChars < 1024 || s.EvidenceMaxChars > 65536 || s.EvidenceMaxRecords < 100 || s.EvidenceMaxRecords > 10000 || s.EvidenceMaxBytes < 8<<20 || s.EvidenceMaxBytes > 512<<20 || s.CaseRetentionDays < 1 || s.CaseRetentionDays > 90 {
+		return errors.New("invalid evidence retention limits")
 	}
 	return nil
 }

@@ -71,6 +71,8 @@ var mediaPlaceholder = regexp.MustCompile(`\[media:\d+\]`)
 // requests. A request runs its stages one after another; a Plan is not safe
 // for concurrent use.
 type Plan struct {
+	userID    int
+	allowlist request_plugin_setting.Allowlist
 	instances []request_plugin_setting.Instance
 	// plugins maps a plugin key to its loaded plugin, nil when it is missing,
 	// disabled or has no request processing part.
@@ -99,8 +101,15 @@ type Plan struct {
 // an available plugin. The instances of a plugin that is missing, disabled
 // or has no request processing part do not run. Those of a plugin that is
 // enabled but did not load stay in the plan as unavailable.
-func NewPlan() *Plan {
-	return newPlanOf(request_plugin_setting.GetInstances())
+func NewPlan(userIDs ...int) *Plan {
+	plan := newPlanOf(request_plugin_setting.GetInstances())
+	if plan != nil && len(userIDs) > 0 {
+		plan.userID = userIDs[0]
+		if recorder := service.CurrentInputAuditRecorder(); recorder != nil && recorder.Status().Settings.Enabled {
+			plan.allowlist = request_plugin_setting.GetAllowlist()
+		}
+	}
+	return plan
 }
 
 // unloadedPlugins maps the key of each plugin the last plugin sync found
@@ -311,6 +320,19 @@ func (p *Plan) Run(ctx context.Context, call Call) Outcome {
 			}
 		}
 		plugin := p.plugins[instance.Plugin]
+		if exemption := p.allowlist.Match(p.userID, instance.ID, instance.Plugin, time.Now().Unix()); exemption != nil {
+			version := ""
+			if plugin != nil {
+				version = plugin.Meta.Version
+			}
+			outcome.Steps = append(outcome.Steps, Step{RequestPluginStep: relaycommon.RequestPluginStep{
+				Instance: instance.ID, Name: instance.Name, Plugin: instance.Plugin, Version: version,
+				Stage: call.Stage, Action: "bypass", ExemptionID: exemption.ID, ExemptionVersion: p.allowlist.Version,
+			}})
+			outcome.Record = append(outcome.Record, relaycommon.RequestPluginRecord{Plugin: instance.Plugin, Name: map[string]string{"en": instance.Name}, Stage: call.Stage,
+				Notice: map[string]string{"en": "Content filtering bypassed by allowlist", "zh": "白名单已豁免内容过滤"}})
+			continue
+		}
 		if plugin == nil {
 			// The node should run the plugin but did not load it: nothing can
 			// tell whether skipping it is safe.

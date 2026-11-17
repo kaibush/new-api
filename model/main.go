@@ -392,6 +392,10 @@ func migrateDB() error {
 		&UserAccessToken{},
 		&SiteVisit{},
 		&InputAudit{},
+		&InputAuditEvidence{},
+		&InputAuditPolicyRevision{},
+		&InputAuditCase{},
+		&InputAuditDecision{},
 	)
 	if err != nil {
 		return err

@@ -46,7 +46,7 @@ func planOf(c *gin.Context) *Plan {
 // the request, it starts capturing the response for Report; Reply starts it
 // for those a channel attempt brings.
 func Ingress(c *gin.Context, format types.RelayFormat) ([]relaycommon.RequestPluginStep, []relaycommon.RequestPluginRecord, *types.NewAPIError) {
-	plan := NewPlan()
+	plan := NewPlan(common.GetContextKeyInt(c, constant.ContextKeyUserId))
 	if plan == nil {
 		return nil, nil, nil
 	}
@@ -63,7 +63,7 @@ func Ingress(c *gin.Context, format types.RelayFormat) ([]relaycommon.RequestPlu
 // again. It returns the audit steps and the public record for
 // RelayInfo.SetRequestPluginIngress.
 func SubmitIngress(c *gin.Context, format types.RelayFormat, model string) (bool, []relaycommon.RequestPluginStep, []relaycommon.RequestPluginRecord, *types.NewAPIError) {
-	plan := NewPlan()
+	plan := NewPlan(common.GetContextKeyInt(c, constant.ContextKeyUserId))
 	if plan == nil {
 		return false, nil, nil, nil
 	}

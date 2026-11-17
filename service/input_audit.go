@@ -25,19 +25,23 @@ type inputAuditKey struct {
 }
 
 type InputAuditRecorder struct {
-	db       *gorm.DB
-	settings atomic.Pointer[model.InputAuditSettings]
-	queue    chan model.InputAudit
-	mu       sync.Mutex
-	configMu sync.Mutex
-	seen     map[inputAuditKey]int64
-	ring     []inputAuditKey
-	next     int
-	closed   bool
-	cancel   context.CancelFunc
-	done     chan struct{}
-	dropped  atomic.Uint64
-	failures atomic.Uint64
+	db                  *gorm.DB
+	settings            atomic.Pointer[model.InputAuditSettings]
+	queue               chan model.InputAudit
+	evidenceQueue       chan model.InputAuditEvidence
+	evidenceQueuedBytes atomic.Int64
+	evidenceDropped     atomic.Uint64
+	evidenceFailures    atomic.Uint64
+	mu                  sync.Mutex
+	configMu            sync.Mutex
+	seen                map[inputAuditKey]int64
+	ring                []inputAuditKey
+	next                int
+	closed              bool
+	cancel              context.CancelFunc
+	done                chan struct{}
+	dropped             atomic.Uint64
+	failures            atomic.Uint64
 }
 
 var inputAuditRecorder atomic.Pointer[InputAuditRecorder]
@@ -47,7 +51,7 @@ func NewInputAuditRecorder(db *gorm.DB) (*InputAuditRecorder, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := &InputAuditRecorder{db: db, queue: make(chan model.InputAudit, 1024), seen: make(map[inputAuditKey]int64), ring: make([]inputAuditKey, 8192), done: make(chan struct{})}
+	r := &InputAuditRecorder{db: db, queue: make(chan model.InputAudit, 1024), evidenceQueue: make(chan model.InputAuditEvidence, 64), seen: make(map[inputAuditKey]int64), ring: make([]inputAuditKey, 8192), done: make(chan struct{})}
 	r.settings.Store(&settings)
 	return r, nil
 }
@@ -79,20 +83,24 @@ func StopInputAuditRecorder(ctx context.Context) {
 	r.cancel()
 	select {
 	case <-r.done:
+		inputAuditRecorder.CompareAndSwap(r, nil)
 	case <-ctx.Done():
 		common.SysError("input audit shutdown timed out")
 	}
 }
 
 type InputAuditStatus struct {
-	Settings      model.InputAuditSettings `json:"settings"`
-	Pending       int                      `json:"pending"`
-	Dropped       uint64                   `json:"dropped"`
-	WriteFailures uint64                   `json:"write_failures"`
+	EvidencePending       int                      `json:"evidence_pending"`
+	EvidenceDropped       uint64                   `json:"evidence_dropped"`
+	EvidenceWriteFailures uint64                   `json:"evidence_write_failures"`
+	Settings              model.InputAuditSettings `json:"settings"`
+	Pending               int                      `json:"pending"`
+	Dropped               uint64                   `json:"dropped"`
+	WriteFailures         uint64                   `json:"write_failures"`
 }
 
 func (r *InputAuditRecorder) Status() InputAuditStatus {
-	return InputAuditStatus{Settings: *r.settings.Load(), Pending: len(r.queue), Dropped: r.dropped.Load(), WriteFailures: r.failures.Load()}
+	return InputAuditStatus{Settings: *r.settings.Load(), Pending: len(r.queue), Dropped: r.dropped.Load(), WriteFailures: r.failures.Load(), EvidencePending: len(r.evidenceQueue), EvidenceDropped: r.evidenceDropped.Load(), EvidenceWriteFailures: r.evidenceFailures.Load()}
 }
 
 func (r *InputAuditRecorder) UpdateSettings(ctx context.Context, settings model.InputAuditSettings) error {
@@ -137,6 +145,10 @@ func (r *InputAuditRecorder) Capture(c *gin.Context, request any) {
 	if chars == 0 {
 		return
 	}
+	if c.GetString(common.RequestIdKey) == "" {
+		c.Set(common.RequestIdKey, common.GetUUID())
+	}
+	r.captureEvidence(c, request, hash, settings)
 	now := time.Now().Unix()
 	key := inputAuditKey{user: userId, hash: hash}
 	r.mu.Lock()
@@ -395,7 +407,7 @@ func (r *InputAuditRecorder) Run(ctx context.Context) {
 		case <-ctx.Done():
 			drainCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			for len(r.queue) > 0 && drainCtx.Err() == nil {
+			for (len(r.queue) > 0 || len(r.evidenceQueue) > 0) && drainCtx.Err() == nil {
 				r.Flush(drainCtx)
 			}
 			return
@@ -417,7 +429,7 @@ func (r *InputAuditRecorder) Run(ctx context.Context) {
 			if ctx.Err() != nil {
 				continue
 			}
-			if len(r.queue) > 0 || now.Sub(lastCleanup) >= time.Minute {
+			if len(r.queue) > 0 || len(r.evidenceQueue) > 0 || now.Sub(lastCleanup) >= time.Minute {
 				writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				r.Flush(writeCtx)
 				cancel()
@@ -430,6 +442,20 @@ func (r *InputAuditRecorder) Run(ctx context.Context) {
 // Flush is also used during graceful shutdown. Persistent failures release
 // cached keys, allowing subsequent requests to retry recording the input.
 func (r *InputAuditRecorder) Flush(ctx context.Context) {
+	evidence := make([]model.InputAuditEvidence, 0, 32)
+	for range 32 {
+		select {
+		case entry := <-r.evidenceQueue:
+			evidence = append(evidence, entry)
+			r.evidenceQueuedBytes.Add(-entry.BodyBytes)
+		default:
+		}
+	}
+	if err := model.PersistInputAuditEvidence(r.db.WithContext(ctx), evidence, time.Now().Unix()); err != nil {
+		r.evidenceFailures.Add(1)
+		r.evidenceDropped.Add(uint64(len(evidence)))
+		common.SysError("input evidence batch failed: " + err.Error())
+	}
 	batch := make([]model.InputAudit, 0, 100)
 	for range 100 {
 		select {

@@ -96,6 +96,9 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 					errChan <- fmt.Errorf("error unmarshalling message: %v", err)
 					return
 				}
+				if recorder := service.CurrentInputAuditRecorder(); recorder != nil {
+					recorder.CaptureRealtimeEvent(c, realtimeEvent.Type, message)
+				}
 				if plugins != nil {
 					patched, dropped := plugins.ClientEvent(realtimeEvent.Type, message)
 					if dropped {

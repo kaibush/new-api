@@ -467,6 +467,13 @@ export function RequestPluginAdminSteps(props: {
             {step.version && (
               <DetailRow label={t('Version')} value={step.version} mono />
             )}
+            {step.exemption_id && (
+              <DetailRow
+                label={t('Allowlist exemption')}
+                value={`${step.exemption_id} · ${step.exemption_version ?? ''}`}
+                mono
+              />
+            )}
             <DetailRow
               label={t('Stage')}
               value={t(REQUEST_PLUGIN_STAGE_LABELS[step.stage] ?? step.stage)}

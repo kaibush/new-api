@@ -115,8 +115,10 @@ func Reply(c *gin.Context, format types.RelayFormat, info *relaycommon.RelayInfo
 // replyTarget is one instance of a reply check and what it did over the whole
 // answer, which the steps and the record show once.
 type replyTarget struct {
-	instance *request_plugin_setting.Instance
-	plugin   *jsplugin.LoadedPlugin
+	exemptionID      string
+	exemptionVersion int64
+	instance         *request_plugin_setting.Instance
+	plugin           *jsplugin.LoadedPlugin
 	// skipped is set when the instance let the rest of the answer pass, or
 	// failed and its plugin is optional: the text passes it unchanged for the
 	// rest of the answer.
@@ -190,6 +192,7 @@ type replyStop struct {
 // replyCheck runs the reply hooks of one answer in pipeline order: each
 // instance reads what the previous one released.
 type replyCheck struct {
+	plan    *Plan
 	ctx     context.Context
 	call    Call
 	stream  bool
@@ -202,7 +205,7 @@ type replyCheck struct {
 }
 
 func newReplyCheck(ctx context.Context, plan *Plan, instances []*request_plugin_setting.Instance) *replyCheck {
-	check := &replyCheck{ctx: ctx, outputs: map[int]*replyOutput{}, parts: map[[2]int]int{}}
+	check := &replyCheck{ctx: ctx, plan: plan, outputs: map[int]*replyOutput{}, parts: map[[2]int]int{}}
 	for _, instance := range instances {
 		check.targets = append(check.targets, &replyTarget{instance: instance, plugin: plan.plugins[instance.Plugin]})
 	}
@@ -370,6 +373,12 @@ func (r *replyCheck) releaseAll() {
 // callTarget calls one instance's reply hook and keeps what it did for the
 // steps and the record.
 func (r *replyCheck) callTarget(target *replyTarget, outputs []jsplugin.ReplyOutput) (jsplugin.ReplyResult, error) {
+	if exemption := r.plan.allowlist.Match(r.plan.userID, target.instance.ID, target.instance.Plugin, time.Now().Unix()); exemption != nil {
+		target.action = "bypass"
+		target.exemptionID, target.exemptionVersion = exemption.ID, r.plan.allowlist.Version
+		target.notice = map[string]string{"en": "Content filtering bypassed by allowlist", "zh": "白名单已豁免内容过滤"}
+		return jsplugin.ReplyResult{Action: "pass"}, nil
+	}
 	call := r.call
 	tctx := jsplugin.TransformContext{
 		Stage:         StageReply,
@@ -440,16 +449,18 @@ func (r *replyCheck) steps() []Step {
 			continue
 		}
 		steps = append(steps, Step{RequestPluginStep: relaycommon.RequestPluginStep{
-			Instance:   target.instance.ID,
-			Name:       target.instance.Name,
-			Plugin:     target.instance.Plugin,
-			Version:    target.plugin.Meta.Version,
-			Stage:      StageReply,
-			Action:     target.action,
-			Effects:    target.masked,
-			Findings:   slices.Clone(target.findings),
-			DurationMS: target.duration.Milliseconds(),
-			Error:      target.errClass,
+			Instance:         target.instance.ID,
+			Name:             target.instance.Name,
+			Plugin:           target.instance.Plugin,
+			Version:          target.plugin.Meta.Version,
+			Stage:            StageReply,
+			Action:           target.action,
+			ExemptionID:      target.exemptionID,
+			ExemptionVersion: target.exemptionVersion,
+			Effects:          target.masked,
+			Findings:         slices.Clone(target.findings),
+			DurationMS:       target.duration.Milliseconds(),
+			Error:            target.errClass,
 		}, Detail: target.detail})
 	}
 	return steps

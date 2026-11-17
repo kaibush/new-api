@@ -80,7 +80,7 @@ func UpdateInputAuditSettings(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "Input audit recorder is unavailable"})
 		return
 	}
-	var settings model.InputAuditSettings
+	settings := r.Status().Settings
 	if err := common.DecodeJson(http.MaxBytesReader(c.Writer, c.Request.Body, 1024), &settings); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid audit settings"})
 		return

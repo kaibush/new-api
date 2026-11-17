@@ -14,9 +14,13 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relay/requestplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
@@ -105,7 +109,7 @@ func inputAuditTestDB(t testing.TB, dialect string) *gorm.DB {
 	previous := common.MainDatabaseType()
 	common.SetMainDatabaseType(common.DatabaseType(dialect))
 	t.Cleanup(func() { common.SetMainDatabaseType(previous) })
-	require.NoError(t, db.Migrator().DropTable(&model.InputAudit{}, &model.Option{}, &inputAuditReleasedUser{}))
+	require.NoError(t, db.Migrator().DropTable(&model.InputAudit{}, &model.InputAuditEvidence{}, &model.InputAuditCase{}, &model.InputAuditDecision{}, &model.InputAuditPolicyRevision{}, &model.Option{}, &inputAuditReleasedUser{}))
 	return db
 }
 
@@ -130,7 +134,7 @@ func BenchmarkInputAuditCapture(b *testing.B) {
 	} {
 		b.Run(tc.name, func(b *testing.B) {
 			db := inputAuditTestDB(b, "sqlite")
-			require.NoError(b, db.AutoMigrate(&model.Option{}, &model.InputAudit{}))
+			require.NoError(b, db.AutoMigrate(&model.Option{}, &model.InputAudit{}, &model.InputAuditEvidence{}, &model.InputAuditCase{}, &model.InputAuditDecision{}, &model.InputAuditPolicyRevision{}))
 			r, err := service.NewInputAuditRecorder(db)
 			require.NoError(b, err)
 			settings := model.DefaultInputAuditSettings()
@@ -162,7 +166,7 @@ func TestInputAuditDatabaseMatrix(t *testing.T) {
 			t.Logf("database version: %s", version)
 			for _, upgrade := range []bool{false, true} {
 				t.Run(fmt.Sprintf("upgrade_%v", upgrade), func(t *testing.T) {
-					require.NoError(t, db.Migrator().DropTable(&model.InputAudit{}, &model.Option{}, &inputAuditReleasedUser{}))
+					require.NoError(t, db.Migrator().DropTable(&model.InputAudit{}, &model.InputAuditEvidence{}, &model.InputAuditCase{}, &model.InputAuditDecision{}, &model.InputAuditPolicyRevision{}, &model.Option{}, &inputAuditReleasedUser{}))
 					if upgrade {
 						// The options schema matches the released v1.0.0-rc.42 schema.
 						// The new feature must preserve existing options and their primary key.
@@ -171,7 +175,7 @@ func TestInputAuditDatabaseMatrix(t *testing.T) {
 						require.NoError(t, db.Create(&inputAuditReleasedUser{Username: "existing-user", Password: "fixture"}).Error)
 					}
 					for range 2 {
-						require.NoError(t, db.AutoMigrate(&model.Option{}, &model.InputAudit{}))
+						require.NoError(t, db.AutoMigrate(&model.Option{}, &model.InputAudit{}, &model.InputAuditEvidence{}, &model.InputAuditCase{}, &model.InputAuditDecision{}, &model.InputAuditPolicyRevision{}))
 					}
 					if upgrade {
 						var option model.Option
@@ -217,7 +221,7 @@ func TestInputAuditDatabaseMatrix(t *testing.T) {
 					require.NoError(t, model.PersistInputAudits(db, []model.InputAudit{*unicodeEntry}, now))
 					// Restart migration with saved Unicode content and unique keys.
 					for range 2 {
-						require.NoError(t, db.AutoMigrate(&model.Option{}, &model.InputAudit{}))
+						require.NoError(t, db.AutoMigrate(&model.Option{}, &model.InputAudit{}, &model.InputAuditEvidence{}, &model.InputAuditCase{}, &model.InputAuditDecision{}, &model.InputAuditPolicyRevision{}))
 					}
 					found, total, err = model.QueryInputAudits(db, model.InputAuditFilter{UserId: 3}, 0, 20)
 					require.NoError(t, err)
@@ -258,7 +262,7 @@ func TestInputAuditDatabaseMatrix(t *testing.T) {
 
 func TestInputAuditRecorderDrainsOnShutdown(t *testing.T) {
 	db := inputAuditTestDB(t, "sqlite")
-	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.InputAudit{}))
+	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.InputAudit{}, &model.InputAuditEvidence{}, &model.InputAuditCase{}, &model.InputAuditDecision{}, &model.InputAuditPolicyRevision{}))
 	r, err := service.NewInputAuditRecorder(db)
 	require.NoError(t, err)
 	settings := model.DefaultInputAuditSettings()
@@ -327,7 +331,7 @@ func TestInputAuditKeywordDatabaseMatrix(t *testing.T) {
 
 func TestInputAuditRecorderDeduplicationFailureAndOverflow(t *testing.T) {
 	db := inputAuditTestDB(t, "sqlite")
-	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.InputAudit{}))
+	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.InputAudit{}, &model.InputAuditEvidence{}, &model.InputAuditCase{}, &model.InputAuditDecision{}, &model.InputAuditPolicyRevision{}))
 	r, err := service.NewInputAuditRecorder(db)
 	require.NoError(t, err)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -370,12 +374,21 @@ func TestInputAuditRecorderDeduplicationFailureAndOverflow(t *testing.T) {
 
 func TestInputAuditAPIRequiresRootAndValidFilters(t *testing.T) {
 	user, legacyToken := setupAccessTokenAudit(t)
-	require.NoError(t, model.DB.AutoMigrate(&model.InputAudit{}))
+	require.NoError(t, model.DB.AutoMigrate(&model.InputAudit{}, &model.InputAuditEvidence{}, &model.InputAuditCase{}, &model.InputAuditDecision{}, &model.InputAuditPolicyRevision{}))
 	_, token := createAccessTokenTestSession(t, user.Id, "input-audit-session")
 	router := gin.New()
 	router.GET("/api/input-audit", middleware.RootAuth(), GetInputAudits)
 	router.GET("/api/input-audit/status", middleware.RootAuth(), GetInputAuditStatus)
 	router.PUT("/api/input-audit/settings", middleware.RootAuth(), UpdateInputAuditSettings)
+	router.GET("/api/input-audit/allowlist", middleware.RootAuth(), GetInputAuditAllowlist)
+	router.PUT("/api/input-audit/allowlist", middleware.RootAuth(), UpdateInputAuditAllowlist)
+	router.GET("/api/input-audit/allowlist/history", middleware.RootAuth(), GetInputAuditAllowlistHistory)
+	router.GET("/api/input-audit/:audit_id/evidence", middleware.RootAuth(), GetInputAuditEvidence)
+	router.GET("/api/input-audit/cases", middleware.RootAuth(), GetInputAuditCases)
+	router.POST("/api/input-audit/cases", middleware.RootAuth(), CreateInputAuditCase)
+	router.GET("/api/input-audit/cases/export", middleware.RootAuth(), ExportInputAuditLabels)
+	router.GET("/api/input-audit/cases/:case_id", middleware.RootAuth(), GetInputAuditCase)
+	router.POST("/api/input-audit/cases/:case_id/decisions", middleware.RootAuth(), DecideInputAuditCase)
 	request := httptest.NewRequest(http.MethodGet, "/api/input-audit", nil)
 	request.Header.Set("Authorization", "Bearer "+token)
 	response := httptest.NewRecorder()
@@ -427,6 +440,15 @@ func TestInputAuditAPIRequiresRootAndValidFilters(t *testing.T) {
 			{http.MethodGet, "/api/input-audit"},
 			{http.MethodGet, "/api/input-audit/status"},
 			{http.MethodPut, "/api/input-audit/settings"},
+			{http.MethodGet, "/api/input-audit/allowlist"},
+			{http.MethodPut, "/api/input-audit/allowlist"},
+			{http.MethodGet, "/api/input-audit/allowlist/history"},
+			{http.MethodGet, "/api/input-audit/1/evidence"},
+			{http.MethodGet, "/api/input-audit/cases"},
+			{http.MethodPost, "/api/input-audit/cases"},
+			{http.MethodGet, "/api/input-audit/cases/export"},
+			{http.MethodGet, "/api/input-audit/cases/1"},
+			{http.MethodPost, "/api/input-audit/cases/1/decisions"},
 		} {
 			request = httptest.NewRequest(route.method, route.path, nil)
 			request.Header.Set("Authorization", "Bearer "+credential)
@@ -446,12 +468,124 @@ func TestInputAuditAPIRequiresRootAndValidFilters(t *testing.T) {
 		response = httptest.NewRecorder()
 		router.ServeHTTP(response, request)
 		assert.Equal(t, http.StatusUnauthorized, response.Code)
+		for _, path := range []string{"/api/input-audit/1/evidence", "/api/input-audit/cases", "/api/input-audit/cases/export", "/api/input-audit/allowlist"} {
+			request = httptest.NewRequest("GET", path, nil)
+			request.Header.Set("Authorization", "Bearer "+token)
+			response = httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			assert.Equal(t, http.StatusUnauthorized, response.Code)
+		}
+	}
+}
+
+func TestInputAuditAllowlistDatabaseMatrix(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	common.OptionMapRWMutex.Lock()
+	previousOptions := common.OptionMap
+	common.OptionMap = map[string]string{}
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap = previousOptions
+		common.OptionMapRWMutex.Unlock()
+	})
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := inputAuditTestDB(t, dialect)
+			require.NoError(t, db.AutoMigrate(&model.Option{}, &model.InputAudit{}, &model.InputAuditEvidence{}, &model.InputAuditCase{}, &model.InputAuditDecision{}, &model.InputAuditPolicyRevision{}))
+			oldDB := model.DB
+			model.DB = db
+			t.Cleanup(func() { model.DB = oldDB })
+			previousInstances, err := common.Marshal(request_plugin_setting.GetInstances())
+			require.NoError(t, err)
+			previousAllowlist, err := common.Marshal(request_plugin_setting.GetAllowlist())
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: string(previousInstances), request_plugin_setting.AllowlistOption: string(previousAllowlist)}))
+			})
+			filter, err := jsplugin.DefaultRegistry.Register(`export const meta = {apiVersion:1,key:"request-filter",name:"Filter test",version:"1.0.0",author:{name:"Test"}}; export function ingress(){return {action:"reject",code:"test.filter"}}; export function reply(){return {action:"stop",code:"test.reply"}}`, jsplugin.Options{})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, jsplugin.DefaultRegistry.Unregister(filter.Meta.Key)) })
+			other, err := jsplugin.DefaultRegistry.Register(`export const meta = {apiVersion:1,key:"audit-other",name:"Other guard",version:"1.0.0",author:{name:"Test"}}; export function ingress(){return {action:"reject",code:"test.other"}}`, jsplugin.Options{})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, jsplugin.DefaultRegistry.Unregister(other.Meta.Key)) })
+			require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: `[{"id":"filter","name":"Filter","plugin":"request-filter","enabled":true,"global":true},{"id":"other","name":"Other","plugin":"audit-other","enabled":true,"global":true}]`}))
+			require.NoError(t, service.StartInputAuditRecorder())
+			recorder := service.CurrentInputAuditRecorder()
+			t.Cleanup(func() { service.StopInputAuditRecorder(context.Background()) })
+			settings := model.DefaultInputAuditSettings()
+			settings.Enabled = true
+			require.NoError(t, recorder.UpdateSettings(context.Background(), settings))
+			policy := request_plugin_setting.Allowlist{Version: 1, Entries: []request_plugin_setting.AllowlistEntry{{ID: "approved", UserID: 7, Instances: []string{"filter", "other"}, Reason: "Test account", ExpiresAt: time.Now().Unix() + 3600}}}
+			require.NoError(t, model.SaveInputAuditAllowlist(db, policy))
+			loaded, err := model.LoadInputAuditAllowlist(db)
+			require.NoError(t, err)
+			assert.Equal(t, policy, loaded)
+			assert.ErrorIs(t, model.SaveInputAuditAllowlist(db, policy), model.ErrInputAuditConflict)
+			for _, tc := range []struct {
+				user int
+				code string
+			}{{7, "test.other"}, {8, "test.filter"}} {
+				response := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(response)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"test-model","messages":[{"role":"user","content":"original audited text"}]}`))
+				c.Request.Header.Set("Content-Type", "application/json")
+				common.SetContextKey(c, constant.ContextKeyUserId, tc.user)
+				common.SetContextKey(c, constant.ContextKeyOriginalModel, "test-model")
+				recorder.Capture(c, &dto.GeneralOpenAIRequest{Messages: []dto.Message{{Role: "user", Content: "original audited text"}}})
+				steps, _, apiErr := requestplugin.Ingress(c, types.RelayFormatOpenAI)
+				require.NotNil(t, apiErr)
+				assert.Contains(t, apiErr.Error(), tc.code)
+				if tc.user == 7 {
+					require.NotEmpty(t, steps)
+					assert.Equal(t, "bypass", steps[0].Action)
+					assert.Equal(t, "approved", steps[0].ExemptionID)
+				}
+			}
+			recorder.Flush(context.Background())
+			rows, total, err := model.QueryInputAudits(db, model.InputAuditFilter{UserId: 7}, 0, 20)
+			require.NoError(t, err)
+			assert.EqualValues(t, 1, total)
+			require.Len(t, rows, 1)
+			assert.Equal(t, "original audited text", rows[0].Content)
+			assert.Nil(t, policy.Match(7, "filter", "request-filter", policy.Entries[0].ExpiresAt))
+			require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: `[{"id":"filter","name":"Filter","plugin":"request-filter","enabled":true,"global":true}]`}))
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"test","messages":[{"role":"user","content":"input"}]}`))
+			c.Request.Header.Set("Content-Type", "application/json")
+			common.SetContextKey(c, constant.ContextKeyUserId, 7)
+			_, _, apiErr := requestplugin.Ingress(c, types.RelayFormatOpenAI)
+			require.Nil(t, apiErr)
+			info := &relaycommon.RelayInfo{OriginModelName: "test", RelayMode: relayconstant.RelayModeChatCompletions}
+			finish := requestplugin.Reply(c, types.RelayFormatOpenAI, info)
+			c.Writer.Header().Set("Content-Type", "application/json")
+			_, err = c.Writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"unfiltered reply"}}]}`))
+			require.NoError(t, err)
+			finish()
+			assert.Contains(t, fmt.Sprint(info.RequestPluginSteps), "bypass")
+			dry := requestplugin.DryRun(context.Background(), requestplugin.DryRunInput{Format: "openai", Path: "/v1/chat/completions", Model: "test", User: jsplugin.TransformUser{ID: 7}, Body: []byte(`{"model":"test","messages":[{"role":"user","content":"input"}]}`)})
+			require.NotNil(t, dry.Rejected)
+			assert.Equal(t, "test.filter", dry.Rejected.Code)
+
+			policy.Version, policy.Entries = 2, []request_plugin_setting.AllowlistEntry{}
+			require.NoError(t, model.SaveInputAuditAllowlist(db, policy))
+			assert.Nil(t, request_plugin_setting.GetAllowlist().Match(7, "filter", "request-filter", time.Now().Unix()))
+			c, _ = gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"test","messages":[{"role":"user","content":"input"}]}`))
+			common.SetContextKey(c, constant.ContextKeyUserId, 7)
+			c.Request.Header.Set("Content-Type", "application/json")
+			_, _, apiErr = requestplugin.Ingress(c, types.RelayFormatOpenAI)
+			require.NotNil(t, apiErr)
+			assert.Contains(t, apiErr.Error(), "test.filter")
+
+		})
 	}
 }
 
 func TestInputAuditRetainsOriginalBeforePluginRedactionAndRejection(t *testing.T) {
+	require.NoError(t, i18n.Init())
 	db := inputAuditTestDB(t, "sqlite")
-	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.InputAudit{}))
+	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.InputAudit{}, &model.InputAuditEvidence{}, &model.InputAuditCase{}, &model.InputAuditDecision{}, &model.InputAuditPolicyRevision{}))
 	previousDB, previousErrorLog := model.DB, constant.ErrorLogEnabled
 	previousInstances, err := common.Marshal(request_plugin_setting.GetInstances())
 	require.NoError(t, err)
@@ -498,6 +632,319 @@ func TestInputAuditRetainsOriginalBeforePluginRedactionAndRejection(t *testing.T
 	assert.EqualValues(t, 1, total)
 	require.Len(t, found, 1)
 	assert.Equal(t, "original evidence", found[0].Content)
+	var original model.InputAuditEvidence
+	require.NoError(t, db.Where("request_id = ?", "audit-request").First(&original).Error)
+	var document model.InputAuditEvidenceDocument
+	require.NoError(t, common.UnmarshalJsonStr(original.Body, &document))
+	require.Len(t, document.Messages, 1)
+	assert.Equal(t, "original evidence", document.Messages[0].Text)
 	assert.Equal(t, "audit-request", found[0].RequestId)
 	assert.Equal(t, 55, found[0].UserId)
+}
+
+func TestInputAuditEvidenceProtocolCompleteness(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		request  any
+		complete bool
+		want     string
+	}{
+		{"chat", &dto.GeneralOpenAIRequest{Messages: []dto.Message{{Role: "system", Content: "context"}, {Role: "user", Content: "原文\x00🙂"}}}, true, "原文\x00🙂"},
+		{"claude", &dto.ClaudeRequest{System: "context", Messages: []dto.ClaudeMessage{{Role: "user", Content: "question"}}}, true, "question"},
+		{"gemini", &dto.GeminiChatRequest{Contents: []dto.GeminiChatContent{{Role: "user", Parts: []dto.GeminiPart{{Text: "question"}}}}}, true, "question"},
+		{"responses", &dto.OpenAIResponsesRequest{Instructions: []byte(`"context"`), Input: []byte(`[{"role":"user","content":[{"type":"input_text","text":"question"}]}]`)}, true, "question"},
+		{"conversation context", &dto.OpenAIResponsesRequest{Conversation: []byte(`"conv_1"`), Input: []byte(`"question"`)}, false, "question"},
+		{"external context", &dto.OpenAIResponsesRequest{PreviousResponseID: "external", Input: []byte(`"question"`)}, false, "question"},
+		{"media omitted", &dto.GeneralOpenAIRequest{Messages: []dto.Message{{Role: "user", Content: []any{map[string]any{"type": "text", "text": "question"}, map[string]any{"type": "image_url", "image_url": "private-media"}}}}}, false, "question"},
+		{"tool omitted", &dto.GeneralOpenAIRequest{Messages: []dto.Message{{Role: "user", Content: "question"}, {Role: "tool", Content: "private-tool"}}}, false, "question"},
+		{"truncation", &dto.GeneralOpenAIRequest{Prompt: strings.Repeat("中", 2000)}, false, strings.Repeat("中", 1024)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			document := service.ExtractInputAuditEvidence(tc.request, 1024)
+			assert.Equal(t, tc.complete, document.Complete())
+			encoded, err := common.Marshal(document)
+			require.NoError(t, err)
+			assert.NotContains(t, string(encoded), "private-media")
+			assert.NotContains(t, string(encoded), "private-tool")
+			require.NotEmpty(t, document.Messages)
+			assert.Equal(t, tc.want, document.Messages[len(document.Messages)-1].Text)
+		})
+	}
+	document := service.ExtractInputAuditEvidence(&dto.OpenAIResponsesRequest{Input: []byte(`[{"type":"function_call_output","output":"` + strings.Repeat("x", 1<<20) + `"}]`)}, 1024)
+	assert.False(t, document.Complete())
+	assert.Empty(t, document.Messages)
+	assert.Contains(t, document.Omitted, "request_extraction_limit")
+}
+
+func TestInputAuditEvidenceCasesDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := inputAuditTestDB(t, dialect)
+			require.NoError(t, db.AutoMigrate(&model.Option{}, &model.InputAudit{}, &model.InputAuditEvidence{}, &model.InputAuditCase{}, &model.InputAuditDecision{}, &model.InputAuditPolicyRevision{}))
+			previousDB := model.DB
+			model.DB = db
+			t.Cleanup(func() { model.DB = previousDB })
+			recorder, err := service.NewInputAuditRecorder(db)
+			require.NoError(t, err)
+			settings := model.DefaultInputAuditSettings()
+			settings.Enabled = true
+			settings.EvidenceMaxChars = 65536
+			require.NoError(t, recorder.UpdateSettings(context.Background(), settings))
+			// Same latest user input on different request events keeps distinct context evidence.
+			original := "前文🙂引用" + strings.Repeat("中", 30000)
+			for _, id := range []string{"first", "second"} {
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+				common.SetContextKey(c, constant.ContextKeyUserId, 7)
+				c.Set(common.RequestIdKey, id)
+				recorder.Capture(c, &dto.GeneralOpenAIRequest{Messages: []dto.Message{{Role: "assistant", Content: id}, {Role: "user", Content: original}}})
+			}
+			recorder.Flush(context.Background())
+			var evidence []model.InputAuditEvidence
+			require.NoError(t, db.Order("id").Find(&evidence).Error)
+			require.Len(t, evidence, 2)
+			assert.NotEqual(t, evidence[0].DocumentHash, evidence[1].DocumentHash)
+			assert.Greater(t, len(evidence[0].Body), 65536) // MySQL must retain a body larger than TEXT's byte limit.
+			rows, _, err := model.QueryInputAudits(db, model.InputAuditFilter{}, 0, 20)
+			require.NoError(t, err)
+			require.Len(t, rows, 1)
+			review, err := model.CreateInputAuditCase(db, rows[0].Id, 100, "Review original evidence")
+			require.NoError(t, err)
+			snapshot, err := model.InputAuditCaseSnapshotOf(review)
+			require.NoError(t, err)
+			assert.True(t, snapshot.Document.Complete())
+			assert.Equal(t, original, snapshot.Document.Messages[1].Text)
+			quote := []model.InputAuditEvidenceReference{{MessageIndex: 1, Quote: "🙂引用", Start: 999, End: 999}}
+			assert.Error(t, model.DecideInputAuditCase(db, review.Id, 1, 100, "confirmed", "fraud", "fabricated", []model.InputAuditEvidenceReference{{MessageIndex: 1, Quote: "invented"}}))
+			require.NoError(t, model.DecideInputAuditCase(db, review.Id, 1, 100, "confirmed", "fraud", "Verified exact evidence", quote))
+			assert.ErrorIs(t, model.DecideInputAuditCase(db, review.Id, 1, 101, "dismissed", "fraud", "stale review", nil), model.ErrInputAuditConflict)
+			require.NoError(t, model.DecideInputAuditCase(db, review.Id, 2, 101, "appeal_review", "fraud", "Recheck context", nil))
+			require.NoError(t, model.DecideInputAuditCase(db, review.Id, 3, 101, "dismissed", "fraud", "Benign quotation", nil))
+			var history []model.InputAuditDecision
+			require.NoError(t, db.Where("case_id = ?", review.Id).Order("version").Find(&history).Error)
+			require.Len(t, history, 3)
+			var refs []model.InputAuditEvidenceReference
+			require.NoError(t, common.UnmarshalJsonStr(history[0].References, &refs))
+			require.Len(t, refs, 1)
+			assert.Equal(t, 2, refs[0].Start)
+			assert.Equal(t, 5, refs[0].End)
+			router := gin.New()
+			router.GET("/export", ExportInputAuditLabels)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest("GET", "/export", nil))
+			assert.Equal(t, 200, response.Code)
+			assert.Contains(t, response.Body.String(), `"fraud":false`)
+			// Concurrent reviewers cannot overwrite each other's decisions.
+			if dialect != "sqlite" {
+				sqlDB, err := db.DB()
+				require.NoError(t, err)
+				sqlDB.SetMaxOpenConns(2)
+			}
+			start := make(chan struct{})
+			results := make(chan error, 2)
+			for actor := range 2 {
+				go func(operator int) {
+					<-start
+					results <- model.DecideInputAuditCase(db, review.Id, 4, operator+100, "pending", "fraud", "Concurrent review", nil)
+				}(actor)
+			}
+			close(start)
+			first, second := <-results, <-results
+			if first == nil {
+				assert.ErrorIs(t, second, model.ErrInputAuditConflict)
+			} else {
+				assert.ErrorIs(t, first, model.ErrInputAuditConflict)
+				assert.NoError(t, second)
+			}
+			// Rolling deletion cannot rewrite or remove a pinned snapshot.
+			now := time.Now().Unix()
+			require.NoError(t, db.Model(&model.InputAuditEvidence{}).Where("id > ?", 0).Update("created_at", now-8*86400).Error)
+			require.NoError(t, model.PersistInputAuditEvidence(db, nil, now))
+			require.NoError(t, db.Where("id > ?", 0).Delete(&model.InputAudit{}).Error)
+			require.NoError(t, db.First(&review, review.Id).Error)
+			after, err := model.InputAuditCaseSnapshotOf(review)
+			require.NoError(t, err)
+			assert.Equal(t, snapshot, after)
+			// Legacy previews cannot be promoted to complete evidence or exported as labels.
+			legacy := model.InputAudit{UserId: 8, ContentHash: "legacy", Content: "incomplete", CreatedAt: now}
+			require.NoError(t, db.Create(&legacy).Error)
+			missing, err := model.CreateInputAuditCase(db, legacy.Id, 100, "Legacy case")
+			require.NoError(t, err)
+			assert.Error(t, model.DecideInputAuditCase(db, missing.Id, 1, 100, "confirmed", "fraud", "Incomplete context", []model.InputAuditEvidenceReference{{MessageIndex: 0, Quote: "incomplete"}}))
+			require.NoError(t, model.DecideInputAuditCase(db, missing.Id, 1, 100, "dismissed", "fraud", "Insufficient context", nil))
+			response = httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest("GET", "/export", nil))
+			assert.NotContains(t, response.Body.String(), `"text":"incomplete"`)
+			for range 2 {
+				require.NoError(t, db.AutoMigrate(&model.Option{}, &model.InputAudit{}, &model.InputAuditEvidence{}, &model.InputAuditCase{}, &model.InputAuditDecision{}, &model.InputAuditPolicyRevision{}))
+			}
+			require.NoError(t, db.First(&review, review.Id).Error)
+			assert.EqualValues(t, 5, review.Version)
+			require.NoError(t, db.Model(&model.InputAuditCase{}).Where("id = ?", missing.Id).Update("expires_at", now).Error)
+			_, err = model.CreateInputAuditCase(db, legacy.Id, 100, "Expired case")
+			assert.Error(t, err)
+			require.NoError(t, model.PersistInputAuditEvidence(db, nil, now))
+			assert.ErrorIs(t, db.First(&model.InputAuditCase{}, missing.Id).Error, gorm.ErrRecordNotFound)
+		})
+	}
+}
+
+func TestInputAuditAllowlistAPIValidationAndRevocation(t *testing.T) {
+	user, _ := setupAccessTokenAudit(t)
+	require.NoError(t, model.DB.Model(user).Update("role", common.RoleRootUser).Error)
+	_, token := createAccessTokenTestSession(t, user.Id, "allowlist-session")
+	require.NoError(t, model.DB.AutoMigrate(&model.InputAudit{}, &model.InputAuditEvidence{}, &model.InputAuditCase{}, &model.InputAuditDecision{}, &model.InputAuditPolicyRevision{}))
+	common.OptionMapRWMutex.Lock()
+	oldOptions := common.OptionMap
+	common.OptionMap = map[string]string{}
+	common.OptionMapRWMutex.Unlock()
+	oldInstances, err := common.Marshal(request_plugin_setting.GetInstances())
+	require.NoError(t, err)
+	oldPolicy, err := common.Marshal(request_plugin_setting.GetAllowlist())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap = oldOptions
+		common.OptionMapRWMutex.Unlock()
+		require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: string(oldInstances), request_plugin_setting.AllowlistOption: string(oldPolicy)}))
+	})
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: `[{"id":"filter","plugin":"request-filter"},{"id":"other","plugin":"request-redact"}]`}))
+	require.NoError(t, service.StartInputAuditRecorder())
+	t.Cleanup(func() { service.StopInputAuditRecorder(context.Background()) })
+	recorder := service.CurrentInputAuditRecorder()
+	settings := model.DefaultInputAuditSettings()
+	settings.Enabled = true
+	require.NoError(t, recorder.UpdateSettings(context.Background(), settings))
+	router := gin.New()
+	router.PUT("/api/input-audit/allowlist", middleware.RootAuth(), UpdateInputAuditAllowlist)
+	valid := request_plugin_setting.AllowlistEntry{UserID: user.Id, Instances: []string{"filter"}, Reason: "Approved account", ExpiresAt: time.Now().Unix() + 3600, CreatedBy: 999, CreatedAt: 1}
+	for _, tc := range []struct {
+		name   string
+		change func(*request_plugin_setting.AllowlistEntry)
+	}{
+		{"other plugin", func(e *request_plugin_setting.AllowlistEntry) { e.Instances = []string{"other"} }},
+		{"unknown user", func(e *request_plugin_setting.AllowlistEntry) { e.UserID = 999999 }},
+		{"expired", func(e *request_plugin_setting.AllowlistEntry) { e.ExpiresAt = time.Now().Unix() }},
+		{"empty reason", func(e *request_plugin_setting.AllowlistEntry) { e.Reason = " " }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := valid
+			tc.change(&entry)
+			body, err := common.Marshal(request_plugin_setting.Allowlist{Entries: []request_plugin_setting.AllowlistEntry{entry}})
+			require.NoError(t, err)
+			request := httptest.NewRequest("PUT", "/api/input-audit/allowlist", strings.NewReader(string(body)))
+			request.Header.Set("Authorization", "Bearer "+token)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			assert.Equal(t, 400, response.Code)
+		})
+	}
+	for _, version := range []int64{0, 1} {
+		policy, err := model.LoadInputAuditAllowlist(model.DB)
+		require.NoError(t, err)
+		if version == 0 {
+			policy.Entries = []request_plugin_setting.AllowlistEntry{valid}
+		} else {
+			policy.Entries[0].Reason = "Renewed approval"
+			policy.Entries[0].ExpiresAt += 3600
+		}
+		body, err := common.Marshal(policy)
+		require.NoError(t, err)
+		request := httptest.NewRequest("PUT", "/api/input-audit/allowlist", strings.NewReader(string(body)))
+		request.Header.Set("Authorization", "Bearer "+token)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		require.Equal(t, 200, response.Code)
+		saved, err := model.LoadInputAuditAllowlist(model.DB)
+		require.NoError(t, err)
+		require.Len(t, saved.Entries, 1)
+		assert.Equal(t, user.Id, saved.Entries[0].CreatedBy)
+		assert.NotEqualValues(t, 1, saved.Entries[0].CreatedAt)
+		assert.EqualValues(t, version+1, saved.Version)
+	}
+	body, err := common.Marshal(request_plugin_setting.Allowlist{Version: 2, Entries: []request_plugin_setting.AllowlistEntry{}})
+	require.NoError(t, err)
+	request := httptest.NewRequest("PUT", "/api/input-audit/allowlist", strings.NewReader(string(body)))
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	require.Equal(t, 200, response.Code)
+	policy, err := model.LoadInputAuditAllowlist(model.DB)
+	require.NoError(t, err)
+	assert.Empty(t, policy.Entries)
+	assert.EqualValues(t, 3, policy.Version)
+	var revisions []model.InputAuditPolicyRevision
+	require.NoError(t, model.DB.Order("version").Find(&revisions).Error)
+	require.Len(t, revisions, 3)
+	assert.Contains(t, revisions[0].Policy, "Approved account")
+	assert.Contains(t, revisions[1].Policy, "Renewed approval")
+}
+
+func TestInputAuditEvidenceFallbackAndQueueLimits(t *testing.T) {
+	db := inputAuditTestDB(t, "sqlite")
+	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.InputAudit{}, &model.InputAuditEvidence{}, &model.InputAuditCase{}, &model.InputAuditDecision{}, &model.InputAuditPolicyRevision{}))
+	recorder, err := service.NewInputAuditRecorder(db)
+	require.NoError(t, err)
+	settings := model.DefaultInputAuditSettings()
+	settings.Enabled = true
+	require.NoError(t, recorder.UpdateSettings(context.Background(), settings))
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	common.SetContextKey(c, constant.ContextKeyUserId, 9)
+	request := &dto.GeneralOpenAIRequest{Prompt: "fallback input"}
+	recorder.Capture(c, request)
+	request.Prompt = "changed after capture"
+	recorder.Flush(context.Background())
+	var audit model.InputAudit
+	require.NoError(t, db.First(&audit).Error)
+	assert.NotEmpty(t, audit.RequestId)
+	var evidence model.InputAuditEvidence
+	require.NoError(t, db.Where("request_id = ?", audit.RequestId).First(&evidence).Error)
+	assert.Contains(t, evidence.Body, "fallback input")
+	assert.NotContains(t, evidence.Body, "changed after capture")
+	for i := range 65 {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+		common.SetContextKey(c, constant.ContextKeyUserId, 9)
+		c.Set(common.RequestIdKey, fmt.Sprint(i))
+		recorder.Capture(c, &dto.GeneralOpenAIRequest{Prompt: "queued message"})
+	}
+	assert.Equal(t, 64, recorder.Status().EvidencePending)
+	assert.EqualValues(t, 1, recorder.Status().EvidenceDropped)
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	recorder.Flush(cancelled)
+	assert.EqualValues(t, 33, recorder.Status().EvidenceDropped)
+	assert.EqualValues(t, 1, recorder.Status().EvidenceWriteFailures)
+}
+
+func TestInputAuditRealtimeEventsKeepOriginalTextAndMissingContext(t *testing.T) {
+	db := inputAuditTestDB(t, "sqlite")
+	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.InputAudit{}, &model.InputAuditEvidence{}, &model.InputAuditCase{}, &model.InputAuditDecision{}, &model.InputAuditPolicyRevision{}))
+	recorder, err := service.NewInputAuditRecorder(db)
+	require.NoError(t, err)
+	settings := model.DefaultInputAuditSettings()
+	settings.Enabled = true
+	require.NoError(t, recorder.UpdateSettings(context.Background(), settings))
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET", "/v1/realtime", nil)
+	c.Set(common.RequestIdKey, "session-id")
+	common.SetContextKey(c, constant.ContextKeyUserId, 5)
+	recorder.CaptureRealtimeEvent(c, "conversation.item.create", []byte(`{"item":{"type":"message","role":"user","content":[{"type":"input_text","text":"original realtime text"}]}}`))
+	recorder.CaptureRealtimeEvent(c, "response.create", []byte(`{"response":{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"second event"}]}]}}`))
+	recorder.CaptureRealtimeEvent(c, "input_audio_buffer.append", []byte(`{"audio":"private audio"}`))
+	recorder.Flush(context.Background())
+	var events []model.InputAuditEvidence
+	require.NoError(t, db.Order("id").Find(&events).Error)
+	require.Len(t, events, 2)
+	assert.NotEqual(t, events[0].RequestId, events[1].RequestId)
+	for _, event := range events {
+		var document model.InputAuditEvidenceDocument
+		require.NoError(t, common.UnmarshalJsonStr(event.Body, &document))
+		assert.True(t, document.ContextMissing)
+		assert.False(t, document.Complete())
+		assert.NotContains(t, event.Body, "private audio")
+	}
+	assert.Contains(t, events[0].Body, "original realtime text")
+	assert.Equal(t, "session-id", c.GetString(common.RequestIdKey))
 }

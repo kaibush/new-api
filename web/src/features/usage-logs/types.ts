@@ -599,6 +599,8 @@ export type RequestPluginRecordItem =
 
 /** One request processing run as administrators see it. */
 export type RequestPluginAdminStep = {
+  exemption_id?: string
+  exemption_version?: number
   instance: string
   name?: string
   plugin: string

@@ -32,6 +32,7 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { InputAuditViewer } from '..'
 import { AuditLogs } from '../../audit'
+import type { InputAuditAllowlist } from '../api'
 
 const settings = {
   enabled: false,
@@ -57,11 +58,46 @@ const entry = {
 let client: QueryClient
 
 beforeEach(() => {
+  settings.enabled = false
   client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: 100 })
   vi.spyOn(api, 'get').mockImplementation(async (url, config) => {
+    if (url === '/api/input-audit/allowlist/history') {
+      return { data: { success: true, data: [] } }
+    }
+    if (url === '/api/input-audit/1/evidence') {
+      return {
+        data: { success: true, data: { available: false, complete: false } },
+      }
+    }
+    if (url === '/api/input-audit/allowlist') {
+      return { data: { success: true, data: { version: 0, entries: [] } } }
+    }
+    if (url === '/api/request_plugin/instances') {
+      return {
+        data: {
+          success: true,
+          data: {
+            instances: [
+              {
+                id: 'filter-one',
+                name: 'Policy A',
+                plugin: 'request-filter',
+                enabled: true,
+              },
+              {
+                id: 'redact',
+                name: 'Redaction',
+                plugin: 'request-redact',
+                enabled: true,
+              },
+            ],
+          },
+        },
+      }
+    }
     if (url === '/api/input-audit/status') {
       return {
         data: {
@@ -347,10 +383,13 @@ it('settings remain open after a rejected save and close after a successful retr
   await waitFor(() =>
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   )
-  expect(put).toHaveBeenLastCalledWith('/api/input-audit/settings', {
-    ...settings,
-    max_chars: 4096,
-  })
+  expect(put).toHaveBeenLastCalledWith(
+    '/api/input-audit/settings',
+    expect.objectContaining({
+      ...settings,
+      max_chars: 4096,
+    })
+  )
 })
 
 it('out-of-range storage settings show validation without sending an update', async () => {
@@ -407,4 +446,326 @@ it('search with unchanged filters refreshes newly captured messages', async () =
         .mock.calls.filter(([url]) => url === '/api/input-audit').length
     ).toBeGreaterThan(before)
   )
+})
+
+it('allowlisting a user keeps audit collection and only selects content filtering instances', async () => {
+  settings.enabled = true
+  const put = vi.spyOn(api, 'put').mockImplementation(async (_url, policy) => ({
+    data: {
+      success: true,
+      data: { ...(policy as InputAuditAllowlist), version: 1 },
+    },
+  }))
+  render(
+    <QueryClientProvider client={client}>
+      <InputAuditViewer />
+    </QueryClientProvider>
+  )
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'User allowlist' })
+  )
+  const dialog = screen.getByRole('dialog', { name: 'User allowlist' })
+  fireEvent.change(
+    within(dialog).getByRole('spinbutton', { name: 'User ID' }),
+    { target: { value: '4' } }
+  )
+  fireEvent.change(within(dialog).getByRole('textbox', { name: 'Reason' }), {
+    target: { value: 'Approved test account' },
+  })
+  await userEvent.click(
+    within(dialog).getByRole('combobox', {
+      name: 'Content filtering instances',
+    })
+  )
+  await userEvent.click(await screen.findByRole('option', { name: 'Policy A' }))
+  expect(
+    screen.queryByRole('option', { name: 'Redaction' })
+  ).not.toBeInTheDocument()
+  await userEvent.keyboard('{Escape}')
+  await userEvent.click(
+    within(dialog).getByRole('button', { name: 'Add to allowlist' })
+  )
+  await waitFor(() =>
+    expect(put).toHaveBeenCalledWith('/api/input-audit/allowlist', {
+      version: 0,
+      entries: [
+        expect.objectContaining({
+          user_id: 4,
+          instances: ['filter-one'],
+          reason: 'Approved test account',
+        }),
+      ],
+    })
+  )
+  expect(put).not.toHaveBeenCalledWith(
+    '/api/input-audit/settings',
+    expect.anything()
+  )
+  expect(await within(dialog).findByText('Approved test account')).toBeVisible()
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Revoke' }))
+  const confirm = screen.getByRole('alertdialog')
+  await userEvent.click(within(confirm).getByRole('button', { name: 'Revoke' }))
+  await waitFor(() =>
+    expect(put).toHaveBeenLastCalledWith('/api/input-audit/allowlist', {
+      version: 1,
+      entries: [],
+    })
+  )
+})
+
+it('case decisions preserve drafts on conflict, refresh explicitly and require complete evidence for confirmation', async () => {
+  const document = {
+    source: 'client_request',
+    scope: 'submitted_text_messages',
+    messages: [{ role: 'user', text: 'exact evidence quote' }],
+    truncated: false,
+    context_missing: false,
+    omitted: [],
+  }
+  let version = 1
+  const get = vi.mocked(api.get)
+  const originalMock = get.getMockImplementation()
+  get.mockImplementation(async (url, config) => {
+    if (url === '/api/input-audit/cases') {
+      return { data: { success: true, data: { items: [{ id: 2 }], total: 1 } } }
+    }
+    if (url === '/api/input-audit/cases/2') {
+      return {
+        data: {
+          success: true,
+          data: {
+            case: {
+              id: 2,
+              version,
+              status: 'pending',
+              reason: 'initial reason',
+              created_by: 1,
+              expires_at: 2000000000,
+            },
+            complete: true,
+            snapshot: { document, allowlist: { version: 0, entries: [] } },
+            decisions: [],
+          },
+        },
+      }
+    }
+    if (originalMock) return originalMock(url, config)
+    throw new Error('Unexpected API request')
+  })
+  const post = vi
+    .spyOn(api, 'post')
+    .mockRejectedValueOnce({
+      response: {
+        status: 409,
+        data: { success: false, message: 'version conflict' },
+      },
+    })
+    .mockResolvedValueOnce({ data: { success: true } })
+  render(
+    <QueryClientProvider client={client}>
+      <InputAuditViewer />
+    </QueryClientProvider>
+  )
+  await userEvent.click(await screen.findByRole('button', { name: 'Details' }))
+  const form = await screen.findByRole('form', { name: 'Review decision' })
+  await userEvent.selectOptions(
+    within(form).getByRole('combobox', { name: 'Decision' }),
+    'confirmed'
+  )
+  await userEvent.type(
+    within(form).getByRole('textbox', { name: 'Review reason' }),
+    'verified review'
+  )
+  await userEvent.click(
+    within(form).getByRole('button', { name: 'Save decision' })
+  )
+  expect(post).not.toHaveBeenCalled()
+  await userEvent.type(
+    within(form).getByRole('textbox', { name: 'Exact evidence quote' }),
+    'exact evidence quote'
+  )
+  await userEvent.click(
+    within(form).getByRole('button', { name: 'Save decision' })
+  )
+  await screen.findByText(
+    'The decision was not saved. Your draft is preserved. Refresh explicitly if another reviewer changed the case.'
+  )
+  expect(
+    within(form).getByRole('textbox', { name: 'Review reason' })
+  ).toHaveValue('verified review')
+  expect(
+    within(form).getByRole('textbox', { name: 'Exact evidence quote' })
+  ).toHaveValue('exact evidence quote')
+  version = 2
+  await userEvent.click(
+    within(form).getByRole('button', { name: 'Refresh case version' })
+  )
+  await waitFor(() =>
+    expect(
+      within(form).getByRole('button', { name: 'Refresh case version' })
+    ).toBeEnabled()
+  )
+  await userEvent.click(
+    within(form).getByRole('button', { name: 'Save decision' })
+  )
+  await waitFor(() =>
+    expect(post).toHaveBeenLastCalledWith(
+      '/api/input-audit/cases/2/decisions',
+      expect.objectContaining({
+        version: 2,
+        status: 'confirmed',
+        reason: 'verified review',
+        references: [{ message_index: 0, quote: 'exact evidence quote' }],
+      })
+    )
+  )
+})
+
+it('incomplete case evidence disables confirmation and renders submitted text safely', async () => {
+  const get = vi.mocked(api.get)
+  const originalMock = get.getMockImplementation()
+  get.mockImplementation(async (url, config) => {
+    if (url === '/api/input-audit/cases') {
+      return { data: { success: true, data: { items: [{ id: 3 }], total: 1 } } }
+    }
+    if (url === '/api/input-audit/cases/3') {
+      return {
+        data: {
+          success: true,
+          data: {
+            case: {
+              id: 3,
+              version: 1,
+              status: 'pending',
+              reason: 'legacy',
+              created_by: 1,
+              expires_at: 2000000000,
+            },
+            complete: false,
+            snapshot: {
+              document: {
+                source: 'legacy_preview',
+                scope: 'retained_user_text',
+                messages: [{ role: 'user', text: '<script>unsafe</script>' }],
+                truncated: true,
+                context_missing: true,
+                omitted: [],
+              },
+              allowlist: { version: 0, entries: [] },
+            },
+            decisions: [],
+          },
+        },
+      }
+    }
+    if (originalMock) return originalMock(url, config)
+    throw new Error('Unexpected API request')
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <InputAuditViewer />
+    </QueryClientProvider>
+  )
+  await userEvent.click(await screen.findByRole('button', { name: 'Details' }))
+  const form = await screen.findByRole('form', { name: 'Review decision' })
+  expect(
+    within(form).getByRole('option', { name: 'Confirmed violation' })
+  ).toBeDisabled()
+  expect(screen.getByText('<script>unsafe</script>')).toBeVisible()
+  expect(screen.getByRole('dialog').querySelector('script')).toBeNull()
+})
+
+it('retained review cases remain reachable from their own paginated and filtered list', async () => {
+  const get = vi.mocked(api.get)
+  const originalMock = get.getMockImplementation()
+  get.mockImplementation(async (url, config) => {
+    if (url === '/api/input-audit/cases') {
+      const page = Number(config?.params?.p ?? 1)
+      return {
+        data: {
+          success: true,
+          data: {
+            items: [
+              {
+                id: page + 6,
+                user_id: 4,
+                status: 'confirmed',
+                updated_at: 1700000000,
+              },
+            ],
+            total: 41,
+          },
+        },
+      }
+    }
+    if (url === '/api/input-audit/cases/8') {
+      return {
+        data: {
+          success: true,
+          data: {
+            case: {
+              id: 8,
+              version: 2,
+              status: 'confirmed',
+              reason: 'Retained case',
+              created_by: 1,
+              expires_at: 2000000000,
+            },
+            complete: false,
+            snapshot: {
+              document: {
+                source: 'legacy_preview',
+                scope: 'retained_user_text',
+                messages: [
+                  { index: 0, role: 'user', text: 'retained evidence' },
+                ],
+                truncated: false,
+                context_missing: true,
+                omitted: [],
+              },
+              allowlist: { version: 0, entries: [] },
+            },
+            decisions: [],
+          },
+        },
+      }
+    }
+    if (originalMock) return originalMock(url, config)
+    throw new Error('Unexpected API request')
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <InputAuditViewer />
+    </QueryClientProvider>
+  )
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Review cases' })
+  )
+  const dialog = screen.getByRole('dialog', { name: 'Review cases' })
+  await within(dialog).findByRole('button', { name: 'Review' })
+  await userEvent.selectOptions(
+    within(dialog).getByRole('combobox', { name: 'Decision' }),
+    'confirmed'
+  )
+  await waitFor(() =>
+    expect(get).toHaveBeenCalledWith('/api/input-audit/cases', {
+      params: { p: 1, page_size: 20, status: 'confirmed' },
+    })
+  )
+  await waitFor(() =>
+    expect(
+      within(dialog).getByRole('button', { name: 'Go to next page' })
+    ).toBeEnabled()
+  )
+  await userEvent.click(
+    within(dialog).getByRole('button', { name: 'Go to next page' })
+  )
+  await waitFor(() =>
+    expect(get).toHaveBeenCalledWith('/api/input-audit/cases', {
+      params: { p: 2, page_size: 20, status: 'confirmed' },
+    })
+  )
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Review' }))
+  await screen.findByText('retained evidence')
+  expect(get).toHaveBeenCalledWith('/api/input-audit/cases/8')
 })

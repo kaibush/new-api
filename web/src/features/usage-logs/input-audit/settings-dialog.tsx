@@ -42,6 +42,15 @@ const schema = z.object({
   retention_days: z.number().int().min(1).max(90),
   max_records: z.number().int().min(100).max(1000000),
   max_chars: z.number().int().min(256).max(8192),
+  evidence_enabled: z.boolean(),
+  evidence_max_chars: z.number().int().min(1024).max(65536),
+  evidence_max_records: z.number().int().min(100).max(10000),
+  evidence_max_bytes: z
+    .number()
+    .int()
+    .min(8 * 1024 * 1024)
+    .max(512 * 1024 * 1024),
+  case_retention_days: z.number().int().min(1).max(90),
 })
 
 export function InputAuditSettingsDialog(props: {
@@ -50,9 +59,16 @@ export function InputAuditSettingsDialog(props: {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const queryClient = useQueryClient()
-  const form = useForm<InputAuditSettings>({
+  const form = useForm<z.infer<typeof schema>>({
     resolver: zodResolver(schema),
-    defaultValues: props.settings,
+    defaultValues: {
+      evidence_enabled: true,
+      evidence_max_chars: 32768,
+      evidence_max_records: 1000,
+      evidence_max_bytes: 64 * 1024 * 1024,
+      case_retention_days: 30,
+      ...props.settings,
+    },
   })
   const mutation = useMutation({
     mutationFn: updateInputAuditSettings,
@@ -81,13 +97,46 @@ export function InputAuditSettingsDialog(props: {
       min: 256,
       max: 8192,
     },
+    {
+      name: 'evidence_max_chars' as const,
+      label: t('Evidence characters per request'),
+      min: 1024,
+      max: 65536,
+    },
+    {
+      name: 'evidence_max_records' as const,
+      label: t('Maximum evidence records'),
+      min: 100,
+      max: 10000,
+    },
+    {
+      name: 'evidence_max_bytes' as const,
+      label: t('Evidence storage limit (bytes)'),
+      min: 8 * 1024 * 1024,
+      max: 512 * 1024 * 1024,
+    },
+    {
+      name: 'case_retention_days' as const,
+      label: t('Case retention days'),
+      min: 1,
+      max: 90,
+    },
   ]
   return (
     <Dialog
       open={open}
       onOpenChange={(value) => {
         if (mutation.isPending) return
-        if (value) form.reset(props.settings)
+        if (value) {
+          form.reset({
+            evidence_enabled: true,
+            evidence_max_chars: 32768,
+            evidence_max_records: 1000,
+            evidence_max_bytes: 64 * 1024 * 1024,
+            case_retention_days: 30,
+            ...props.settings,
+          })
+        }
         setOpen(value)
       }}
       title={t('Input audit settings')}
@@ -105,6 +154,20 @@ export function InputAuditSettingsDialog(props: {
             label={t('Collect user messages')}
             disabled={mutation.isPending}
           />
+          <SettingsSwitchField
+            controlId='input-audit-evidence-enabled'
+            checked={form.watch('evidence_enabled')}
+            onCheckedChange={(value) =>
+              form.setValue('evidence_enabled', value)
+            }
+            label={t('Retain submitted text evidence')}
+            disabled={mutation.isPending}
+          />
+          <p className='text-muted-foreground text-xs'>
+            {t(
+              'Cases keep immutable evidence for their retention period, up to 1000 cases and 256 MiB including decision history.'
+            )}
+          </p>
           {fields.map((field) => (
             <Field
               key={field.name}

@@ -282,6 +282,9 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 	common.SetContextKey(c, appconstant.ContextKeyRequestStartTime, time.Now())
 	// As on HTTP, the request plugins' ingress reads the create before the
 	// model access and channel checks; a changed body is decoded again.
+	if recorder := service.CurrentInputAuditRecorder(); recorder != nil {
+		recorder.Capture(c, &create.Request)
+	}
 	changed, ingressSteps, ingressRecord, ingressErr := requestplugin.SocketIngress(c, types.RelayFormatOpenAIResponses)
 	if ingressErr != nil {
 		ingress := &relaycommon.RelayInfo{}

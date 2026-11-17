@@ -24,12 +24,14 @@ type RequestPluginFinding struct {
 // plugin instance run at one stage. It never holds request content or
 // plugin messages.
 type RequestPluginStep struct {
-	Instance string `json:"instance"`
-	Name     string `json:"name"`
-	Plugin   string `json:"plugin"`
-	Version  string `json:"version"`
-	Stage    string `json:"stage"`
-	Action   string `json:"action"`
+	Instance         string `json:"instance"`
+	Name             string `json:"name"`
+	Plugin           string `json:"plugin"`
+	Version          string `json:"version"`
+	Stage            string `json:"stage"`
+	Action           string `json:"action"`
+	ExemptionID      string `json:"exemption_id,omitempty"`
+	ExemptionVersion int64  `json:"exemption_version,omitempty"`
 	// RuleID is the rule a rejection names.
 	RuleID     string                 `json:"rule,omitempty"`
 	Effects    int                    `json:"effects"`

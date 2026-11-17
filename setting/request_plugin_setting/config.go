@@ -53,9 +53,10 @@ func (list *Instances) UnmarshalJSON(data []byte) error {
 
 type RequestPluginSetting struct {
 	Instances Instances `json:"instances"`
+	Allowlist Allowlist `json:"allowlist"`
 }
 
-var requestPluginSetting = RequestPluginSetting{Instances: Instances{}}
+var requestPluginSetting = RequestPluginSetting{Instances: Instances{}, Allowlist: Allowlist{Entries: []AllowlistEntry{}}}
 
 func init() {
 	config.GlobalConfig.Register("request_plugin_setting", &requestPluginSetting)

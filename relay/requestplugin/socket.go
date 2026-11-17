@@ -38,7 +38,7 @@ const (
 // decodes again. The plan stays on c for the later stages, the reply check
 // and the report.
 func SocketIngress(c *gin.Context, format types.RelayFormat) (bool, []relaycommon.RequestPluginStep, []relaycommon.RequestPluginRecord, *types.NewAPIError) {
-	plan := NewPlan()
+	plan := NewPlan(common.GetContextKeyInt(c, constant.ContextKeyUserId))
 	if plan == nil {
 		return false, nil, nil, nil
 	}
@@ -162,7 +162,7 @@ func (s *SocketResponse) Stopped() *types.NewAPIError {
 // instances run on the session's events once the session knows its channel
 // (NewRealtime).
 func StartRealtime(c *gin.Context) {
-	if plan := NewPlan(); plan != nil {
+	if plan := NewPlan(common.GetContextKeyInt(c, constant.ContextKeyUserId)); plan != nil {
 		c.Set(planContextKey, plan)
 	}
 }

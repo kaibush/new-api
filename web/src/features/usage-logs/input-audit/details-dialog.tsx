@@ -16,26 +16,44 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '@/components/copy-button'
 import { Dialog } from '@/components/dialog'
+import { ErrorState } from '@/components/error-state'
+import { LoadingState } from '@/components/loading-state'
 import { Button } from '@/components/ui/button'
 import { toIntlLocale } from '@/i18n/languages'
 import dayjs from '@/lib/dayjs'
 import { formatNumber } from '@/lib/format'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import {
   DetailRow,
   DetailSection,
 } from '../components/dialogs/log-detail-layout'
-import type { InputAudit } from './api'
+import { getInputAuditEvidence, type InputAudit } from './api'
+import { InputAuditCasePanel } from './case-panel'
+import { InputAuditEvidenceView } from './evidence-view'
 
 export function InputAuditDetailsDialog(props: { entry: InputAudit }) {
   const { t, i18n } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const user = useAuthStore((state) => state.auth.user)
+  const evidence = useQuery({
+    queryKey: ['input-audit-evidence', user?.id, props.entry.id],
+    queryFn: () => getInputAuditEvidence(props.entry.id),
+    enabled: open && user?.role === ROLE.SUPER_ADMIN,
+    retry: false,
+  })
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   return (
     <Dialog
+      open={open}
+      onOpenChange={setOpen}
       title={t('Input Audits')}
       trigger={
         <Button size='sm' variant='ghost'>
@@ -89,6 +107,28 @@ export function InputAuditDetailsDialog(props: { entry: InputAudit }) {
           {t('Copy')}
         </CopyButton>
       </DetailSection>
+      {open && user?.role === ROLE.SUPER_ADMIN && (
+        <DetailSection label={t('Evidence and review')}>
+          {evidence.isPending && <LoadingState />}
+          {evidence.isError && (
+            <ErrorState
+              onRetry={() => {
+                void evidence.refetch()
+              }}
+            />
+          )}
+          {evidence.data?.document && (
+            <InputAuditEvidenceView
+              document={evidence.data.document}
+              complete={evidence.data.complete}
+            />
+          )}
+          {evidence.data && !evidence.data.available && (
+            <p>{t('Historical preview; original context was not retained')}</p>
+          )}
+          <InputAuditCasePanel auditID={props.entry.id} />
+        </DetailSection>
+      )}
     </Dialog>
   )
 }

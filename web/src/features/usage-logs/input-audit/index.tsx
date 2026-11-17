@@ -35,12 +35,14 @@ import {
   LogsFilterInput,
   LogsFilterToolbar,
 } from '../components/logs-filter-toolbar'
+import { InputAuditAllowlistDialog } from './allowlist-dialog'
 import {
   getInputAudits,
   getInputAuditStatus,
   type InputAudit,
   type InputAuditFilters,
 } from './api'
+import { InputAuditCasesDialog } from './cases-dialog'
 import { useInputAuditColumns } from './columns'
 import { InputAuditSettingsDialog } from './settings-dialog'
 
@@ -188,6 +190,27 @@ export function InputAuditViewer() {
               · {status.data.settings.enabled ? t('Enabled') : t('Disabled')}
             </p>
           )}
+          {status.data && (
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Evidence on this instance: {{pending}} queued · {{dropped}} dropped · {{failures}} write failures',
+                {
+                  pending: formatNumber(
+                    status.data.evidence_pending ?? 0,
+                    locale
+                  ),
+                  dropped: formatNumber(
+                    status.data.evidence_dropped ?? 0,
+                    locale
+                  ),
+                  failures: formatNumber(
+                    status.data.evidence_write_failures ?? 0,
+                    locale
+                  ),
+                }
+              )}
+            </p>
+          )}
           <LogsFilterToolbar
             table={table}
             primaryFilters={
@@ -255,7 +278,15 @@ export function InputAuditViewer() {
             }}
             actionStart={
               status.data && (
-                <InputAuditSettingsDialog settings={status.data.settings} />
+                <>
+                  {canRead && <InputAuditCasesDialog />}
+                  {canRead && (
+                    <InputAuditAllowlistDialog
+                      collectionEnabled={status.data.settings.enabled}
+                    />
+                  )}
+                  <InputAuditSettingsDialog settings={status.data.settings} />
+                </>
               )
             }
           />
