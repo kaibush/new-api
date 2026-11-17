@@ -150,7 +150,9 @@ export type RequestEffect =
 
 export type TransformStage = "ingress" | "request" | "outbound" | "egress";
 /** ctx of the stage hooks, of reply and of report. config is the instance config with the schema defaults applied. format is "task" on task submissions ("openai_responses" or "openai_image" at ingress when a task plugin serves those APIs) and "mj_proxy" on Midjourney submissions. In a Realtime session, format is "openai_responses" at ingress and "openai_realtime" in reply and report, path is "/v1/realtime", and channel is set from ingress on. upstreamModel and channel are set from request on, and in the late ingress of an instance the channel binds or of a group settled at channel selection, which runs on each attempt before outbound, on the upstream body (on a task submission, on the client body before the attempt is priced). In reply, format is the client's format. In report they are those of the last attempt, absent when the request reached no channel. user and token are those of the report record; token is absent without one. In a dry run, user is the administrator and there is no token. */
-export interface TransformContext {stage: TransformStage | "reply" | "report"; /** The protocol name of req.body. A hook returns continue for a name it does not handle. */ format: RelayFormat | (string & {}); path: string; model: string; upstreamModel?: string; /** new-api only. */ group?: string; /** new-api only. */ channel?: {id: number; type: number}; attempt: number; /** new-api only. */ user?: {id: number; username: string}; /** new-api only. */ token?: {id: number; name: string}; instance: {id: string; name: string}; /** A property of format "keywords" reads as a KeywordsSummary. */ config: Readonly<Record<string, JSONValue>>}
+export interface TransformContext {
+  /** Return private rejection evidence only when true. */
+  captureEvidence?: boolean;stage: TransformStage | "reply" | "report"; /** The protocol name of req.body. A hook returns continue for a name it does not handle. */ format: RelayFormat | (string & {}); path: string; model: string; upstreamModel?: string; /** new-api only. */ group?: string; /** new-api only. */ channel?: {id: number; type: number}; attempt: number; /** new-api only. */ user?: {id: number; username: string}; /** new-api only. */ token?: {id: number; name: string}; instance: {id: string; name: string}; /** A property of format "keywords" reads as a KeywordsSummary. */ config: Readonly<Record<string, JSONValue>>}
 /** An inline image of req.body, which holds "[media:<index>]" in its place. path is its JSON Pointer; bytes is its decoded size; width and height are given at outbound only. */
 export interface TransformMedia {index: number; path: string; mimeType: string; bytes: number; width?: number; height?: number}
 /** headers: outbound and egress, the headers earlier instances of the attempt set with header.patch. summary: request only; reasoningEffort is "" when the client and the model modifiers set none. form: ingress, set when body is the text fields of a multipart form body, each a string or, for a repeated field, an array of strings; its only effects are json.patch replace operations that set a field to a string, and media.text, which leaves a form file as it is. */
@@ -168,9 +170,15 @@ export type TransformEffect =
 /** What matched, by rule and count, never the matched text. rule, category and path are at most 256 characters. */
 export interface TransformFinding {rule: string; category?: string; path?: string; count: number}
 /** At most 64 findings. code matches ^[a-z0-9_.-]{1,64}$; message and ruleId are at most 256 characters. notice is shown to the user in the log as it is: at most 8 locales of at most 200 characters. */
+/** Private plugin-reported decisive hit, at most 8 KiB encoded. Original or transformed matcher text, never public log data. */
+export interface TransformMatchEvidence {
+ path: string; role: string; method: "keyword" | "regex" | "keyword_list";
+ representation: "original" | "transformed"; serialized: boolean;
+ before: string; match: string; after: string; truncated: boolean; matchTruncated: boolean;
+}
 export type TransformResult =
   | {action: "continue"; effects?: readonly TransformEffect[]; findings?: readonly TransformFinding[]; notice?: LocalizedText}
-  | {action: "reject"; code: string; message?: string; ruleId?: string; findings?: readonly TransformFinding[]; notice?: LocalizedText};
+  | {action: "reject"; evidence?: TransformMatchEvidence; code: string; message?: string; ruleId?: string; findings?: readonly TransformFinding[]; notice?: LocalizedText};
 /** Optional. Runs when an instance is saved, after the schema check, on the config with its defaults ({} without a configSchema), a property of format "keywords" read as a KeywordsSummary. A throw refuses the config with its message, cut to 256 characters; the return value is ignored. utils.fetch and utils.paramOverride throw here. */
 export declare function validateConfig(config: Readonly<Record<string, JSONValue>>): void;
 /** May call utils.fetch, as egress may. */

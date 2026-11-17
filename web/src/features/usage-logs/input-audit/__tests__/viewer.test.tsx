@@ -64,6 +64,13 @@ beforeEach(() => {
   })
   useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: 100 })
   vi.spyOn(api, 'get').mockImplementation(async (url, config) => {
+    if (String(url).startsWith('/api/user/search'))
+      {return {
+        data: {
+          success: true,
+          data: { items: [{ id: 4, username: 'alice' }] },
+        },
+      }}
     if (url === '/api/input-audit/allowlist/history') {
       return { data: { success: true, data: [] } }
     }
@@ -162,6 +169,7 @@ it('root opens message audits on demand and sees safe text, first receive time a
       'Long messages retain the beginning and end; the middle is omitted.'
     )
   ).toBeVisible()
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Request' }))
   expect(within(dialog).getByText('9,000')).toBeVisible()
   expect(within(dialog).getByText('full-text-hash')).toBeVisible()
   await userEvent.keyboard('{Escape}')
@@ -170,24 +178,21 @@ it('root opens message audits on demand and sees safe text, first receive time a
   )
 })
 
-it('invalid user IDs are rejected and valid user filters reset pagination', async () => {
+it('selecting a user by name sends its ID and reset clears the selection', async () => {
   render(
     <QueryClientProvider client={client}>
       <InputAuditViewer />
     </QueryClientProvider>
   )
   await screen.findByText('alice (#4)')
-  fireEvent.change(screen.getByRole('textbox', { name: 'User ID' }), {
-    target: { value: '-1' },
+  const picker = screen.getByRole('combobox', {
+    name: 'Search users by name or ID',
   })
-  await userEvent.click(screen.getByRole('button', { name: 'Search' }))
-  expect(screen.getByText('Invalid audit filters')).toBeVisible()
-  expect(api.get).not.toHaveBeenCalledWith('/api/input-audit', {
-    params: expect.objectContaining({ user_id: -1 }),
-  })
-  fireEvent.change(screen.getByRole('textbox', { name: 'User ID' }), {
-    target: { value: '4' },
-  })
+  await userEvent.click(picker)
+  await userEvent.type(picker, 'alice')
+  await userEvent.click(
+    await screen.findByRole('option', { name: 'alice (#4)' })
+  )
   await userEvent.click(screen.getByRole('button', { name: 'Search' }))
   await waitFor(() =>
     expect(api.get).toHaveBeenCalledWith('/api/input-audit', {
@@ -195,7 +200,7 @@ it('invalid user IDs are rejected and valid user filters reset pagination', asyn
     })
   )
   await userEvent.click(screen.getByRole('button', { name: 'Reset' }))
-  expect(screen.getByRole('textbox', { name: 'User ID' })).toHaveValue('')
+  expect(picker).toHaveValue('')
 })
 
 it('mobile message lists fill the available height and scroll inside the page', async () => {
@@ -230,9 +235,12 @@ it.each([false, true])(
     )
     await userEvent.click(screen.getByRole('tab', { name: 'Input Audits' }))
     await screen.findByText('alice (#4)')
-    fireEvent.change(screen.getByRole('textbox', { name: 'User ID' }), {
-      target: { value: '4' },
-    })
+    await userEvent.click(
+      screen.getByRole('combobox', { name: 'Search users by name or ID' })
+    )
+    await userEvent.click(
+      await screen.findByRole('option', { name: 'alice (#4)' })
+    )
     fireEvent.change(screen.getByRole('textbox', { name: 'Message keyword' }), {
       target: { value: '审计' },
     })
@@ -251,7 +259,7 @@ it.each([false, true])(
         )
       ).toBeVisible()
     } else {
-      expect(screen.getByRole('combobox')).toBeVisible()
+      expect(screen.getByRole('combobox', { name: '' })).toBeVisible()
     }
     expect(
       screen.getByRole('button', { name: 'Go to previous page' })
@@ -465,9 +473,14 @@ it('allowlisting a user keeps audit collection and only selects content filterin
     await screen.findByRole('button', { name: 'User allowlist' })
   )
   const dialog = screen.getByRole('dialog', { name: 'User allowlist' })
-  fireEvent.change(
-    within(dialog).getByRole('spinbutton', { name: 'User ID' }),
-    { target: { value: '4' } }
+  await userEvent.click(
+    within(dialog).getByRole('button', { name: 'Add to allowlist' })
+  )
+  await userEvent.click(
+    within(dialog).getByRole('combobox', { name: 'Search users by name or ID' })
+  )
+  await userEvent.click(
+    await screen.findByRole('option', { name: 'alice (#4)' })
   )
   fireEvent.change(within(dialog).getByRole('textbox', { name: 'Reason' }), {
     target: { value: 'Approved test account' },
@@ -567,6 +580,8 @@ it('case decisions preserve drafts on conflict, refresh explicitly and require c
     </QueryClientProvider>
   )
   await userEvent.click(await screen.findByRole('button', { name: 'Details' }))
+  await userEvent.click(screen.getByRole('tab', { name: 'Review' }))
+  await userEvent.click(await screen.findByRole('tab', { name: 'Decision' }))
   const form = await screen.findByRole('form', { name: 'Review decision' })
   await userEvent.selectOptions(
     within(form).getByRole('combobox', { name: 'Decision' }),
@@ -667,10 +682,15 @@ it('incomplete case evidence disables confirmation and renders submitted text sa
     </QueryClientProvider>
   )
   await userEvent.click(await screen.findByRole('button', { name: 'Details' }))
+  await userEvent.click(screen.getByRole('tab', { name: 'Review' }))
+  await userEvent.click(await screen.findByRole('tab', { name: 'Decision' }))
   const form = await screen.findByRole('form', { name: 'Review decision' })
   expect(
     within(form).getByRole('option', { name: 'Confirmed violation' })
   ).toBeDisabled()
+  await userEvent.click(
+    within(screen.getByRole('tabpanel', { name: 'Review' })).getByRole('tab', { name: 'Evidence message' })
+  )
   expect(screen.getByText('<script>unsafe</script>')).toBeVisible()
   expect(screen.getByRole('dialog').querySelector('script')).toBeNull()
 })

@@ -69,6 +69,7 @@ import { cn } from '@/lib/utils'
 
 import { AuditDetailFields } from '../../audit/components/audit-detail-fields'
 import type { UsageLog } from '../../data/schema'
+import { MatchesDialog } from '../../input-audit/matches-dialog'
 import {
   parseLogOther,
   getParamOverrideActionLabel,
@@ -1340,6 +1341,11 @@ export function DetailsDialog(props: DetailsDialogProps) {
               items={other.request_plugins}
               loadIcons={props.isRoot}
             />
+            {props.isRoot &&
+              blockedPluginSteps.length > 0 &&
+              props.log.request_id && (
+                <MatchesDialog requestID={props.log.request_id} />
+              )}
           </DetailSection>
         ) : null}
 

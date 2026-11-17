@@ -21,8 +21,15 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DataTablePage, useDataTable } from '@/components/data-table'
+import {
+  Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionContent,
+} from '@/components/ui/accordion'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { UserSelector } from '@/components/user-selector'
 import { useMediaQuery } from '@/hooks'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
@@ -44,6 +51,8 @@ import {
 } from './api'
 import { InputAuditCasesDialog } from './cases-dialog'
 import { useInputAuditColumns } from './columns'
+import { MatchesDialog } from './matches-dialog'
+import { ModelReviewDialog } from './model-review-dialog'
 import { InputAuditSettingsDialog } from './settings-dialog'
 
 const EMPTY_ROWS: InputAudit[] = []
@@ -150,67 +159,103 @@ export function InputAuditViewer() {
       compactPagination={isMobile}
       toolbar={
         <div className='flex flex-col gap-2'>
-          <p className='text-muted-foreground text-xs'>
-            {t(
-              'Short messages are stored in full. Long messages retain the beginning and end. Time is when the gateway received the first matching input.'
-            )}
-          </p>
-          <p className='text-muted-foreground text-xs'>
-            {t(
-              'Keyword search matches stored message text. Omitted text cannot be searched.'
-            )}
-          </p>
-          {status.data && (
-            <p role='status' className='text-muted-foreground text-xs'>
-              {t(
-                'Retention: {{days}} days · {{records}} records · {{chars}} characters · text up to {{size}} MiB · dropped on this instance: {{dropped}}',
-                {
-                  days: formatNumber(
-                    status.data.settings.retention_days,
-                    locale
-                  ),
-                  records: formatNumber(
-                    status.data.settings.max_records,
-                    locale
-                  ),
-                  chars: formatNumber(status.data.settings.max_chars, locale),
-                  size: formatNumber(
-                    Math.ceil(
-                      (status.data.settings.max_records *
-                        status.data.settings.max_chars *
-                        4) /
-                        1024 /
-                        1024
-                    ),
-                    locale
-                  ),
-                  dropped: formatNumber(status.data.dropped, locale),
-                }
-              )}{' '}
-              · {status.data.settings.enabled ? t('Enabled') : t('Disabled')}
-            </p>
-          )}
-          {status.data && (
-            <p className='text-muted-foreground text-xs'>
-              {t(
-                'Evidence on this instance: {{pending}} queued · {{dropped}} dropped · {{failures}} write failures',
-                {
-                  pending: formatNumber(
-                    status.data.evidence_pending ?? 0,
-                    locale
-                  ),
-                  dropped: formatNumber(
-                    status.data.evidence_dropped ?? 0,
-                    locale
-                  ),
-                  failures: formatNumber(
-                    status.data.evidence_write_failures ?? 0,
-                    locale
-                  ),
-                }
-              )}
-            </p>
-          )}
+          <Accordion>
+            <AccordionItem value='collection'>
+              <AccordionTrigger className='py-2'>
+                {t('Input audit settings')}
+              </AccordionTrigger>
+              <AccordionContent className='space-y-2'>
+                <p className='text-muted-foreground text-xs'>
+                  {t(
+                    'Short messages are stored in full. Long messages retain the beginning and end. Time is when the gateway received the first matching input.'
+                  )}
+                </p>
+                <p className='text-muted-foreground text-xs'>
+                  {t(
+                    'Keyword search matches stored message text. Omitted text cannot be searched.'
+                  )}
+                </p>
+                {status.data && (
+                  <p role='status' className='text-muted-foreground text-xs'>
+                    {t(
+                      'Retention: {{days}} days · {{records}} records · {{chars}} characters · text up to {{size}} MiB · dropped on this instance: {{dropped}}',
+                      {
+                        days: formatNumber(
+                          status.data.settings.retention_days,
+                          locale
+                        ),
+                        records: formatNumber(
+                          status.data.settings.max_records,
+                          locale
+                        ),
+                        chars: formatNumber(
+                          status.data.settings.max_chars,
+                          locale
+                        ),
+                        size: formatNumber(
+                          Math.ceil(
+                            (status.data.settings.max_records *
+                              status.data.settings.max_chars *
+                              4) /
+                              1024 /
+                              1024
+                          ),
+                          locale
+                        ),
+                        dropped: formatNumber(status.data.dropped, locale),
+                      }
+                    )}{' '}
+                    ·{' '}
+                    {status.data.settings.enabled
+                      ? t('Enabled')
+                      : t('Disabled')}
+                  </p>
+                )}
+                {status.data && (
+                  <p className='text-muted-foreground text-xs'>
+                    {t(
+                      'Evidence on this instance: {{pending}} queued · {{dropped}} dropped · {{failures}} write failures',
+                      {
+                        pending: formatNumber(
+                          status.data.evidence_pending ?? 0,
+                          locale
+                        ),
+                        dropped: formatNumber(
+                          status.data.evidence_dropped ?? 0,
+                          locale
+                        ),
+                        failures: formatNumber(
+                          status.data.evidence_write_failures ?? 0,
+                          locale
+                        ),
+                      }
+                    )}
+                  </p>
+                )}
+                {status.data && (
+                  <p className='text-muted-foreground text-xs'>
+                    {t(
+                      'Match evidence: {{pending}} queued · {{dropped}} dropped · {{failures}} write failures',
+                      {
+                        pending: formatNumber(
+                          status.data.match_pending ?? 0,
+                          locale
+                        ),
+                        dropped: formatNumber(
+                          status.data.match_dropped ?? 0,
+                          locale
+                        ),
+                        failures: formatNumber(
+                          status.data.match_write_failures ?? 0,
+                          locale
+                        ),
+                      }
+                    )}
+                  </p>
+                )}
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
           <LogsFilterToolbar
             table={table}
             primaryFilters={
@@ -234,11 +279,9 @@ export function InputAuditViewer() {
                   />
                 </LogsFilterField>
                 <LogsFilterField>
-                  <LogsFilterInput
-                    aria-label={t('User ID')}
-                    placeholder={t('User ID')}
-                    value={userId}
-                    onChange={(event) => setUserId(event.target.value)}
+                  <UserSelector
+                    value={userId ? Number(userId) : undefined}
+                    onChange={(id) => setUserId(id ? String(id) : '')}
                   />
                 </LogsFilterField>
                 <LogsFilterField>
@@ -285,6 +328,8 @@ export function InputAuditViewer() {
                       collectionEnabled={status.data.settings.enabled}
                     />
                   )}
+                  <MatchesDialog />
+                  <ModelReviewDialog />
                   <InputAuditSettingsDialog settings={status.data.settings} />
                 </>
               )

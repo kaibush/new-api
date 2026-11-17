@@ -54,6 +54,9 @@ export interface InputAuditSettings {
 }
 
 export interface InputAuditStatus {
+  match_pending?: number
+  match_dropped?: number
+  match_write_failures?: number
   settings: InputAuditSettings
   pending: number
   dropped: number

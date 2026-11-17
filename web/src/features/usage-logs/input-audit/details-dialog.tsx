@@ -24,7 +24,14 @@ import { CopyButton } from '@/components/copy-button'
 import { Dialog } from '@/components/dialog'
 import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
+import {
+  Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionContent,
+} from '@/components/ui/accordion'
 import { Button } from '@/components/ui/button'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { toIntlLocale } from '@/i18n/languages'
 import dayjs from '@/lib/dayjs'
 import { formatNumber } from '@/lib/format'
@@ -61,74 +68,99 @@ export function InputAuditDetailsDialog(props: { entry: InputAudit }) {
         </Button>
       }
       bodyClassName='flex flex-col gap-3'
+      contentClassName='sm:max-w-3xl'
     >
-      <DetailSection label={t('Request')}>
-        <DetailRow
-          label={t('Username')}
-          value={`${props.entry.username} (#${props.entry.user_id})`}
-        />
-        <DetailRow
-          label={t('Received at gateway')}
-          value={dayjs
-            .unix(props.entry.created_at)
-            .format('YYYY-MM-DD HH:mm:ss')}
-        />
-        <DetailRow label={t('Model')} value={props.entry.model} />
-        <DetailRow label={t('Token ID')} value={props.entry.token_id} />
-        <DetailRow
-          label={t('Request ID')}
-          value={props.entry.request_id}
-          mono
-        />
-        <DetailRow label={t('Route')} value={props.entry.route} mono />
-        <DetailRow label='IP' value={props.entry.ip} mono />
-        <DetailRow
-          label={t('Original length')}
-          value={formatNumber(props.entry.content_chars, locale)}
-        />
-        <DetailRow
-          label={t('Original content hash')}
-          value={props.entry.content_hash}
-          mono
-        />
-      </DetailSection>
-      <DetailSection label={t('User message')}>
-        {props.entry.truncated && (
-          <p role='status' className='text-muted-foreground text-xs'>
-            {t(
-              'Long messages retain the beginning and end; the middle is omitted.'
+      <Accordion>
+        <AccordionItem value='request'>
+          <AccordionTrigger>{t('Request')}</AccordionTrigger>
+          <AccordionContent>
+            <DetailSection label={t('Request')}>
+              <DetailRow
+                label={t('Username')}
+                value={`${props.entry.username} (#${props.entry.user_id})`}
+              />
+              <DetailRow
+                label={t('Received at gateway')}
+                value={dayjs
+                  .unix(props.entry.created_at)
+                  .format('YYYY-MM-DD HH:mm:ss')}
+              />
+              <DetailRow label={t('Model')} value={props.entry.model} />
+              <DetailRow label={t('Token ID')} value={props.entry.token_id} />
+              <DetailRow
+                label={t('Request ID')}
+                value={props.entry.request_id}
+                mono
+              />
+              <DetailRow label={t('Route')} value={props.entry.route} mono />
+              <DetailRow label='IP' value={props.entry.ip} mono />
+              <DetailRow
+                label={t('Original length')}
+                value={formatNumber(props.entry.content_chars, locale)}
+              />
+              <DetailRow
+                label={t('Original content hash')}
+                value={props.entry.content_hash}
+                mono
+              />
+            </DetailSection>
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
+      <Tabs defaultValue='message'>
+        <TabsList className='grid w-full grid-cols-3'>
+          <TabsTrigger value='message'>{t('User message')}</TabsTrigger>
+          <TabsTrigger value='evidence'>{t('Evidence message')}</TabsTrigger>
+          <TabsTrigger value='review'>{t('Review')}</TabsTrigger>
+        </TabsList>
+        <TabsContent value='message'>
+          <DetailSection label={t('User message')}>
+            {props.entry.truncated && (
+              <p role='status' className='text-muted-foreground text-xs'>
+                {t(
+                  'Long messages retain the beginning and end; the middle is omitted.'
+                )}
+              </p>
             )}
-          </p>
+            <p className='max-h-80 overflow-y-auto [overflow-wrap:anywhere] break-words whitespace-pre-wrap'>
+              {props.entry.content}
+            </p>
+            <CopyButton value={props.entry.content} size='sm'>
+              {t('Copy')}
+            </CopyButton>
+          </DetailSection>
+        </TabsContent>
+        {open && user?.role === ROLE.SUPER_ADMIN && (
+          <>
+            <TabsContent value='evidence'>
+              <DetailSection label={t('Evidence and review')}>
+                {evidence.isPending && <LoadingState />}
+                {evidence.isError && (
+                  <ErrorState
+                    onRetry={() => {
+                      void evidence.refetch()
+                    }}
+                  />
+                )}
+                {evidence.data?.document && (
+                  <InputAuditEvidenceView
+                    document={evidence.data.document}
+                    complete={evidence.data.complete}
+                  />
+                )}
+                {evidence.data && !evidence.data.available && (
+                  <p>
+                    {t('Historical preview; original context was not retained')}
+                  </p>
+                )}
+              </DetailSection>
+            </TabsContent>
+            <TabsContent value='review'>
+              <InputAuditCasePanel auditID={props.entry.id} />
+            </TabsContent>
+          </>
         )}
-        <p className='[overflow-wrap:anywhere] break-words whitespace-pre-wrap'>
-          {props.entry.content}
-        </p>
-        <CopyButton value={props.entry.content} size='sm'>
-          {t('Copy')}
-        </CopyButton>
-      </DetailSection>
-      {open && user?.role === ROLE.SUPER_ADMIN && (
-        <DetailSection label={t('Evidence and review')}>
-          {evidence.isPending && <LoadingState />}
-          {evidence.isError && (
-            <ErrorState
-              onRetry={() => {
-                void evidence.refetch()
-              }}
-            />
-          )}
-          {evidence.data?.document && (
-            <InputAuditEvidenceView
-              document={evidence.data.document}
-              complete={evidence.data.complete}
-            />
-          )}
-          {evidence.data && !evidence.data.available && (
-            <p>{t('Historical preview; original context was not retained')}</p>
-          )}
-          <InputAuditCasePanel auditID={props.entry.id} />
-        </DetailSection>
-      )}
+      </Tabs>
     </Dialog>
   )
 }

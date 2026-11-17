@@ -19,6 +19,12 @@ For commercial licensing, please contact support@quantumnous.com
 import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '@/components/copy-button'
+import {
+  Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionContent,
+} from '@/components/ui/accordion'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { toIntlLocale } from '@/i18n/languages'
@@ -55,22 +61,26 @@ export function InputAuditEvidenceView(props: {
           </AlertDescription>
         </Alert>
       )}
-      {props.document.messages.map((message, index) => (
-        <article
-          key={message.index ?? message.text}
-          className='space-y-2 rounded-lg border p-3'
-        >
-          <p className='text-muted-foreground text-xs'>
-            {t('Message')} {formatNumber(index + 1, locale)} · {message.role}
-          </p>
-          <p className='text-sm [overflow-wrap:anywhere] break-words whitespace-pre-wrap'>
-            {message.text}
-          </p>
-          <CopyButton value={message.text} size='sm'>
-            {t('Copy')}
-          </CopyButton>
-        </article>
-      ))}
+      <Accordion defaultValue={['message-0']}>
+        {props.document.messages.map((message, index) => (
+          <AccordionItem
+            key={message.index ?? index}
+            value={`message-${index}`}
+          >
+            <AccordionTrigger>
+              {t('Message')} {formatNumber(index + 1, locale)} · {message.role}
+            </AccordionTrigger>
+            <AccordionContent>
+              <p className='max-h-64 overflow-y-auto text-sm [overflow-wrap:anywhere] break-words whitespace-pre-wrap'>
+                {message.text}
+              </p>
+              <CopyButton value={message.text} size='sm'>
+                {t('Copy')}
+              </CopyButton>
+            </AccordionContent>
+          </AccordionItem>
+        ))}
+      </Accordion>
     </div>
   )
 }

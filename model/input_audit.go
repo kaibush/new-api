@@ -17,19 +17,20 @@ const InputAuditOptionKey = "InputAuditSettings"
 // Input audits live in the main database, whose unique indexes provide
 // cross-instance deduplication even when the log database is ClickHouse.
 type InputAudit struct {
-	Id           int64  `json:"id" gorm:"index:idx_input_audit_time_id,priority:2"`
-	UserId       int    `json:"user_id" gorm:"uniqueIndex:idx_input_audit_user_hash,priority:1;index:idx_input_audit_user_time,priority:1"`
-	ContentHash  string `json:"content_hash" gorm:"type:varchar(64);uniqueIndex:idx_input_audit_user_hash,priority:2"`
-	CreatedAt    int64  `json:"created_at" gorm:"index:idx_input_audit_time_id,priority:1;index:idx_input_audit_user_time,priority:2"`
-	Username     string `json:"username" gorm:"type:varchar(64)"`
-	TokenId      int    `json:"token_id"`
-	Model        string `json:"model" gorm:"type:varchar(255)"`
-	RequestId    string `json:"request_id" gorm:"type:varchar(64)"`
-	Route        string `json:"route" gorm:"type:varchar(255)"`
-	Ip           string `json:"ip" gorm:"type:varchar(64)"`
-	Content      string `json:"content" gorm:"type:text"`
-	ContentChars int    `json:"content_chars"`
-	Truncated    bool   `json:"truncated"`
+	ReviewAttemptedAt int64  `json:"model_reviewed_at" gorm:"index"`
+	Id                int64  `json:"id" gorm:"index:idx_input_audit_time_id,priority:2"`
+	UserId            int    `json:"user_id" gorm:"uniqueIndex:idx_input_audit_user_hash,priority:1;index:idx_input_audit_user_time,priority:1"`
+	ContentHash       string `json:"content_hash" gorm:"type:varchar(64);uniqueIndex:idx_input_audit_user_hash,priority:2"`
+	CreatedAt         int64  `json:"created_at" gorm:"index:idx_input_audit_time_id,priority:1;index:idx_input_audit_user_time,priority:2"`
+	Username          string `json:"username" gorm:"type:varchar(64)"`
+	TokenId           int    `json:"token_id"`
+	Model             string `json:"model" gorm:"type:varchar(255)"`
+	RequestId         string `json:"request_id" gorm:"type:varchar(64)"`
+	Route             string `json:"route" gorm:"type:varchar(255)"`
+	Ip                string `json:"ip" gorm:"type:varchar(64)"`
+	Content           string `json:"content" gorm:"type:text"`
+	ContentChars      int    `json:"content_chars"`
+	Truncated         bool   `json:"truncated"`
 }
 
 type InputAuditSettings struct {

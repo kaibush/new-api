@@ -15,6 +15,7 @@ import (
 
 	"github.com/MoeForge/moego/regexp"
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/pkg/requestpatch"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -71,6 +72,7 @@ var mediaPlaceholder = regexp.MustCompile(`\[media:\d+\]`)
 // requests. A request runs its stages one after another; a Plan is not safe
 // for concurrent use.
 type Plan struct {
+	requestID string
 	userID    int
 	allowlist request_plugin_setting.Allowlist
 	instances []request_plugin_setting.Instance
@@ -437,18 +439,20 @@ func (p *Plan) runInstance(ctx context.Context, call Call, instance *request_plu
 		hookCtx = jsplugin.WithFetcher(ctx, service.RequestPluginFetcher(plugin, instance.Config))
 	}
 	attachments := newCallMedia(&p.media, view, media, call.form)
+	recorder := service.CurrentInputAuditRecorder()
 	result, err := plugin.CallTransform(hookCtx, jsplugin.TransformContext{
-		Stage:         call.Stage,
-		Format:        call.Format,
-		Path:          call.Path,
-		Model:         call.Model,
-		UpstreamModel: call.UpstreamModel,
-		Group:         call.Group,
-		Channel:       call.Channel,
-		Attempt:       call.Attempt,
-		User:          call.User,
-		Token:         call.Token,
-		Instance:      jsplugin.TransformInstance{ID: instance.ID, Name: instance.Name},
+		CaptureEvidence: recorder != nil && recorder.MatchCaptureEnabled() && p.requestID != "" && p.userID > 0,
+		Stage:           call.Stage,
+		Format:          call.Format,
+		Path:            call.Path,
+		Model:           call.Model,
+		UpstreamModel:   call.UpstreamModel,
+		Group:           call.Group,
+		Channel:         call.Channel,
+		Attempt:         call.Attempt,
+		User:            call.User,
+		Token:           call.Token,
+		Instance:        jsplugin.TransformInstance{ID: instance.ID, Name: instance.Name},
 		// Saving the instance validated its config and applied the defaults.
 		Config: instance.Config,
 		Media:  attachments,
@@ -471,6 +475,11 @@ func (p *Plan) runInstance(ctx context.Context, call Call, instance *request_plu
 		next.record.Notice = maps.Clone(result.Notice)
 	}
 	if result.Action == "reject" {
+		if recorder := service.CurrentInputAuditRecorder(); recorder != nil && p.requestID != "" && p.userID > 0 {
+			recorder.CaptureMatch(model.InputAuditMatch{RequestId: p.requestID, UserId: p.userID,
+				Instance: instance.ID, Name: instance.Name, Plugin: instance.Plugin, PluginVersion: plugin.Meta.Version,
+				Stage: call.Stage, Rule: result.RuleID, Model: call.Model}, result.Evidence)
+		}
 		next.reject = &result
 		return next, "", nil
 	}

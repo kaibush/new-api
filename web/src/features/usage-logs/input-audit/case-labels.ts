@@ -39,3 +39,17 @@ export function useInputAuditCaseLabels() {
     },
   }
 }
+
+export function useModelReviewLabels() {
+  const { t } = useTranslation()
+  return {
+    safe: t('No risk identified'),
+    review: t('Needs human review'),
+    insufficient_evidence: t('Insufficient evidence'),
+    failed: t('Failed'),
+    pending: t('Pending'),
+    running: t('Running'),
+    completed: t('Completed'),
+    cancelled: t('Cancelled'),
+  } as Record<string, string>
+}

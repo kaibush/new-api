@@ -28,6 +28,9 @@ type InputAuditRecorder struct {
 	db                  *gorm.DB
 	settings            atomic.Pointer[model.InputAuditSettings]
 	queue               chan model.InputAudit
+	matchQueue          chan model.InputAuditMatch
+	matchDropped        atomic.Uint64
+	matchFailures       atomic.Uint64
 	evidenceQueue       chan model.InputAuditEvidence
 	evidenceQueuedBytes atomic.Int64
 	evidenceDropped     atomic.Uint64
@@ -51,7 +54,7 @@ func NewInputAuditRecorder(db *gorm.DB) (*InputAuditRecorder, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := &InputAuditRecorder{db: db, queue: make(chan model.InputAudit, 1024), evidenceQueue: make(chan model.InputAuditEvidence, 64), seen: make(map[inputAuditKey]int64), ring: make([]inputAuditKey, 8192), done: make(chan struct{})}
+	r := &InputAuditRecorder{db: db, matchQueue: make(chan model.InputAuditMatch, 128), queue: make(chan model.InputAudit, 1024), evidenceQueue: make(chan model.InputAuditEvidence, 64), seen: make(map[inputAuditKey]int64), ring: make([]inputAuditKey, 8192), done: make(chan struct{})}
 	r.settings.Store(&settings)
 	return r, nil
 }
@@ -69,6 +72,7 @@ func StartInputAuditRecorder() error {
 	r.cancel = cancel
 	inputAuditRecorder.Store(r)
 	go r.Run(ctx)
+	go RunInputAuditReviewer(ctx, model.DB)
 	return nil
 }
 
@@ -90,6 +94,9 @@ func StopInputAuditRecorder(ctx context.Context) {
 }
 
 type InputAuditStatus struct {
+	MatchPending          int                      `json:"match_pending"`
+	MatchDropped          uint64                   `json:"match_dropped"`
+	MatchWriteFailures    uint64                   `json:"match_write_failures"`
 	EvidencePending       int                      `json:"evidence_pending"`
 	EvidenceDropped       uint64                   `json:"evidence_dropped"`
 	EvidenceWriteFailures uint64                   `json:"evidence_write_failures"`
@@ -100,7 +107,7 @@ type InputAuditStatus struct {
 }
 
 func (r *InputAuditRecorder) Status() InputAuditStatus {
-	return InputAuditStatus{Settings: *r.settings.Load(), Pending: len(r.queue), Dropped: r.dropped.Load(), WriteFailures: r.failures.Load(), EvidencePending: len(r.evidenceQueue), EvidenceDropped: r.evidenceDropped.Load(), EvidenceWriteFailures: r.evidenceFailures.Load()}
+	return InputAuditStatus{MatchPending: len(r.matchQueue), MatchDropped: r.matchDropped.Load(), MatchWriteFailures: r.matchFailures.Load(), Settings: *r.settings.Load(), Pending: len(r.queue), Dropped: r.dropped.Load(), WriteFailures: r.failures.Load(), EvidencePending: len(r.evidenceQueue), EvidenceDropped: r.evidenceDropped.Load(), EvidenceWriteFailures: r.evidenceFailures.Load()}
 }
 
 func (r *InputAuditRecorder) UpdateSettings(ctx context.Context, settings model.InputAuditSettings) error {
@@ -407,7 +414,7 @@ func (r *InputAuditRecorder) Run(ctx context.Context) {
 		case <-ctx.Done():
 			drainCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			for (len(r.queue) > 0 || len(r.evidenceQueue) > 0) && drainCtx.Err() == nil {
+			for (len(r.queue) > 0 || len(r.evidenceQueue) > 0 || len(r.matchQueue) > 0) && drainCtx.Err() == nil {
 				r.Flush(drainCtx)
 			}
 			return
@@ -429,7 +436,7 @@ func (r *InputAuditRecorder) Run(ctx context.Context) {
 			if ctx.Err() != nil {
 				continue
 			}
-			if len(r.queue) > 0 || len(r.evidenceQueue) > 0 || now.Sub(lastCleanup) >= time.Minute {
+			if len(r.queue) > 0 || len(r.evidenceQueue) > 0 || len(r.matchQueue) > 0 || now.Sub(lastCleanup) >= time.Minute {
 				writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				r.Flush(writeCtx)
 				cancel()
@@ -442,6 +449,20 @@ func (r *InputAuditRecorder) Run(ctx context.Context) {
 // Flush is also used during graceful shutdown. Persistent failures release
 // cached keys, allowing subsequent requests to retry recording the input.
 func (r *InputAuditRecorder) Flush(ctx context.Context) {
+	matches := make([]model.InputAuditMatch, 0, 32)
+	for range 32 {
+		select {
+		case entry := <-r.matchQueue:
+			matches = append(matches, entry)
+		default:
+		}
+	}
+	if err := model.PersistInputAuditMatches(r.db.WithContext(ctx), matches, time.Now().Unix()); err != nil {
+		r.matchFailures.Add(1)
+		r.matchDropped.Add(uint64(len(matches)))
+		common.SysError("input match evidence batch failed")
+	}
+
 	evidence := make([]model.InputAuditEvidence, 0, 32)
 	for range 32 {
 		select {

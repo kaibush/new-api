@@ -34,7 +34,9 @@ import {
   FieldError,
 } from '@/components/ui/field'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import { UserIdentity } from '@/components/user-identity'
 import dayjs from '@/lib/dayjs'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
@@ -216,183 +218,207 @@ function InputAuditCaseReview(props: { caseID: number }) {
         {dayjs.unix(detail.case.expires_at).format('YYYY-MM-DD HH:mm')}
       </p>
       <p className='text-muted-foreground text-xs'>
-        {t('Created by')} #{detail.case.created_by} · {detail.case.reason}
+        {t('Created by')} <UserIdentity userId={detail.case.created_by} /> ·{' '}
+        {detail.case.reason}
       </p>
-      <InputAuditEvidenceView
-        document={detail.snapshot.document}
-        complete={detail.complete}
-      />
-      {detail.snapshot.allowlist.entries?.length > 0 && (
-        <p className='text-muted-foreground text-xs'>
-          {t('Allowlist policy version')}: {detail.snapshot.allowlist.version} ·{' '}
-          {detail.snapshot.allowlist.entries
-            .map((entry) => `${entry.id}: ${entry.reason}`)
-            .join('; ')}
-        </p>
-      )}
-      <form
-        aria-label={t('Review decision')}
-        onChange={() => {
-          if (version === undefined) setVersion(detail.case.version)
-        }}
-        onSubmit={form.handleSubmit((values) => {
-          if (
-            values.status === 'confirmed' &&
-            (!detail.complete || !values.quote.trim())
-          ) {
-            form.setError('quote', {
-              message: t('Complete evidence and an exact quote are required'),
-            })
-            return
-          }
-          mutation.mutate(values)
-        })}
-      >
-        <FieldGroup>
-          <Field>
-            <FieldLabel htmlFor='audit-case-status'>{t('Decision')}</FieldLabel>
-            <NativeSelect
-              id='audit-case-status'
-              disabled={mutation.isPending}
-              {...form.register('status')}
-            >
-              {Object.entries(labels.statuses).map(([value, label]) => (
-                <NativeSelectOption
-                  key={value}
-                  value={value}
-                  disabled={value === 'confirmed' && !detail.complete}
-                >
-                  {label}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor='audit-case-category'>
-              {t('Category')}
-            </FieldLabel>
-            <NativeSelect
-              id='audit-case-category'
-              disabled={mutation.isPending}
-              {...form.register('category')}
-            >
-              {Object.entries(labels.categories).map(([value, label]) => (
-                <NativeSelectOption key={value} value={value}>
-                  {label}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor='audit-case-reason'>
-              {t('Review reason')}
-            </FieldLabel>
-            <Textarea
-              id='audit-case-reason'
-              maxLength={2000}
-              disabled={mutation.isPending}
-              {...form.register('reason')}
-            />
-            {form.formState.errors.reason && (
-              <FieldError>{t('A review reason is required')}</FieldError>
-            )}
-          </Field>
-          <Field>
-            <FieldLabel htmlFor='audit-case-message'>
-              {t('Evidence message')}
-            </FieldLabel>
-            <NativeSelect
-              id='audit-case-message'
-              disabled={mutation.isPending}
-              {...form.register('message_index', { valueAsNumber: true })}
-            >
-              {detail.snapshot.document.messages.map((message, index) => (
-                <NativeSelectOption
-                  key={message.index ?? message.text}
-                  value={index}
-                >
-                  #{index + 1} · {message.role}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor='audit-case-quote'>
-              {t('Exact evidence quote')}
-            </FieldLabel>
-            <Textarea
-              id='audit-case-quote'
-              maxLength={4096}
-              disabled={mutation.isPending}
-              {...form.register('quote')}
-            />
-            {form.formState.errors.quote && (
-              <FieldError>{form.formState.errors.quote.message}</FieldError>
-            )}
-          </Field>
-          {mutation.isError && (
-            <Alert variant='destructive'>
-              <AlertDescription>
-                {t(
-                  'The decision was not saved. Your draft is preserved. Refresh explicitly if another reviewer changed the case.'
-                )}
-              </AlertDescription>
-            </Alert>
-          )}
-          <div className='flex gap-2'>
-            <Button type='submit' disabled={mutation.isPending}>
-              {t('Save decision')}
-            </Button>
-            <Button
-              type='button'
-              variant='outline'
-              disabled={mutation.isPending || query.isFetching}
-              onClick={async () => {
-                const refreshed = await query.refetch()
-                if (!refreshed.isError) setVersion(refreshed.data?.case.version)
-              }}
-            >
-              {t('Refresh case version')}
-            </Button>
-          </div>
-        </FieldGroup>
-      </form>
-      <p className='text-muted-foreground text-xs'>
-        {t(
-          'Decisions record human review only and do not change account access.'
-        )}
-      </p>
-      <section aria-label={t('Decision history')} className='space-y-2'>
-        <h3 className='font-medium'>{t('Decision history')}</h3>
-        {detail.decisions.map((decision) => (
-          <article
-            key={decision.id}
-            className='space-y-1 rounded-lg border p-3 text-sm'
-          >
-            <p>
-              {labels.statuses[
-                decision.status as keyof typeof labels.statuses
-              ] ?? decision.status}{' '}
-              ·{' '}
-              {labels.categories[
-                decision.category as keyof typeof labels.categories
-              ] ?? decision.category}{' '}
-              · #{decision.created_by} ·{' '}
-              {dayjs.unix(decision.created_at).format('YYYY-MM-DD HH:mm:ss')}
+      <Tabs defaultValue='evidence'>
+        <TabsList className='grid w-full grid-cols-3'>
+          <TabsTrigger value='evidence'>{t('Evidence message')}</TabsTrigger>
+          <TabsTrigger value='decision'>{t('Decision')}</TabsTrigger>
+          <TabsTrigger value='history'>{t('Decision history')}</TabsTrigger>
+        </TabsList>
+        <TabsContent value='evidence' className='pt-3'>
+          <InputAuditEvidenceView
+            document={detail.snapshot.document}
+            complete={detail.complete}
+          />
+          {detail.snapshot.allowlist.entries?.length > 0 && (
+            <p className='text-muted-foreground text-xs'>
+              {t('Allowlist policy version')}:{' '}
+              {detail.snapshot.allowlist.version} ·{' '}
+              {detail.snapshot.allowlist.entries
+                .map((entry) => `${entry.id}: ${entry.reason}`)
+                .join('; ')}
             </p>
-            <p className='break-words whitespace-pre-wrap'>{decision.reason}</p>
-            {decision.references.map((reference) => (
-              <blockquote
-                key={`${reference.message_index}:${reference.quote}`}
-                className='border-l-2 pl-2 break-words whitespace-pre-wrap'
+          )}
+        </TabsContent>
+        <TabsContent value='decision' className='pt-3'>
+          <form
+            aria-label={t('Review decision')}
+            onChange={() => {
+              if (version === undefined) setVersion(detail.case.version)
+            }}
+            onSubmit={form.handleSubmit((values) => {
+              if (
+                values.status === 'confirmed' &&
+                (!detail.complete || !values.quote.trim())
+              ) {
+                form.setError('quote', {
+                  message: t(
+                    'Complete evidence and an exact quote are required'
+                  ),
+                })
+                return
+              }
+              mutation.mutate(values)
+            })}
+          >
+            <FieldGroup className='grid gap-4 sm:grid-cols-2'>
+              <Field>
+                <FieldLabel htmlFor='audit-case-status'>
+                  {t('Decision')}
+                </FieldLabel>
+                <NativeSelect
+                  id='audit-case-status'
+                  disabled={mutation.isPending}
+                  {...form.register('status')}
+                >
+                  {Object.entries(labels.statuses).map(([value, label]) => (
+                    <NativeSelectOption
+                      key={value}
+                      value={value}
+                      disabled={value === 'confirmed' && !detail.complete}
+                    >
+                      {label}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor='audit-case-category'>
+                  {t('Category')}
+                </FieldLabel>
+                <NativeSelect
+                  id='audit-case-category'
+                  disabled={mutation.isPending}
+                  {...form.register('category')}
+                >
+                  {Object.entries(labels.categories).map(([value, label]) => (
+                    <NativeSelectOption key={value} value={value}>
+                      {label}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </Field>
+              <Field className='sm:col-span-2'>
+                <FieldLabel htmlFor='audit-case-reason'>
+                  {t('Review reason')}
+                </FieldLabel>
+                <Textarea
+                  id='audit-case-reason'
+                  maxLength={2000}
+                  disabled={mutation.isPending}
+                  {...form.register('reason')}
+                />
+                {form.formState.errors.reason && (
+                  <FieldError>{t('A review reason is required')}</FieldError>
+                )}
+              </Field>
+              <Field>
+                <FieldLabel htmlFor='audit-case-message'>
+                  {t('Evidence message')}
+                </FieldLabel>
+                <NativeSelect
+                  id='audit-case-message'
+                  disabled={mutation.isPending}
+                  {...form.register('message_index', { valueAsNumber: true })}
+                >
+                  {detail.snapshot.document.messages.map((message, index) => (
+                    <NativeSelectOption
+                      key={message.index ?? message.text}
+                      value={index}
+                    >
+                      #{index + 1} · {message.role}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </Field>
+              <Field className='sm:col-span-2'>
+                <FieldLabel htmlFor='audit-case-quote'>
+                  {t('Exact evidence quote')}
+                </FieldLabel>
+                <Textarea
+                  id='audit-case-quote'
+                  maxLength={4096}
+                  disabled={mutation.isPending}
+                  {...form.register('quote')}
+                />
+                {form.formState.errors.quote && (
+                  <FieldError>{form.formState.errors.quote.message}</FieldError>
+                )}
+              </Field>
+              {mutation.isError && (
+                <Alert variant='destructive'>
+                  <AlertDescription>
+                    {t(
+                      'The decision was not saved. Your draft is preserved. Refresh explicitly if another reviewer changed the case.'
+                    )}
+                  </AlertDescription>
+                </Alert>
+              )}
+              <div className='flex flex-wrap gap-2 sm:col-span-2'>
+                <Button type='submit' disabled={mutation.isPending}>
+                  {t('Save decision')}
+                </Button>
+                <Button
+                  type='button'
+                  variant='outline'
+                  disabled={mutation.isPending || query.isFetching}
+                  onClick={async () => {
+                    const refreshed = await query.refetch()
+                    if (!refreshed.isError)
+                      {setVersion(refreshed.data?.case.version)}
+                  }}
+                >
+                  {t('Refresh case version')}
+                </Button>
+              </div>
+            </FieldGroup>
+          </form>
+          <p className='text-muted-foreground text-xs'>
+            {t(
+              'Decisions record human review only and do not change account access.'
+            )}
+          </p>
+        </TabsContent>
+        <TabsContent value='history' className='pt-3'>
+          <section aria-label={t('Decision history')} className='space-y-2'>
+            <h3 className='font-medium'>{t('Decision history')}</h3>
+            {detail.decisions.map((decision) => (
+              <article
+                key={decision.id}
+                className='space-y-1 rounded-lg border p-3 text-sm'
               >
-                #{reference.message_index + 1} [{reference.start},{' '}
-                {reference.end}): {reference.quote}
-              </blockquote>
+                <p>
+                  {labels.statuses[
+                    decision.status as keyof typeof labels.statuses
+                  ] ?? decision.status}{' '}
+                  ·{' '}
+                  {labels.categories[
+                    decision.category as keyof typeof labels.categories
+                  ] ?? decision.category}{' '}
+                  · <UserIdentity userId={decision.created_by} /> ·{' '}
+                  {dayjs
+                    .unix(decision.created_at)
+                    .format('YYYY-MM-DD HH:mm:ss')}
+                </p>
+                <p className='break-words whitespace-pre-wrap'>
+                  {decision.reason}
+                </p>
+                {decision.references.map((reference) => (
+                  <blockquote
+                    key={`${reference.message_index}:${reference.quote}`}
+                    className='border-l-2 pl-2 break-words whitespace-pre-wrap'
+                  >
+                    #{reference.message_index + 1} [{reference.start},{' '}
+                    {reference.end}): {reference.quote}
+                  </blockquote>
+                ))}
+              </article>
             ))}
-          </article>
-        ))}
-      </section>
+          </section>
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

@@ -1225,6 +1225,66 @@
             },
             "notice": {
               "$ref": "#/$defs/transformNotice"
+            },
+            "evidence": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "role",
+                "method",
+                "representation",
+                "before",
+                "match",
+                "after",
+                "serialized",
+                "truncated",
+                "matchTruncated"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "maxLength": 1024
+                },
+                "role": {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                "before": {
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "match": {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                "after": {
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "method": {
+                  "enum": [
+                    "keyword",
+                    "regex",
+                    "keyword_list"
+                  ]
+                },
+                "representation": {
+                  "enum": [
+                    "original",
+                    "transformed"
+                  ]
+                },
+                "serialized": {
+                  "type": "boolean"
+                },
+                "truncated": {
+                  "type": "boolean"
+                },
+                "matchTruncated": {
+                  "type": "boolean"
+                }
+              }
             }
           }
         }

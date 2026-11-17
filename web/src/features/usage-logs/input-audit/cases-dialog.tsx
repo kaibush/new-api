@@ -25,6 +25,8 @@ import { DataTablePage, useDataTable } from '@/components/data-table'
 import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
+import { UserIdentity } from '@/components/user-identity'
+import { UserSelector } from '@/components/user-selector'
 import dayjs from '@/lib/dayjs'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
@@ -44,7 +46,12 @@ export function InputAuditCasesDialog() {
   const labels = useInputAuditCaseLabels()
   const [open, setOpen] = useState(false)
   const [selected, setSelected] = useState<number>()
-  const [filters, setFilters] = useState({ p: 1, page_size: 20, status: '' })
+  const [filters, setFilters] = useState({
+    p: 1,
+    page_size: 20,
+    status: '',
+    user_id: undefined as number | undefined,
+  })
   const query = useQuery({
     queryKey: ['input-audit-cases', user?.id, filters],
     queryFn: () => getInputAuditCases(filters),
@@ -82,7 +89,11 @@ export function InputAuditCasesDialog() {
   const columns = useMemo<ColumnDef<InputAuditCase>[]>(
     () => [
       { accessorKey: 'id', header: t('Review case') },
-      { accessorKey: 'user_id', header: t('User ID') },
+      {
+        accessorKey: 'user_id',
+        header: t('User'),
+        cell: ({ row }) => <UserIdentity userId={row.original.user_id} />,
+      },
       {
         accessorKey: 'status',
         header: t('Decision'),
@@ -159,6 +170,10 @@ export function InputAuditCasesDialog() {
           }
           toolbar={
             <div className='flex flex-wrap gap-2'>
+              <UserSelector
+                value={filters.user_id}
+                onChange={(id) => setFilters({ ...filters, p: 1, user_id: id })}
+              />
               <NativeSelect
                 aria-label={t('Decision')}
                 value={filters.status}

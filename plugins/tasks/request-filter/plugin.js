@@ -6,7 +6,7 @@ export const meta = {
     en: "Rejects requests whose text matches a keyword or regular expression",
     zh: "拒绝文本命中关键词或正则表达式的请求",
   },
-  version: "1.0.1",
+  version: "1.1.0",
   author: { name: "QuantumNous" },
   configSchema: {
     type: "object",
@@ -136,55 +136,57 @@ function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function pushText(texts, value) {
-  if (typeof value === "string" && value !== "" && !MEDIA_PLACEHOLDER.test(value)) texts.push(value);
+function pushText(texts, value, path = "", role = "", serialized = false) {
+  if (typeof value === "string" && value !== "" && !MEDIA_PLACEHOLDER.test(value)) texts.push({ text: value, path, role, serialized });
 }
 
 // pushJSON adds a string as it is and any other value, such as a parameter
 // schema or the arguments of a tool call, as its JSON text.
-function pushJSON(texts, value) {
-  if (typeof value === "string") pushText(texts, value);
-  else if (value !== undefined && value !== null) pushText(texts, JSON.stringify(value));
+function pushJSON(texts, value, path = "", role = "") {
+  if (typeof value === "string") pushText(texts, value, path, role);
+  else if (value !== undefined && value !== null) pushText(texts, JSON.stringify(value), path, role, true);
 }
 
 // Message content: a string, or parts in the OpenAI, Responses, Claude or
 // Gemini shape. Claude tool calls and results and Gemini function calls and
 // responses count too; a tool result block other than text or a file counts
 // as its JSON. A Claude document may carry its text in the body.
-function collectContent(texts, content, inToolResult) {
+function collectContent(texts, content, path = "", role = "", inToolResult = false) {
   if (typeof content === "string") {
-    pushText(texts, content);
+    pushText(texts, content, path, role);
     return;
   }
   if (!Array.isArray(content)) return;
-  for (const part of content) {
+  for (let index = 0; index < content.length; index++) {
+    const part = content[index];
+    const partPath = path + "/" + index;
     if (typeof part === "string") {
-      pushText(texts, part);
+      pushText(texts, part, partPath, role);
       continue;
     }
     if (!isObject(part) || part.thought === true) continue;
     const call = part.functionCall || part.function_call;
     const response = part.functionResponse || part.function_response;
     if (typeof part.text === "string" && (part.type === undefined || TEXT_PART_TYPES.includes(part.type))) {
-      pushText(texts, part.text);
+      pushText(texts, part.text, partPath + "/text", role);
     } else if (part.type === "tool_use") {
-      pushText(texts, part.name);
-      pushJSON(texts, part.input);
+      pushText(texts, part.name, partPath + "/name", role);
+      pushJSON(texts, part.input, partPath + "/input", role);
     } else if (part.type === "tool_result") {
-      collectContent(texts, part.content, true);
+      collectContent(texts, part.content, partPath + "/content", "tool", true);
     } else if (part.type === "document" && isObject(part.source)) {
-      if (part.source.type === "text") pushText(texts, part.source.data);
-      else if (part.source.type === "content") collectContent(texts, part.source.content);
+      if (part.source.type === "text") pushText(texts, part.source.data, partPath + "/source/data", role);
+      else if (part.source.type === "content") collectContent(texts, part.source.content, partPath + "/source/content", role);
     } else if (isObject(call)) {
-      pushText(texts, call.name);
-      pushJSON(texts, call.args);
+      pushText(texts, call.name, partPath + (part.functionCall ? "/functionCall/name" : "/function_call/name"), role);
+      pushJSON(texts, call.args, partPath + (part.functionCall ? "/functionCall/args" : "/function_call/args"), role);
     } else if (isObject(response)) {
-      pushText(texts, response.name);
+      pushText(texts, response.name, partPath + (part.functionResponse ? "/functionResponse/name" : "/function_response/name"), "tool");
       if (isObject(response.response)) {
-        for (const value of Object.values(response.response)) pushJSON(texts, value);
+        for (const key of Object.keys(response.response)) pushJSON(texts, response.response[key], partPath + (part.functionResponse ? "/functionResponse/response/" : "/function_response/response/") + key.replace(/~/g, "~0").replace(/\//g, "~1"), "tool");
       }
     } else if (inToolResult && part.type !== "image") {
-      pushJSON(texts, part);
+      pushJSON(texts, part, partPath, "tool");
     }
   }
 }
@@ -193,19 +195,22 @@ function collectContent(texts, content, inToolResult) {
 // input, and tool outputs.
 const OUTPUT_ITEM_TYPES = ["function_call_output", "custom_tool_call_output", "local_shell_call_output"];
 
-function collectInputItems(texts, items) {
-  for (const item of items) {
+function collectInputItems(texts, items, path) {
+  for (let index = 0; index < items.length; index++) {
+    const item = items[index];
+    const itemPath = path + "/" + index;
+    const role = isObject(item) ? (item.role || item.type || "") : "";
     if (typeof item === "string") {
-      pushText(texts, item);
+      pushText(texts, item, itemPath, role);
       continue;
     }
     if (!isObject(item)) continue;
-    pushText(texts, item.name);
-    if (item.content !== undefined) collectContent(texts, item.content);
-    else if (item.type === "function_call") pushJSON(texts, item.arguments);
-    else if (item.type === "custom_tool_call") pushJSON(texts, item.input);
-    else if (OUTPUT_ITEM_TYPES.includes(item.type)) collectContent(texts, item.output);
-    else if (TEXT_PART_TYPES.includes(item.type)) pushText(texts, item.text);
+    pushText(texts, item.name, itemPath + "/name", role);
+    if (item.content !== undefined) collectContent(texts, item.content, itemPath + "/content", role);
+    else if (item.type === "function_call") pushJSON(texts, item.arguments, itemPath + "/arguments", role);
+    else if (item.type === "custom_tool_call") pushJSON(texts, item.input, itemPath + "/input", role);
+    else if (OUTPUT_ITEM_TYPES.includes(item.type)) collectContent(texts, item.output, itemPath + "/output", role);
+    else if (TEXT_PART_TYPES.includes(item.type)) pushText(texts, item.text, itemPath + "/text", role);
   }
 }
 
@@ -233,77 +238,87 @@ function collectTexts(body, format) {
     return texts;
   }
   if (format === "openai_responses_compaction") {
-    pushJSON(texts, body.instructions);
-    pushJSON(texts, body.input);
+    pushJSON(texts, body.instructions, "/instructions");
+    pushJSON(texts, body.input, "/input");
     return texts;
   }
   if (Array.isArray(body.messages)) {
-    for (const message of body.messages) {
+    for (let i = 0; i < body.messages.length; i++) {
+      const message = body.messages[i];
+      const path = "/messages/" + i;
       if (!isObject(message)) continue;
-      collectContent(texts, message.content);
-      pushText(texts, message.name);
+      collectContent(texts, message.content, path + "/content", message.role || "");
+      pushText(texts, message.name, path + "/name", message.role || "");
       // Tools a message declares count as top-level tools do.
-      pushJSON(texts, message.tools);
+      pushJSON(texts, message.tools, path + "/tools", message.role || "");
       if (!Array.isArray(message.tool_calls)) continue;
-      for (const call of message.tool_calls) {
+      for (let j = 0; j < message.tool_calls.length; j++) {
+        const call = message.tool_calls[j];
+        const callPath = path + "/tool_calls/" + j;
         if (!isObject(call)) continue;
         if (call.custom !== undefined) {
-          pushJSON(texts, call.custom);
+          pushJSON(texts, call.custom, callPath + "/custom", message.role || "");
         } else if (isObject(call.function)) {
-          pushText(texts, call.function.name);
-          pushJSON(texts, call.function.arguments);
+          pushText(texts, call.function.name, callPath + "/function/name", message.role || "");
+          pushJSON(texts, call.function.arguments, callPath + "/function/arguments", message.role || "");
         }
       }
     }
   }
-  collectContent(texts, body.system);
-  if (Array.isArray(body.instructions)) collectInputItems(texts, body.instructions);
-  else pushText(texts, body.instructions);
-  if (isObject(body.prompt)) pushJSON(texts, body.prompt);
-  else collectContent(texts, body.prompt);
-  if (typeof body.input === "string") pushText(texts, body.input);
-  else if (Array.isArray(body.input)) collectInputItems(texts, body.input);
+  collectContent(texts, body.system, "/system", "system");
+  if (Array.isArray(body.instructions)) collectInputItems(texts, body.instructions, "/instructions");
+  else pushText(texts, body.instructions, "/instructions", "system");
+  if (isObject(body.prompt)) pushJSON(texts, body.prompt, "/prompt");
+  else collectContent(texts, body.prompt, "/prompt");
+  if (typeof body.input === "string") pushText(texts, body.input, "/input");
+  else if (Array.isArray(body.input)) collectInputItems(texts, body.input, "/input");
   if (Array.isArray(body.contents)) {
-    for (const content of body.contents) {
-      if (isObject(content)) collectContent(texts, content.parts);
+    for (let i = 0; i < body.contents.length; i++) {
+      const content = body.contents[i];
+      if (isObject(content)) collectContent(texts, content.parts, "/contents/" + i + "/parts", content.role || "");
     }
   }
-  for (const instruction of [body.systemInstruction, body.system_instruction]) {
-    if (isObject(instruction)) collectContent(texts, instruction.parts);
+  for (const key of ["systemInstruction", "system_instruction"]) {
+    const instruction = body[key];
+    if (isObject(instruction)) collectContent(texts, instruction.parts, "/" + key + "/parts", "system");
   }
   // Tool names, descriptions and parameter schemas, in every format.
-  pushJSON(texts, body.tools);
+  pushJSON(texts, body.tools, "/tools");
   if (format === "openai_responses") {
-    for (const key of RESPONSES_JSON_KEYS) pushJSON(texts, body[key]);
+    for (const key of RESPONSES_JSON_KEYS) pushJSON(texts, body[key], "/" + key);
   }
   // Gemini embedding requests: one content, or a batch of requests.
-  if (isObject(body.content)) collectContent(texts, body.content.parts);
+  if (isObject(body.content)) collectContent(texts, body.content.parts, "/content/parts", body.content.role || "");
   if (Array.isArray(body.requests)) {
-    for (const request of body.requests) {
-      if (isObject(request) && isObject(request.content)) collectContent(texts, request.content.parts);
+    for (let i = 0; i < body.requests.length; i++) {
+      const request = body.requests[i];
+      if (isObject(request) && isObject(request.content)) collectContent(texts, request.content.parts, "/requests/" + i + "/content/parts", request.content.role || "");
     }
   }
-  pushText(texts, body.query);
+  pushText(texts, body.query, "/query");
   if (Array.isArray(body.documents)) {
-    for (const document of body.documents) pushJSON(texts, document);
+    for (let i = 0; i < body.documents.length; i++) pushJSON(texts, body.documents[i], "/documents/" + i);
   }
-  for (const key of TASK_TEXT_KEYS) collectContent(texts, body[key]);
+  for (const key of TASK_TEXT_KEYS) collectContent(texts, body[key], "/" + key);
   if (isObject(body.input)) {
-    collectContent(texts, body.input.prompt);
-    pushText(texts, body.input.negative_prompt);
+    collectContent(texts, body.input.prompt, "/input/prompt");
+    pushText(texts, body.input.negative_prompt, "/input/negative_prompt");
     if (Array.isArray(body.input.messages)) {
-      for (const message of body.input.messages) {
-        if (isObject(message)) collectContent(texts, message.content);
+      for (let i = 0; i < body.input.messages.length; i++) {
+        const message = body.input.messages[i];
+        const path = "/input/messages/" + i;
+        if (isObject(message)) collectContent(texts, message.content, path + "/content", message.role || "");
       }
     }
   }
-  if (isObject(body.parameters)) pushText(texts, body.parameters.negative_prompt);
+  if (isObject(body.parameters)) pushText(texts, body.parameters.negative_prompt, "/parameters/negative_prompt");
   if (Array.isArray(body.instances)) {
-    for (const instance of body.instances) {
-      if (isObject(instance)) pushText(texts, instance.prompt);
+    for (let i = 0; i < body.instances.length; i++) {
+      const instance = body.instances[i];
+      if (isObject(instance)) pushText(texts, instance.prompt, "/instances/" + i + "/prompt");
     }
   }
-  if (Array.isArray(body.content)) collectContent(texts, body.content);
+  if (Array.isArray(body.content)) collectContent(texts, body.content, "/content");
   return texts;
 }
 
@@ -341,38 +356,66 @@ function compileRules(config) {
   return compiled;
 }
 
-function matches(rule, text, lowered) {
-  if (rule.regex) return rule.regex.test(text);
-  return (rule.caseSensitive ? text : lowered).includes(rule.keyword);
+// Evidence describes the representation actually examined by the matcher.
+// Case folding and normalization can change offsets; never label those bytes
+// as original input. Keep the decisive hit only, independent of input length.
+function matchEvidence(source, text, start, length, method, representation) {
+  const before = Array.from(text.slice(Math.max(0, start - 602), start));
+  const hit = Array.from(text.slice(start, start + Math.min(length, 514)));
+  const after = Array.from(text.slice(start + length, start + length + 602));
+  return {
+    path: source.path, role: source.role, method, representation,
+    serialized: source.serialized,
+    before: before.slice(-300).join(""), match: hit.slice(0, 256).join(""),
+    after: after.slice(0, 300).join(""),
+    truncated: before.length > 300 || hit.length > 256 || after.length > 300,
+    matchTruncated: hit.length > 256,
+  };
 }
 
-// The keyword list stays in Go: a hook reads ctx.config.keywords as
-// {count, longest}, and utils.keywords finds the words in a text.
 function hasKeywords(config) {
   return isObject(config.keywords) && config.keywords.count > 0;
 }
 
-// firstMatch returns the id of the first rule that matches one of texts,
-// "keywords" when only the keyword list does, or "".
-function firstMatch(config, rules, texts) {
-  if (config.normalizeText === true) {
-    texts = texts.map((text) => text.normalize("NFKC").replace(/[\u200B-\u200F\u2060\uFEFF]/g, ""));
-  }
-  if (rules.length > 0) {
-    const lowered = texts.map((text) => text.toLowerCase());
-    for (const rule of rules) {
-      for (let i = 0; i < texts.length; i++) {
-        if (matches(rule, texts[i], lowered[i])) return rule.id;
-      }
+function firstMatch(config, rules, sources, capture = false) {
+  const texts = sources.map((source) => config.normalizeText === true
+    ? source.text.normalize("NFKC").replace(/[\u200B-\u200F\u2060\uFEFF]/g, "") : source.text);
+  const lowered = texts.map((text) => text.toLowerCase());
+  for (const rule of rules) {
+    for (let i = 0; i < texts.length; i++) {
+      const text = rule.regex || rule.caseSensitive ? texts[i] : lowered[i];
+      const match = rule.regex ? rule.regex.exec(text) : null;
+      const start = rule.regex ? (match ? match.index : -1) : text.indexOf(rule.keyword);
+      if (start < 0) continue;
+      const result = { ruleId: rule.id };
+      if (capture) result.evidence = matchEvidence(sources[i], text, start,
+        rule.regex ? match[0].length : rule.keyword.length, rule.regex ? "regex" : "keyword",
+        text === sources[i].text ? "original" : "transformed");
+      return result;
     }
   }
-  // A keyword is one line, so joining the texts by line breaks finds no
-  // keyword that none of them holds.
   if (hasKeywords(config) && texts.length > 0) {
     const found = utils.keywords("keywords", texts.join("\n"), { caseSensitive: config.keywordsCaseSensitive === true });
-    if (found.length > 0) return "keywords";
+    if (found.length > 0) {
+      const result = { ruleId: "keywords" };
+      if (capture) {
+        // Ask the same host matcher for each source; its Unicode folding may
+        // differ from JavaScript. Only highlight when the returned word can
+        // actually be located in the representation shown.
+        for (let i = 0; i < texts.length; i++) {
+          const words = utils.keywords("keywords", texts[i], { caseSensitive: config.keywordsCaseSensitive === true });
+          if (!words.length) continue;
+          const text = config.keywordsCaseSensitive === true ? texts[i] : lowered[i];
+          const word = config.keywordsCaseSensitive === true ? words[0] : words[0].toLowerCase();
+          const start = text.indexOf(word);
+          if (start >= 0) result.evidence = matchEvidence(sources[i], text, start, word.length, "keyword_list", text === sources[i].text ? "original" : "transformed");
+          break;
+        }
+      }
+      return result;
+    }
   }
-  return "";
+  return null;
 }
 
 // The text of the request's documents: text, PDF and DOCX files, as far as
@@ -383,7 +426,7 @@ function attachmentTexts() {
   for (const attachment of utils.attachments()) {
     if (!attachment.ref || attachment.kind !== "document") continue;
     const read = utils.mediaText(attachment.ref);
-    if (read && typeof read.text === "string") pushText(texts, read.text);
+    if (read && typeof read.text === "string") pushText(texts, read.text, attachment.path || attachment.ref, "attachment");
   }
   return texts;
 }
@@ -394,10 +437,11 @@ function check(ctx, req, attachments) {
   const config = ctx.config || {};
   const rules = compileRules(config);
   if (rules.length === 0 && !hasKeywords(config)) return { action: "continue" };
-  let ruleId = firstMatch(config, rules, collectTexts(req.body, ctx.format));
-  if (ruleId === "" && attachments) ruleId = firstMatch(config, rules, attachmentTexts());
-  if (ruleId === "") return { action: "continue" };
-  const result = { action: "reject", code: "request_filtered", ruleId: ruleId };
+  let hit = firstMatch(config, rules, collectTexts(req.body, ctx.format), ctx.captureEvidence === true);
+  if (!hit && attachments) hit = firstMatch(config, rules, attachmentTexts(), ctx.captureEvidence === true);
+  if (!hit) return { action: "continue" };
+  const result = { action: "reject", code: "request_filtered", ruleId: hit.ruleId };
+  if (hit.evidence) result.evidence = hit.evidence;
   if (config.message) result.message = config.message;
   return result;
 }
@@ -439,9 +483,9 @@ export function reply(ctx, res) {
   if (rules.length === 0 && !hasKeywords(config)) return { action: "pass" };
   for (const output of res.outputs) {
     if (output.text === "") continue;
-    const ruleId = firstMatch(config, rules, [output.text]);
-    if (ruleId === "") continue;
-    const result = { action: "stop", code: "request_filtered", findings: [{ rule: ruleId, count: 1 }] };
+    const hit = firstMatch(config, rules, [{ text: output.text }]);
+    if (!hit) continue;
+    const result = { action: "stop", code: "request_filtered", findings: [{ rule: hit.ruleId, count: 1 }] };
     if (config.message) result.message = config.message;
     return result;
   }

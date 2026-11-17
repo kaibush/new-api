@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/QuantumNous/new-api/common"
 	"slices"
 	"sync/atomic"
 	"unicode/utf8"
@@ -88,15 +89,16 @@ type TransformToken struct {
 // TransformContext is the ctx a stage hook receives. Config is the instance
 // config with the schema defaults applied (ValidateConfig).
 type TransformContext struct {
-	Stage         string            `json:"stage"`
-	Format        string            `json:"format"`
-	Path          string            `json:"path"`
-	Model         string            `json:"model"`
-	UpstreamModel string            `json:"upstreamModel,omitempty"`
-	Group         string            `json:"group"`
-	Channel       *TransformChannel `json:"channel,omitempty"`
-	Attempt       int               `json:"attempt"`
-	User          TransformUser     `json:"user"`
+	CaptureEvidence bool              `json:"captureEvidence,omitempty"`
+	Stage           string            `json:"stage"`
+	Format          string            `json:"format"`
+	Path            string            `json:"path"`
+	Model           string            `json:"model"`
+	UpstreamModel   string            `json:"upstreamModel,omitempty"`
+	Group           string            `json:"group"`
+	Channel         *TransformChannel `json:"channel,omitempty"`
+	Attempt         int               `json:"attempt"`
+	User            TransformUser     `json:"user"`
 	// Token is nil when the request has none.
 	Token    *TransformToken   `json:"token,omitempty"`
 	Instance TransformInstance `json:"instance"`
@@ -144,7 +146,24 @@ type TransformFinding struct {
 }
 
 // TransformResult is a stage hook result whose shape CallTransform checked.
+// TransformMatchEvidence is bounded plugin-reported evidence. It is private
+// audit data, never a finding, notice, client error or public log field.
+type TransformMatchEvidence struct {
+	Path           string `json:"path"`
+	Role           string `json:"role"`
+	Method         string `json:"method"`
+	Representation string `json:"representation"`
+	Before         string `json:"before"`
+	Match          string `json:"match"`
+	After          string `json:"after"`
+	Serialized     bool   `json:"serialized"`
+	Truncated      bool   `json:"truncated"`
+	MatchTruncated bool   `json:"matchTruncated"`
+}
+
 type TransformResult struct {
+	Evidence *TransformMatchEvidence
+
 	Action   string          // "continue" or "reject"
 	Effects  json.RawMessage // raw JSON array, nil when absent; the caller decodes per stage
 	Findings []TransformFinding
@@ -305,6 +324,9 @@ func (p *LoadedPlugin) transformHookContext(tctx *TransformContext) map[string]a
 	if tctx.Token != nil {
 		hookCtx["token"] = map[string]any{"id": tctx.Token.ID, "name": tctx.Token.Name}
 	}
+	if tctx.CaptureEvidence {
+		hookCtx["captureEvidence"] = true
+	}
 	if tctx.UpstreamModel != "" {
 		hookCtx["upstreamModel"] = tctx.UpstreamModel
 	}
@@ -357,12 +379,35 @@ func decodeTransformResult(result any, effects json.RawMessage) (TransformResult
 			decoded.Effects = effects
 		}
 	case "reject":
-		if err := allowMembers(object, "", "action", "code", "message", "ruleId", "findings", "notice"); err != nil {
+		if err := allowMembers(object, "", "action", "code", "message", "ruleId", "findings", "notice", "evidence"); err != nil {
 			return TransformResult{}, err.Error()
 		}
 		code, err := optionalString(object, "code", "")
 		if err != nil || !transformCodePattern.MatchString(code) {
 			return TransformResult{}, "code must match " + transformCodePattern.String()
+		}
+		// Malformed optional evidence must never turn an intentional rejection
+		// into a plugin failure (an optional plugin may fail open).
+		if raw := object["evidence"]; raw != nil {
+			fields, valid := raw.(map[string]any)
+			valid = valid && len(fields) == 10
+			for _, key := range []string{"path", "role", "method", "representation", "before", "match", "after"} {
+				_, ok := fields[key].(string)
+				valid = valid && ok
+			}
+			for _, key := range []string{"serialized", "truncated", "matchTruncated"} {
+				_, ok := fields[key].(bool)
+				valid = valid && ok
+			}
+			encoded, err := common.Marshal(raw)
+			var evidence TransformMatchEvidence
+			if valid && err == nil && len(encoded) <= 8192 && common.Unmarshal(encoded, &evidence) == nil &&
+				len(evidence.Path) <= 1024 && len(evidence.Role) <= 64 &&
+				(evidence.Method == "keyword" || evidence.Method == "regex" || evidence.Method == "keyword_list") &&
+				(evidence.Representation == "original" || evidence.Representation == "transformed") &&
+				utf8.RuneCountInString(evidence.Before) <= 300 && utf8.RuneCountInString(evidence.After) <= 300 && utf8.RuneCountInString(evidence.Match) <= 256 {
+				decoded.Evidence = &evidence
+			}
 		}
 		decoded.Code = code
 		for _, member := range []struct {
@@ -566,6 +611,7 @@ func decodeReplyResult(result any, lengths map[int]int) (ReplyResult, string) {
 		if err != nil || !transformCodePattern.MatchString(code) {
 			return ReplyResult{}, "code must match " + transformCodePattern.String()
 		}
+
 		decoded.Code = code
 		message, err := optionalString(object, "message", "")
 		if err != nil || utf8.RuneCountInString(message) > maxTransformTextRunes {

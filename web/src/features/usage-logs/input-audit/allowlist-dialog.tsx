@@ -36,7 +36,10 @@ import {
   FieldLabel,
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import { UserIdentity } from '@/components/user-identity'
+import { UserSelector } from '@/components/user-selector'
 import { listRequestPluginInstances } from '@/features/task-plugins/api'
 import dayjs from '@/lib/dayjs'
 import { useAuthStore } from '@/stores/auth-store'
@@ -69,6 +72,7 @@ export function InputAuditAllowlistDialog(props: {
 }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
+  const [tab, setTab] = useState('entries')
   const [revoke, setRevoke] = useState<InputAuditAllowlistEntry>()
   const userID = useAuthStore((state) => state.auth.user?.id)
   const queryClient = useQueryClient()
@@ -108,6 +112,7 @@ export function InputAuditAllowlistDialog(props: {
         queryKey: ['input-audit-allowlist-history', userID],
       })
       setRevoke(undefined)
+      setTab('entries')
       form.reset({
         user_id: undefined,
         reason: '',
@@ -131,6 +136,8 @@ export function InputAuditAllowlistDialog(props: {
           if (!mutation.isPending) setOpen(value)
         }}
         title={t('User allowlist')}
+        contentClassName='sm:max-w-3xl'
+        contentHeight='min(72dvh, 720px)'
         trigger={<Button variant='outline'>{t('User allowlist')}</Button>}
       >
         <p className='text-muted-foreground mb-4 text-sm'>
@@ -167,200 +174,246 @@ export function InputAuditAllowlistDialog(props: {
             </AlertDescription>
           </Alert>
         )}
-        <form
-          aria-label={t('User allowlist')}
-          onSubmit={form.handleSubmit((values) => {
-            if (!policy.data || !props.collectionEnabled || instances.isError) {
-              return
-            }
-            const previous = policy.data.entries.find(
-              (entry) => entry.user_id === values.user_id
-            )
-            mutation.mutate({
-              version: policy.data.version,
-              entries: [
-                ...policy.data.entries.filter(
-                  (entry) =>
-                    entry.user_id !== values.user_id &&
-                    entry.expires_at > Date.now() / 1000
-                ),
-                {
-                  ...previous,
-                  id: previous?.id ?? '',
-                  ...values,
-                  expires_at: Math.floor(
-                    new Date(values.expires_at).getTime() / 1000
-                  ),
-                },
-              ],
-            })
-          })}
-        >
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor='allowlist-user'>{t('User ID')}</FieldLabel>
-              <Input
-                id='allowlist-user'
-                type='number'
-                min={1}
-                disabled={mutation.isPending}
-                {...form.register('user_id', { valueAsNumber: true })}
-              />
-              {form.formState.errors.user_id && (
-                <FieldError>{t('Invalid user ID')}</FieldError>
-              )}
-            </Field>
-            <Field>
-              <FieldLabel htmlFor='allowlist-reason'>{t('Reason')}</FieldLabel>
-              <Textarea
-                id='allowlist-reason'
-                maxLength={500}
-                disabled={mutation.isPending}
-                {...form.register('reason')}
-              />
-              {form.formState.errors.reason && (
-                <FieldError>{t('A reason is required')}</FieldError>
-              )}
-            </Field>
-            <Field>
-              <FieldLabel htmlFor='allowlist-instances'>
-                {t('Content filtering instances')}
-              </FieldLabel>
-              <MultiSelect
-                id='allowlist-instances'
-                placeholder={t('Content filtering instances')}
-                options={options}
-                selected={form.watch('instances')}
-                onChange={(value) =>
-                  form.setValue('instances', value, { shouldValidate: true })
+        <Tabs value={tab} onValueChange={(value) => setTab(String(value))}>
+          <TabsList className='grid w-full grid-cols-3'>
+            <TabsTrigger value='entries'>{t('User allowlist')}</TabsTrigger>
+            <TabsTrigger value='edit'>{t('Edit')}</TabsTrigger>
+            <TabsTrigger value='history'>{t('Allowlist history')}</TabsTrigger>
+          </TabsList>
+          <TabsContent value='edit' className='pt-4'>
+            <form
+              aria-label={t('User allowlist')}
+              onSubmit={form.handleSubmit((values) => {
+                if (
+                  !policy.data ||
+                  !props.collectionEnabled ||
+                  instances.isError
+                ) {
+                  return
                 }
-                disabled={
-                  mutation.isPending || instances.isPending || instances.isError
-                }
-              />
-              {form.formState.errors.instances && (
-                <FieldError>
-                  {t('Select at least one content filtering instance')}
-                </FieldError>
-              )}
-            </Field>
-            <Field>
-              <FieldLabel htmlFor='allowlist-expiry'>
-                {t('Expires at')}
-              </FieldLabel>
-              <Input
-                id='allowlist-expiry'
-                type='datetime-local'
-                disabled={mutation.isPending}
-                {...form.register('expires_at')}
-              />
-              {form.formState.errors.expires_at && (
-                <FieldError>
-                  {t('Choose an expiry within the next 365 days')}
-                </FieldError>
-              )}
-            </Field>
-            <Button
-              type='submit'
-              disabled={
-                mutation.isPending ||
-                !policy.data ||
-                policy.isError ||
-                instances.isError ||
-                !props.collectionEnabled
-              }
+                const previous = policy.data.entries.find(
+                  (entry) => entry.user_id === values.user_id
+                )
+                mutation.mutate({
+                  version: policy.data.version,
+                  entries: [
+                    ...policy.data.entries.filter(
+                      (entry) =>
+                        entry.user_id !== values.user_id &&
+                        entry.expires_at > Date.now() / 1000
+                    ),
+                    {
+                      ...previous,
+                      id: previous?.id ?? '',
+                      ...values,
+                      expires_at: Math.floor(
+                        new Date(values.expires_at).getTime() / 1000
+                      ),
+                    },
+                  ],
+                })
+              })}
             >
-              {t('Add to allowlist')}
-            </Button>
-          </FieldGroup>
-        </form>
-        <div className='mt-6 space-y-3'>
-          {policy.data?.entries.map((entry) => (
-            <div
-              key={entry.id || entry.user_id}
-              className='space-y-2 rounded-lg border p-3'
-            >
-              <div className='flex flex-wrap items-center justify-between gap-2'>
-                <span>
-                  {t('User ID')}: {entry.user_id}
-                </span>
-                <Badge variant='secondary'>
-                  {entry.expires_at > Date.now() / 1000
-                    ? t('Active')
-                    : t('Expired')}
-                </Badge>
-              </div>
-              <p className='text-sm break-words whitespace-pre-wrap'>
-                {entry.reason}
-              </p>
-              <p className='text-muted-foreground text-xs'>
-                {entry.instances
-                  .map(
-                    (id) =>
-                      options.find((option) => option.value === id)?.label ?? id
-                  )
-                  .join(', ')}{' '}
-                · {dayjs.unix(entry.expires_at).format('YYYY-MM-DD HH:mm:ss')}
-              </p>
-              <div className='flex gap-2'>
+              <FieldGroup className='grid gap-4 sm:grid-cols-2'>
+                <Field>
+                  <FieldLabel htmlFor='allowlist-user'>{t('User')}</FieldLabel>
+                  <UserSelector
+                    id='allowlist-user'
+                    value={form.watch('user_id')}
+                    onChange={(id) =>
+                      form.setValue('user_id', id ?? 0, {
+                        shouldValidate: true,
+                      })
+                    }
+                    disabled={mutation.isPending}
+                    aria-invalid={!!form.formState.errors.user_id}
+                  />
+                  {form.formState.errors.user_id && (
+                    <FieldError>{t('Invalid user ID')}</FieldError>
+                  )}
+                </Field>
+                <Field className='sm:col-span-2'>
+                  <FieldLabel htmlFor='allowlist-reason'>
+                    {t('Reason')}
+                  </FieldLabel>
+                  <Textarea
+                    id='allowlist-reason'
+                    maxLength={500}
+                    disabled={mutation.isPending}
+                    {...form.register('reason')}
+                  />
+                  {form.formState.errors.reason && (
+                    <FieldError>{t('A reason is required')}</FieldError>
+                  )}
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor='allowlist-instances'>
+                    {t('Content filtering instances')}
+                  </FieldLabel>
+                  <MultiSelect
+                    id='allowlist-instances'
+                    placeholder={t('Content filtering instances')}
+                    options={options}
+                    selected={form.watch('instances')}
+                    onChange={(value) =>
+                      form.setValue('instances', value, {
+                        shouldValidate: true,
+                      })
+                    }
+                    disabled={
+                      mutation.isPending ||
+                      instances.isPending ||
+                      instances.isError
+                    }
+                  />
+                  {form.formState.errors.instances && (
+                    <FieldError>
+                      {t('Select at least one content filtering instance')}
+                    </FieldError>
+                  )}
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor='allowlist-expiry'>
+                    {t('Expires at')}
+                  </FieldLabel>
+                  <Input
+                    id='allowlist-expiry'
+                    type='datetime-local'
+                    disabled={mutation.isPending}
+                    {...form.register('expires_at')}
+                  />
+                  {form.formState.errors.expires_at && (
+                    <FieldError>
+                      {t('Choose an expiry within the next 365 days')}
+                    </FieldError>
+                  )}
+                </Field>
                 <Button
-                  size='sm'
-                  variant='outline'
-                  disabled={mutation.isPending}
-                  onClick={() =>
-                    form.reset({
-                      ...entry,
-                      expires_at: dayjs
-                        .unix(entry.expires_at)
-                        .format('YYYY-MM-DDTHH:mm'),
-                    })
+                  type='submit'
+                  disabled={
+                    mutation.isPending ||
+                    !policy.data ||
+                    policy.isError ||
+                    instances.isError ||
+                    !props.collectionEnabled
                   }
                 >
-                  {t('Edit')}
+                  {t('Add to allowlist')}
                 </Button>
-                <Button
-                  size='sm'
-                  variant='outline'
-                  disabled={mutation.isPending}
-                  onClick={() => setRevoke(entry)}
-                >
-                  {t('Revoke')}
-                </Button>
-              </div>
+              </FieldGroup>
+            </form>
+          </TabsContent>
+          <TabsContent value='entries' className='pt-3'>
+            <div className='flex justify-end'>
+              <Button
+                onClick={() => {
+                  form.reset()
+                  setTab('edit')
+                }}
+              >
+                {t('Add to allowlist')}
+              </Button>
             </div>
-          ))}
-        </div>
-        <section aria-label={t('Allowlist history')} className='mt-4 space-y-2'>
-          <h3>{t('Allowlist history')}</h3>
-          {history.isError && (
-            <Button
-              variant='outline'
-              onClick={() => {
-                void history.refetch()
-              }}
-            >
-              {t('Retry')}
-            </Button>
-          )}
-          {history.data?.map((revision) => (
-            <article
-              key={revision.policy.version}
-              className='rounded-lg border p-2 text-xs'
-            >
-              <p>
-                {t('Allowlist policy version')}: {revision.policy.version} ·{' '}
-                {dayjs.unix(revision.created_at).format('YYYY-MM-DD HH:mm:ss')}
-              </p>
-              {revision.policy.entries.map((entry) => (
-                <p key={entry.id}>
-                  #{entry.user_id} · {entry.reason} · #{entry.updated_by} ·{' '}
-                  {dayjs.unix(entry.expires_at).format('YYYY-MM-DD HH:mm')} ·{' '}
-                  {entry.instances.join(', ')}
-                </p>
+            <div className='mt-3 grid gap-3 sm:grid-cols-2'>
+              {policy.data?.entries.map((entry) => (
+                <div
+                  key={entry.id || entry.user_id}
+                  className='space-y-2 rounded-lg border p-3'
+                >
+                  <div className='flex flex-wrap items-center justify-between gap-2'>
+                    <span>
+                      <UserIdentity userId={entry.user_id} />
+                    </span>
+                    <Badge variant='secondary'>
+                      {entry.expires_at > Date.now() / 1000
+                        ? t('Active')
+                        : t('Expired')}
+                    </Badge>
+                  </div>
+                  <p className='text-sm break-words whitespace-pre-wrap'>
+                    {entry.reason}
+                  </p>
+                  <p className='text-muted-foreground text-xs'>
+                    {entry.instances
+                      .map(
+                        (id) =>
+                          options.find((option) => option.value === id)
+                            ?.label ?? id
+                      )
+                      .join(', ')}{' '}
+                    ·{' '}
+                    {dayjs.unix(entry.expires_at).format('YYYY-MM-DD HH:mm:ss')}
+                  </p>
+                  <div className='flex gap-2'>
+                    <Button
+                      size='sm'
+                      variant='outline'
+                      disabled={mutation.isPending}
+                      onClick={() => {
+                        setTab('edit')
+                        form.reset({
+                          ...entry,
+                          expires_at: dayjs
+                            .unix(entry.expires_at)
+                            .format('YYYY-MM-DDTHH:mm'),
+                        })
+                      }}
+                    >
+                      {t('Edit')}
+                    </Button>
+                    <Button
+                      size='sm'
+                      variant='outline'
+                      disabled={mutation.isPending}
+                      onClick={() => setRevoke(entry)}
+                    >
+                      {t('Revoke')}
+                    </Button>
+                  </div>
+                </div>
               ))}
-            </article>
-          ))}
-        </section>
+            </div>
+          </TabsContent>
+          <TabsContent value='history'>
+            <section
+              aria-label={t('Allowlist history')}
+              className='mt-4 space-y-2'
+            >
+              <h3>{t('Allowlist history')}</h3>
+              {history.isError && (
+                <Button
+                  variant='outline'
+                  onClick={() => {
+                    void history.refetch()
+                  }}
+                >
+                  {t('Retry')}
+                </Button>
+              )}
+              {history.data?.map((revision) => (
+                <article
+                  key={revision.policy.version}
+                  className='rounded-lg border p-2 text-xs'
+                >
+                  <p>
+                    {t('Allowlist policy version')}: {revision.policy.version} ·{' '}
+                    {dayjs
+                      .unix(revision.created_at)
+                      .format('YYYY-MM-DD HH:mm:ss')}
+                  </p>
+                  {revision.policy.entries.map((entry) => (
+                    <p key={entry.id}>
+                      <UserIdentity userId={entry.user_id} /> · {entry.reason} ·{' '}
+                      <UserIdentity userId={entry.updated_by ?? 0} /> ·{' '}
+                      {dayjs.unix(entry.expires_at).format('YYYY-MM-DD HH:mm')}{' '}
+                      · {entry.instances.join(', ')}
+                    </p>
+                  ))}
+                </article>
+              ))}
+            </section>
+          </TabsContent>
+        </Tabs>
       </Dialog>
       <ConfirmDialog
         open={!!revoke}

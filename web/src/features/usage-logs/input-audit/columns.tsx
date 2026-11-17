@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next'
 
 import { TruncatedCell } from '@/components/data-table'
 import { Badge } from '@/components/ui/badge'
+import { UserIdentity } from '@/components/user-identity'
 import dayjs from '@/lib/dayjs'
 
 import type { InputAudit } from './api'
@@ -43,8 +44,12 @@ export function useInputAuditColumns(): ColumnDef<InputAudit>[] {
         accessorKey: 'username',
         header: t('Username'),
         size: 130,
-        cell: ({ row }) =>
-          `${row.original.username} (#${row.original.user_id})`,
+        cell: ({ row }) => (
+          <UserIdentity
+            userId={row.original.user_id}
+            username={row.original.username}
+          />
+        ),
         meta: { label: t('Username') },
       },
       {

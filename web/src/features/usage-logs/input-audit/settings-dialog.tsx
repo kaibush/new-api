@@ -33,6 +33,7 @@ import {
   FieldLabel,
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { SettingsSwitchField } from '@/features/system-settings/components/settings-form-layout'
 
 import { updateInputAuditSettings, type InputAuditSettings } from './api'
@@ -140,71 +141,107 @@ export function InputAuditSettingsDialog(props: {
         setOpen(value)
       }}
       title={t('Input audit settings')}
+      contentClassName='sm:max-w-3xl'
       trigger={<Button variant='outline'>{t('Settings')}</Button>}
     >
       <form
         aria-label={t('Input audit settings')}
         onSubmit={form.handleSubmit((values) => mutation.mutate(values))}
       >
-        <FieldGroup>
-          <SettingsSwitchField
-            controlId='input-audit-enabled'
-            checked={form.watch('enabled')}
-            onCheckedChange={(value) => form.setValue('enabled', value)}
-            label={t('Collect user messages')}
-            disabled={mutation.isPending}
-          />
-          <SettingsSwitchField
-            controlId='input-audit-evidence-enabled'
-            checked={form.watch('evidence_enabled')}
-            onCheckedChange={(value) =>
-              form.setValue('evidence_enabled', value)
-            }
-            label={t('Retain submitted text evidence')}
-            disabled={mutation.isPending}
-          />
-          <p className='text-muted-foreground text-xs'>
-            {t(
-              'Cases keep immutable evidence for their retention period, up to 1000 cases and 256 MiB including decision history.'
-            )}
-          </p>
-          {fields.map((field) => (
-            <Field
-              key={field.name}
-              data-invalid={!!form.formState.errors[field.name]}
-            >
-              <FieldLabel htmlFor={`input-audit-${field.name}`}>
-                {field.label}
-              </FieldLabel>
-              <Input
-                id={`input-audit-${field.name}`}
-                type='number'
-                min={field.min}
-                max={field.max}
-                step={1}
-                disabled={mutation.isPending}
-                aria-invalid={!!form.formState.errors[field.name]}
-                {...form.register(field.name, { valueAsNumber: true })}
-              />
-              {form.formState.errors[field.name] && (
-                <FieldError>
-                  {t('Please enter an integer between {{min}} and {{max}}', {
-                    min: field.min,
-                    max: field.max,
-                  })}
-                </FieldError>
+        <Tabs defaultValue='collection'>
+          <TabsList className='mb-4 grid w-full grid-cols-2'>
+            <TabsTrigger value='collection'>
+              {t('Collect user messages')}
+            </TabsTrigger>
+            <TabsTrigger value='evidence'>
+              {t('Evidence and review')}
+            </TabsTrigger>
+          </TabsList>
+          {(['collection', 'evidence'] as const).map((group) => (
+            <TabsContent key={group} value={group}>
+              {group === 'collection' ? (
+                <>
+                  {' '}
+                  <SettingsSwitchField
+                    controlId='input-audit-enabled'
+                    checked={form.watch('enabled')}
+                    onCheckedChange={(value) => form.setValue('enabled', value)}
+                    label={t('Collect user messages')}
+                    disabled={mutation.isPending}
+                  />
+                </>
+              ) : (
+                <>
+                  {' '}
+                  <SettingsSwitchField
+                    controlId='input-audit-evidence-enabled'
+                    checked={form.watch('evidence_enabled')}
+                    onCheckedChange={(value) =>
+                      form.setValue('evidence_enabled', value)
+                    }
+                    label={t('Retain submitted text evidence')}
+                    disabled={mutation.isPending}
+                  />
+                  <p className='text-muted-foreground text-xs'>
+                    {t(
+                      'Also captures the decisive filter match: up to 300 characters on each side and 256 matched characters. Interception records use the same retention period and a separate budget capped by the evidence limits.'
+                    )}
+                  </p>
+                  <p className='text-muted-foreground text-xs'>
+                    {t(
+                      'Cases keep immutable evidence for their retention period, up to 1000 cases and 256 MiB including decision history.'
+                    )}
+                  </p>
+                </>
               )}
-            </Field>
+              <FieldGroup className='mt-4 grid gap-4 sm:grid-cols-2'>
+                {fields
+                  .filter((_, index) =>
+                    group === 'collection' ? index < 3 : index >= 3
+                  )
+                  .map((field) => (
+                    <Field
+                      key={field.name}
+                      data-invalid={!!form.formState.errors[field.name]}
+                    >
+                      <FieldLabel htmlFor={`input-audit-${field.name}`}>
+                        {field.label}
+                      </FieldLabel>
+                      <Input
+                        id={`input-audit-${field.name}`}
+                        type='number'
+                        min={field.min}
+                        max={field.max}
+                        step={1}
+                        disabled={mutation.isPending}
+                        aria-invalid={!!form.formState.errors[field.name]}
+                        {...form.register(field.name, { valueAsNumber: true })}
+                      />
+                      {form.formState.errors[field.name] && (
+                        <FieldError>
+                          {t(
+                            'Please enter an integer between {{min}} and {{max}}',
+                            {
+                              min: field.min,
+                              max: field.max,
+                            }
+                          )}
+                        </FieldError>
+                      )}
+                    </Field>
+                  ))}
+              </FieldGroup>
+            </TabsContent>
           ))}
-          <p className='text-muted-foreground text-xs'>
-            {t(
-              'Identical messages from the same user are merged while retained. Collection is best effort; overloaded queues may drop records.'
-            )}
-          </p>
-          <Button type='submit' disabled={mutation.isPending}>
-            {t('Save')}
-          </Button>
-        </FieldGroup>
+        </Tabs>
+        <p className='text-muted-foreground text-xs'>
+          {t(
+            'Identical messages from the same user are merged while retained. Collection is best effort; overloaded queues may drop records.'
+          )}
+        </p>
+        <Button className='mt-4' type='submit' disabled={mutation.isPending}>
+          {t('Save')}
+        </Button>
       </form>
     </Dialog>
   )

@@ -72,6 +72,7 @@ func SubmitIngress(c *gin.Context, format types.RelayFormat, model string) (bool
 }
 
 func (p *Plan) ingress(c *gin.Context, format types.RelayFormat, model string) (bool, []relaycommon.RequestPluginStep, []relaycommon.RequestPluginRecord, *types.NewAPIError) {
+	p.requestID = c.GetString(common.RequestIdKey)
 	c.Set(planContextKey, p)
 	group := requestGroup(c)
 	p.capture(c, group, model, nil)

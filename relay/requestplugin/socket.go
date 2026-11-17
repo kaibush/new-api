@@ -163,6 +163,7 @@ func (s *SocketResponse) Stopped() *types.NewAPIError {
 // (NewRealtime).
 func StartRealtime(c *gin.Context) {
 	if plan := NewPlan(common.GetContextKeyInt(c, constant.ContextKeyUserId)); plan != nil {
+		plan.requestID = c.GetString(common.RequestIdKey)
 		c.Set(planContextKey, plan)
 	}
 }
