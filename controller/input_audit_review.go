@@ -3,12 +3,15 @@ package controller
 import (
 	"context"
 	"net/http"
+	"os"
 	"slices"
 	"strconv"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -20,20 +23,45 @@ func GetInputAuditReviewSettings(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": s})
+	configured := s.APIKey != ""
+	s.APIKey = ""
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": struct {
+		model.InputAuditReviewSettings
+		KeyConfigured       bool   `json:"key_configured"`
+		DefaultSystemPrompt string `json:"default_system_prompt"`
+	}{s, configured, model.DefaultInputAuditReviewSystemPrompt}})
 }
 func UpdateInputAuditReviewSettings(c *gin.Context) {
-	s := model.DefaultInputAuditReviewSettings()
-	if err := common.DecodeJson(http.MaxBytesReader(c.Writer, c.Request.Body, 20000), &s); err != nil {
+	var request struct {
+		model.InputAuditReviewSettings
+		ClearAPIKey bool `json:"clear_api_key"`
+	}
+	request.InputAuditReviewSettings = model.DefaultInputAuditReviewSettings()
+	if err := common.DecodeJson(http.MaxBytesReader(c.Writer, c.Request.Body, 40000), &request); err != nil {
 		c.JSON(400, gin.H{"success": false, "message": "Invalid model review settings"})
 		return
 	}
+	s := request.InputAuditReviewSettings
 	if err := s.Validate(); err != nil {
 		c.JSON(400, gin.H{"success": false, "message": err.Error()})
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
+	previous, err := model.LoadInputAuditReviewSettings(model.DB.WithContext(ctx))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if request.ClearAPIKey {
+		s.APIKey = ""
+		s.KeyEnv = ""
+	} else if s.APIKey == "" {
+		s.APIKey = previous.APIKey
+		s.KeyEnv = previous.KeyEnv
+	} else {
+		s.KeyEnv = ""
+	}
 	if err := model.SaveInputAuditReviewSettings(model.DB.WithContext(ctx), s); err != nil {
 		common.ApiError(c, err)
 		return
@@ -140,4 +168,28 @@ func GetInputAuditReviewSummary(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"unreviewed": pending}})
+}
+
+func GetInputAuditReviewCredential(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	if c.GetInt("role") != common.RoleRootUser {
+		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": service.ErrVerificationForbidden.Error()})
+		return
+	}
+	if middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: service.VerificationScopeInputAuditKeyRead}) == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+	s, err := model.LoadInputAuditReviewSettings(model.DB.WithContext(ctx))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	key := s.APIKey
+	if key == "" && s.KeyEnv != "" {
+		key = os.Getenv(s.KeyEnv)
+	}
+	recordManageAudit(c, "input_audit.credentials_view", nil)
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"api_key": key}})
 }

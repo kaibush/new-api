@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { ApiResponse } from '@/features/profile/types'
 import { api } from '@/lib/api'
+import { authResult } from '@/lib/secure-verification'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
 export interface ModelReviewSettings {
@@ -26,6 +27,11 @@ export interface ModelReviewSettings {
   interval_minutes: number
   endpoint: string
   key_env: string
+  api_key?: string
+  clear_api_key?: boolean
+  key_configured?: boolean
+  system_prompt?: string
+  default_system_prompt?: string
   model: string
   instructions: string
   batch_size: number
@@ -119,4 +125,15 @@ export async function getModelReviewSummary() {
   )
   requireServerSuccess(response.data)
   return response.data.data ?? { unreviewed: 0 }
+}
+
+export async function revealModelReviewKey(proof: string, signal: AbortSignal) {
+  const data = await authResult<{ api_key: string }>(
+    api.post(`${base}/credential`, undefined, {
+      headers: { 'X-Security-Proof': proof },
+      singleUseAuthorization: true,
+      signal,
+    })
+  )
+  return data.api_key
 }

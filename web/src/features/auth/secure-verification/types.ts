@@ -27,6 +27,7 @@ export type VerificationMethod =
 export type SecurityProofScope =
   | 'channel.key.read'
   | 'community.credentials.read'
+  | 'input_audit.credentials.read'
   | 'passkey.register'
   | 'passkey.delete'
   | '2fa.setup'

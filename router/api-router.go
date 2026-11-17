@@ -388,6 +388,7 @@ func SetApiRouter(router *gin.Engine) {
 		inputAuditRoute.POST("/matches/:match_id/decision", controller.DecideInputAuditMatch)
 		inputAuditRoute.GET("/model/settings", controller.GetInputAuditReviewSettings)
 		inputAuditRoute.PUT("/model/settings", controller.UpdateInputAuditReviewSettings)
+		inputAuditRoute.POST("/model/credential", middleware.CriticalRateLimit(), controller.GetInputAuditReviewCredential)
 		inputAuditRoute.GET("/model/summary", controller.GetInputAuditReviewSummary)
 		inputAuditRoute.GET("/model/jobs", controller.GetInputAuditReviewJobs)
 		inputAuditRoute.POST("/model/jobs", controller.CreateInputAuditReviewJob)

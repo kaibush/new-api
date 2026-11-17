@@ -319,22 +319,23 @@ export function InputAuditViewer() {
               setInvalid(false)
               setFilters({ p: 1, page_size: filters.page_size })
             }}
-            actionStart={
-              status.data && (
-                <>
-                  {canRead && <InputAuditCasesDialog />}
-                  {canRead && (
-                    <InputAuditAllowlistDialog
-                      collectionEnabled={status.data.settings.enabled}
-                    />
-                  )}
-                  <MatchesDialog />
-                  <ModelReviewDialog />
-                  <InputAuditSettingsDialog settings={status.data.settings} />
-                </>
-              )
-            }
           />
+          {status.data && (
+            <nav
+              aria-label={t('Audit management')}
+              className='bg-card/50 grid grid-cols-2 gap-2 rounded-lg border p-3 sm:flex sm:flex-wrap [&>button]:w-full [&>button]:min-w-0 [&>button]:whitespace-normal sm:[&>button]:w-auto'
+            >
+              {canRead && <InputAuditCasesDialog />}
+              {canRead && (
+                <InputAuditAllowlistDialog
+                  collectionEnabled={status.data.settings.enabled}
+                />
+              )}
+              <MatchesDialog />
+              <ModelReviewDialog />
+              <InputAuditSettingsDialog settings={status.data.settings} />
+            </nav>
+          )}
           {invalid && (
             <Alert variant='destructive'>
               <AlertDescription>{t('Invalid audit filters')}</AlertDescription>

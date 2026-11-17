@@ -43,6 +43,9 @@ const settings: ModelReviewSettings = {
   key_env: 'INPUT_AUDIT_LLM_API_KEY',
   model: 'review-model',
   instructions: '',
+  system_prompt: 'Default review criteria',
+  default_system_prompt: 'Default review criteria',
+  key_configured: true,
   batch_size: 100,
   chunk_chars: 6000,
   timeout_seconds: 60,
@@ -57,19 +60,22 @@ beforeEach(() => {
   })
   useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: 100 })
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
-    if (url === '/api/input-audit/model/settings')
-      {return { data: { success: true, data: settings } }}
-    if (url === '/api/input-audit/model/jobs')
-      {return { data: { success: true, data: [] } }}
-    if (String(url).startsWith('/api/user/search'))
-      {return {
+    if (url === '/api/input-audit/model/settings') {
+      return { data: { success: true, data: settings } }
+    }
+    if (url === '/api/input-audit/model/jobs') {
+      return { data: { success: true, data: [] } }
+    }
+    if (String(url).startsWith('/api/user/search')) {
+      return {
         data: {
           success: true,
           data: { items: [{ id: 4, username: 'alice' }] },
         },
-      }}
-    if (url === '/api/input-audit/model/results')
-      {return {
+      }
+    }
+    if (url === '/api/input-audit/model/results') {
+      return {
         data: {
           success: true,
           data: {
@@ -93,7 +99,8 @@ beforeEach(() => {
             total: 1,
           },
         },
-      }}
+      }
+    }
     return { data: { success: true, data: { items: [], total: 0 } } }
   })
 })
@@ -167,7 +174,12 @@ it('settings groups hide secondary controls and preserve edits while switching g
   await waitFor(() =>
     expect(put).toHaveBeenCalledWith(
       '/api/input-audit/model/settings',
-      expect.objectContaining({ ...settings, batch_size: 25, automatic: true })
+      expect.objectContaining({
+        batch_size: 25,
+        automatic: true,
+        system_prompt: settings.system_prompt,
+        api_key: '',
+      })
     )
   )
 })
@@ -213,4 +225,110 @@ it('a failed jobs query shows a retry state and never permits starting another j
     ).not.toBeInTheDocument()
   )
   expect(await screen.findByRole('button', { name: 'Retry' })).toBeVisible()
+})
+
+it('settings accept a provider key without exposing the saved key and allow restoring the default prompt', async () => {
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  show()
+  await userEvent.click(screen.getByRole('button', { name: 'Model review' }))
+  await userEvent.click(screen.getByRole('tab', { name: 'Settings' }))
+  const key = await screen.findByLabelText('API Key')
+  expect(key).toHaveValue('')
+  expect(key).toHaveAttribute('type', 'password')
+  expect(
+    screen.queryByLabelText('Credential environment variable')
+  ).not.toBeInTheDocument()
+  await userEvent.selectOptions(screen.getByLabelText('Provider'), 'deepseek')
+  expect(screen.getByLabelText('Chat completions endpoint')).toHaveValue(
+    'https://api.deepseek.com/v1/chat/completions'
+  )
+  await userEvent.type(key, 'test-provider-key')
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Review system prompt' })
+  )
+  const prompt = screen.getByRole('textbox', { name: 'Review system prompt' })
+  expect(prompt).toHaveValue('Default review criteria')
+  fireEvent.change(prompt, { target: { value: 'Custom criteria' } })
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Restore default prompt' })
+  )
+  expect(prompt).toHaveValue('Default review criteria')
+  await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() =>
+    expect(put).toHaveBeenCalledWith(
+      '/api/input-audit/model/settings',
+      expect.objectContaining({
+        api_key: 'test-provider-key',
+        system_prompt: 'Default review criteria',
+      })
+    )
+  )
+  expect(key).toHaveValue('')
+})
+
+it('saved review keys are revealed after verification and can be shown in full', async () => {
+  const get = vi.mocked(api.get).getMockImplementation()
+  if (!get) { throw new Error('Missing API fixture') }
+  vi.mocked(api.get).mockImplementation(async (url, options) => {
+    if (url === '/api/verify/methods')
+      {return {
+        data: {
+          success: true,
+          data: {
+            scope: 'input_audit.credentials.read',
+            methods: [{ method: '2fa', available: true }],
+            oauth_providers: [],
+            password_encryption_enabled: false,
+          },
+        },
+      }}
+    return get(url, options)
+  })
+  const post = vi
+    .spyOn(api, 'post')
+    .mockImplementation(async (url) => ({
+      data: {
+        success: true,
+        data:
+          url === '/api/verify'
+            ? {
+                proof_token: 'single-use-proof',
+                scope: 'input_audit.credentials.read',
+                method: '2fa',
+                expires_at: Math.floor(Date.now() / 1000) + 60,
+              }
+            : { api_key: 'saved-full-key' },
+      },
+    }))
+  show()
+  await userEvent.click(screen.getByRole('button', { name: 'Model review' }))
+  await userEvent.click(screen.getByRole('tab', { name: 'Settings' }))
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Load saved credentials' })
+  )
+  expect(post).not.toHaveBeenCalled()
+  await userEvent.type(
+    await screen.findByLabelText('Authenticator code or backup code'),
+    '123456'
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Verify' }))
+  const key = screen.getByLabelText('API Key')
+  await waitFor(() => expect(key).toHaveValue('saved-full-key'))
+  expect(post).toHaveBeenCalledWith(
+    '/api/input-audit/model/credential',
+    undefined,
+    expect.objectContaining({
+      headers: { 'X-Security-Proof': 'single-use-proof' },
+      singleUseAuthorization: true,
+    })
+  )
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Toggle password visibility' })
+  )
+  expect(key).toHaveAttribute('type', 'text')
+  expect(
+    screen.getByRole('button', { name: 'Copy to clipboard' })
+  ).toBeEnabled()
 })

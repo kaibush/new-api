@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -1001,6 +1002,7 @@ func TestInputAuditModelReviewDatabaseMatrix(t *testing.T) {
 				assert.Equal(t, "review-model", payload.Model)
 				require.Len(t, payload.Messages, 2)
 				assert.Equal(t, "system", payload.Messages[0].Role)
+				assert.Contains(t, payload.Messages[0].Content, "Custom review policy")
 				assert.Contains(t, payload.Messages[1].Content, "quoted evidence")
 				encoded, err := common.Marshal(map[string]any{"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]any{"content": response}}}})
 				require.NoError(t, err)
@@ -1014,7 +1016,9 @@ func TestInputAuditModelReviewDatabaseMatrix(t *testing.T) {
 			config.Enabled = true
 			config.Endpoint = upstream.URL
 			config.Model = "review-model"
+			config.APIKey = "fixture"
 			config.KeyEnv = "INPUT_AUDIT_LLM_TEST_KEY"
+			config.SystemPrompt = "Custom review policy"
 			config.BatchSize = 1
 			config.Retries = 0
 			config.RequestIntervalSeconds = 1
@@ -1331,4 +1335,115 @@ func TestInputAuditMatchLiveIngressIsPrivateAndDryRunDoesNotPersist(t *testing.T
 	assert.Equal(t, "live-evidence-request", saved.RequestId)
 	assert.Contains(t, saved.Evidence, "禁止生成")
 	assert.Equal(t, 61, saved.UserId)
+}
+
+func TestInputAuditModelReviewCredentialSettings(t *testing.T) {
+	oldRedis := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() { common.RedisEnabled = oldRedis })
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := inputAuditTestDB(t, dialect)
+			require.NoError(t, db.AutoMigrate(&model.Option{}, &model.User{}, &model.AuditLog{}))
+			previous := model.DB
+			previousLog := model.LOG_DB
+			model.LOG_DB = db
+			model.DB = db
+			t.Cleanup(func() { model.DB = previous; model.LOG_DB = previousLog })
+			config := model.DefaultInputAuditReviewSettings()
+			require.NoError(t, model.SaveInputAuditReviewSettings(db, config))
+			user := model.User{Username: "audit-settings-root", Role: common.RoleRootUser, Status: common.UserStatusEnabled}
+			require.NoError(t, db.Create(&user).Error)
+			router := gin.New()
+			router.Use(func(c *gin.Context) { c.Set("id", user.Id); c.Set("role", user.Role); c.Set("username", user.Username) })
+			router.PUT("/settings", UpdateInputAuditReviewSettings)
+			router.GET("/settings", GetInputAuditReviewSettings)
+			for _, key := range []string{"test-key", ""} {
+				config.APIKey = key
+				body, err := common.Marshal(config)
+				require.NoError(t, err)
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/settings", bytes.NewReader(body)))
+				require.Equal(t, http.StatusOK, w.Code)
+				saved, err := model.LoadInputAuditReviewSettings(db)
+				require.NoError(t, err)
+				assert.Equal(t, "test-key", saved.APIKey)
+				var stored model.Option
+				require.NoError(t, db.Where(&model.Option{Key: model.InputAuditReviewOption}).First(&stored).Error)
+				assert.NotContains(t, stored.Value, "test-key")
+				w = httptest.NewRecorder()
+				router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/settings", nil))
+				require.Equal(t, http.StatusOK, w.Code)
+				assert.NotContains(t, w.Body.String(), "test-key")
+				assert.Contains(t, w.Body.String(), `"key_configured":true`)
+				assert.Contains(t, w.Body.String(), `"default_system_prompt"`)
+			}
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(`{"clear_api_key":true}`)))
+			require.Equal(t, http.StatusOK, w.Code)
+			saved, err := model.LoadInputAuditReviewSettings(db)
+			require.NoError(t, err)
+			assert.Empty(t, saved.APIKey)
+			assert.Empty(t, saved.KeyEnv)
+			config.APIKey = "key\r\ninvalid"
+			assert.Error(t, config.Validate())
+		})
+	}
+}
+
+func TestInputAuditReviewCredentialDisclosureProof(t *testing.T) {
+	user, _ := setupSecurityEnrollmentTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Option{}))
+	config := model.DefaultInputAuditReviewSettings()
+	config.APIKey = "audit-saved-secret"
+	require.NoError(t, model.SaveInputAuditReviewSettings(model.DB, config))
+	oldPasswordLogin := common.PasswordLoginEnabled
+	common.PasswordLoginEnabled = true
+	t.Cleanup(func() { common.PasswordLoginEnabled = oldPasswordLogin })
+	bundle, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "audit-credential-test")
+	require.NoError(t, err)
+	identity, err := service.ParseAccessToken(bundle.AccessToken)
+	require.NoError(t, err)
+	router := gin.New()
+	router.POST("/credential", middleware.RootAuth(), GetInputAuditReviewCredential)
+	request := func(proof string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/credential", nil)
+		r.Header.Set("Authorization", "Bearer "+bundle.AccessToken)
+		r.Header.Set("X-Security-Proof", proof)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, r)
+		return w
+	}
+	assert.Equal(t, http.StatusForbidden, request("").Code)
+	require.NoError(t, model.DB.Model(user).Update("role", common.RoleRootUser).Error)
+	require.NoError(t, model.PublishUserAuthCache(user.Id))
+	for _, scope := range []string{"", service.VerificationScopeCommunityKeyRead} {
+		proof := ""
+		if scope != "" {
+			proof = issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{Scope: scope}, service.VerificationMethodPassword)
+		}
+		w := request(proof)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.NotContains(t, w.Body.String(), "audit-saved-secret")
+	}
+	input := service.VerificationInput{Scope: service.VerificationScopeInputAuditKeyRead, Method: "password", Password: "enrollment-password"}
+	expired, err := service.VerifySecurityInput(identity, input)
+	require.NoError(t, err)
+	var flow model.AuthFlow
+	require.NoError(t, model.DB.Order("id DESC").First(&flow).Error)
+	require.NoError(t, model.DB.Model(&flow).Update("expires_at", time.Now().Add(-time.Minute)).Error)
+	assert.Equal(t, http.StatusForbidden, request(expired.ProofToken).Code)
+	proof, err := service.VerifySecurityInput(identity, input)
+	require.NoError(t, err)
+	w := request(proof.ProofToken)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+	assert.Contains(t, w.Body.String(), "audit-saved-secret")
+	assert.Equal(t, http.StatusForbidden, request(proof.ProofToken).Code)
+	var logs []model.AuditLog
+	require.NoError(t, model.LOG_DB.Find(&logs).Error)
+	encoded, err := common.Marshal(logs)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "audit-saved-secret")
+	assert.NotContains(t, string(encoded), proof.ProofToken)
 }

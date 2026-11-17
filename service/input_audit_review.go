@@ -106,14 +106,14 @@ func ReviewInputAudit(ctx context.Context, db *gorm.DB, client *http.Client, set
 
 func requestAuditVerdict(ctx context.Context, client *http.Client, s model.InputAuditReviewSettings, text string) (modelReviewVerdict, error) {
 	var verdict modelReviewVerdict
-	key := ""
-	if s.KeyEnv != "" {
+	key := s.APIKey
+	if key == "" && s.KeyEnv != "" {
 		key = os.Getenv(s.KeyEnv)
 		if key == "" {
 			return verdict, errors.New("credential_not_configured")
 		}
 	}
-	payload, err := common.Marshal(map[string]any{"model": s.Model, "stream": false, "messages": []map[string]string{{"role": "system", "content": reviewSystemPrompt + "\nAdministrator policy:\n" + s.Instructions}, {"role": "user", "content": text}}})
+	payload, err := common.Marshal(map[string]any{"model": s.Model, "stream": false, "messages": []map[string]string{{"role": "system", "content": reviewSystemPrompt + "\nAdministrator system prompt:\n" + s.SystemPrompt + "\nAdministrator policy:\n" + s.Instructions}, {"role": "user", "content": text}}})
 	if err != nil {
 		return verdict, errors.New("request_encoding_failed")
 	}

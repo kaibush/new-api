@@ -64,13 +64,14 @@ beforeEach(() => {
   })
   useAuthStore.getState().auth.setUser({ id: 1, username: 'root', role: 100 })
   vi.spyOn(api, 'get').mockImplementation(async (url, config) => {
-    if (String(url).startsWith('/api/user/search'))
-      {return {
+    if (String(url).startsWith('/api/user/search')) {
+      return {
         data: {
           success: true,
           data: { items: [{ id: 4, username: 'alice' }] },
         },
-      }}
+      }
+    }
     if (url === '/api/input-audit/allowlist/history') {
       return { data: { success: true, data: [] } }
     }
@@ -689,7 +690,9 @@ it('incomplete case evidence disables confirmation and renders submitted text sa
     within(form).getByRole('option', { name: 'Confirmed violation' })
   ).toBeDisabled()
   await userEvent.click(
-    within(screen.getByRole('tabpanel', { name: 'Review' })).getByRole('tab', { name: 'Evidence message' })
+    within(screen.getByRole('tabpanel', { name: 'Review' })).getByRole('tab', {
+      name: 'Evidence message',
+    })
   )
   expect(screen.getByText('<script>unsafe</script>')).toBeVisible()
   expect(screen.getByRole('dialog').querySelector('script')).toBeNull()
@@ -788,4 +791,26 @@ it('retained review cases remain reachable from their own paginated and filtered
   await userEvent.click(within(dialog).getByRole('button', { name: 'Review' }))
   await screen.findByText('retained evidence')
   expect(get).toHaveBeenCalledWith('/api/input-audit/cases/8')
+})
+
+it('audit management entries are grouped separately from search actions', async () => {
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <InputAuditViewer />
+    </QueryClientProvider>
+  )
+  const management = await screen.findByRole('navigation', {
+    name: 'Audit management',
+  })
+  expect(
+    within(management).getByRole('button', { name: 'Model review' })
+  ).toBeInTheDocument()
+  expect(
+    within(management).queryByRole('button', { name: 'Search' })
+  ).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Search' })).toBeInTheDocument()
 })
