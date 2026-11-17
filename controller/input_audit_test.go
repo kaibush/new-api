@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -277,6 +278,53 @@ func TestInputAuditRecorderDrainsOnShutdown(t *testing.T) {
 	assert.Equal(t, "pending input", found[0].Content)
 }
 
+func TestInputAuditKeywordDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := inputAuditTestDB(t, dialect)
+			require.NoError(t, db.AutoMigrate(&model.InputAudit{}))
+			rows := []model.InputAudit{
+				{UserId: 1, ContentHash: "one", Content: "中文审计 Hello 100%_! C:\\audit 'quoted'", CreatedAt: 10, RequestId: "one"},
+				{UserId: 2, ContentHash: "two", Content: "中文审计 HELLO 100abcX", CreatedAt: 20, RequestId: "two"},
+				{UserId: 1, ContentHash: "three", Content: "正常消息", CreatedAt: 30, RequestId: "three"},
+			}
+			require.NoError(t, db.Create(&rows).Error)
+			for _, tc := range []struct {
+				name   string
+				filter model.InputAuditFilter
+				offset int
+				limit  int
+				want   []string
+				total  int64
+			}{
+				{"Chinese substring", model.InputAuditFilter{Keyword: "文审"}, 0, 10, []string{"two", "one"}, 2},
+				{"ASCII case and pagination", model.InputAuditFilter{Keyword: "hElLo"}, 1, 1, []string{"one"}, 2},
+				{"combined filters", model.InputAuditFilter{Keyword: "审计", UserId: 1, RequestId: "one", Start: 10, End: 10}, 0, 10, []string{"one"}, 1},
+				{"excluded by time", model.InputAuditFilter{Keyword: "审计", Start: 21}, 0, 10, []string{}, 0},
+				{"literal percent", model.InputAuditFilter{Keyword: "100%"}, 0, 10, []string{"one"}, 1},
+				{"literal underscore", model.InputAuditFilter{Keyword: "_"}, 0, 10, []string{"one"}, 1},
+				{"literal escape", model.InputAuditFilter{Keyword: "!"}, 0, 10, []string{"one"}, 1},
+				{"literal backslash", model.InputAuditFilter{Keyword: "C:\\audit"}, 0, 10, []string{"one"}, 1},
+				{"literal quote", model.InputAuditFilter{Keyword: "'quoted'"}, 0, 10, []string{"one"}, 1},
+				{"SQL text is data", model.InputAuditFilter{Keyword: "' OR 1=1 --"}, 0, 10, []string{}, 0},
+				{"no match", model.InputAuditFilter{Keyword: "不存在"}, 0, 10, []string{}, 0},
+				{"empty keyword", model.InputAuditFilter{}, 0, 10, []string{"three", "two", "one"}, 3},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					found, total, err := model.QueryInputAudits(db, tc.filter, tc.offset, tc.limit)
+					require.NoError(t, err)
+					ids := make([]string, 0, len(found))
+					for _, row := range found {
+						ids = append(ids, row.RequestId)
+					}
+					assert.Equal(t, tc.want, ids)
+					assert.Equal(t, tc.total, total)
+				})
+			}
+		})
+	}
+}
+
 func TestInputAuditRecorderDeduplicationFailureAndOverflow(t *testing.T) {
 	db := inputAuditTestDB(t, "sqlite")
 	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.InputAudit{}))
@@ -334,7 +382,7 @@ func TestInputAuditAPIRequiresRootAndValidFilters(t *testing.T) {
 	router.ServeHTTP(response, request)
 	assert.Equal(t, http.StatusForbidden, response.Code)
 	require.NoError(t, model.DB.Model(user).Update("role", common.RoleRootUser).Error)
-	for _, path := range []string{"/api/input-audit?user_id=-1", "/api/input-audit?page_size=-1", "/api/input-audit?start_timestamp=10&end_timestamp=9"} {
+	for _, path := range []string{"/api/input-audit?user_id=-1", "/api/input-audit?page_size=-1", "/api/input-audit?start_timestamp=10&end_timestamp=9", "/api/input-audit?keyword=" + url.QueryEscape(strings.Repeat("审", 257)), "/api/input-audit?keyword=%FF", "/api/input-audit?keyword=%00"} {
 		request = httptest.NewRequest(http.MethodGet, path, nil)
 		request.Header.Set("Authorization", "Bearer "+token)
 		response = httptest.NewRecorder()
@@ -346,6 +394,27 @@ func TestInputAuditAPIRequiresRootAndValidFilters(t *testing.T) {
 	response = httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 	assert.Equal(t, http.StatusOK, response.Code)
+	require.NoError(t, model.DB.Create(&[]model.InputAudit{
+		{UserId: user.Id, ContentHash: "matching", Content: "中文审计", CreatedAt: 10},
+		{UserId: user.Id, ContentHash: "other", Content: "正常内容", CreatedAt: 10},
+	}).Error)
+	request = httptest.NewRequest(http.MethodGet, "/api/input-audit?keyword="+url.QueryEscape(" 审计 "), nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code)
+	var result struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Items []model.InputAudit `json:"items"`
+			Total int64              `json:"total"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+	assert.True(t, result.Success)
+	assert.EqualValues(t, 1, result.Data.Total)
+	require.Len(t, result.Data.Items, 1)
+	assert.Equal(t, "中文审计", result.Data.Items[0].Content)
 
 	// Message bodies and collection controls are restricted to browser sessions,
 	// even when the token owner is root and has broad API grants.

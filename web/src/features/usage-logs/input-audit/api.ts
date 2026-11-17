@@ -60,6 +60,7 @@ export interface InputAuditFilters {
   page_size: number
   user_id?: number
   request_id?: string
+  keyword?: string
   start_timestamp?: number
   end_timestamp?: number
 }

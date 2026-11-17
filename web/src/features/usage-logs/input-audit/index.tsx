@@ -58,6 +58,7 @@ export function InputAuditViewer() {
   })
   const [userId, setUserId] = useState('')
   const [requestId, setRequestId] = useState('')
+  const [keyword, setKeyword] = useState('')
   const [start, setStart] = useState<Date>()
   const [end, setEnd] = useState<Date>()
   const [invalid, setInvalid] = useState(false)
@@ -110,7 +111,9 @@ export function InputAuditViewer() {
         (!/^\d+$/.test(userId) ||
           !Number.isSafeInteger(Number(userId)) ||
           Number(userId) < 1)) ||
-      (start && end && start > end)
+      (start && end && start > end) ||
+      [...keyword].length > 256 ||
+      keyword.includes('\u0000')
     ) {
       setInvalid(true)
       return
@@ -121,6 +124,7 @@ export function InputAuditViewer() {
       page_size: filters.page_size,
       user_id: userId ? Number(userId) : undefined,
       request_id: requestId || undefined,
+      keyword: keyword.trim() || undefined,
       start_timestamp: start ? Math.floor(start.getTime() / 1000) : undefined,
       end_timestamp: end ? Math.floor(end.getTime() / 1000) : undefined,
     }
@@ -147,6 +151,11 @@ export function InputAuditViewer() {
           <p className='text-muted-foreground text-xs'>
             {t(
               'Short messages are stored in full. Long messages retain the beginning and end. Time is when the gateway received the first matching input.'
+            )}
+          </p>
+          <p className='text-muted-foreground text-xs'>
+            {t(
+              'Keyword search matches stored message text. Omitted text cannot be searched.'
             )}
           </p>
           {status.data && (
@@ -183,6 +192,24 @@ export function InputAuditViewer() {
             table={table}
             primaryFilters={
               <>
+                <LogsFilterField wide>
+                  <LogsFilterInput
+                    aria-label={t('Message keyword')}
+                    placeholder={t('Message keyword')}
+                    maxLength={256}
+                    value={keyword}
+                    onChange={(event) => setKeyword(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (
+                        event.key === 'Enter' &&
+                        !event.nativeEvent.isComposing &&
+                        !query.isFetching
+                      ) {
+                        search()
+                      }
+                    }}
+                  />
+                </LogsFilterField>
                 <LogsFilterField>
                   <LogsFilterInput
                     aria-label={t('User ID')}
@@ -212,12 +239,15 @@ export function InputAuditViewer() {
                 </LogsFilterField>
               </>
             }
-            hasActiveFilters={!!userId || !!requestId || !!start || !!end}
+            hasActiveFilters={
+              !!keyword || !!userId || !!requestId || !!start || !!end
+            }
             onSearch={search}
             searchLoading={query.isFetching}
             onReset={() => {
               setUserId('')
               setRequestId('')
+              setKeyword('')
               setStart(undefined)
               setEnd(undefined)
               setInvalid(false)

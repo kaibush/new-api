@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -160,6 +161,7 @@ func PersistInputAudits(db *gorm.DB, rows []InputAudit, now int64) error {
 type InputAuditFilter struct {
 	UserId    int
 	RequestId string
+	Keyword   string
 	Start     int64
 	End       int64
 }
@@ -172,6 +174,12 @@ func QueryInputAudits(db *gorm.DB, filter InputAuditFilter, offset, limit int) (
 	}
 	if filter.RequestId != "" {
 		query = query.Where("request_id = ?", filter.RequestId)
+	}
+	if filter.Keyword != "" {
+		// Treat SQL wildcard characters as literal message text. LOWER supports
+		// ASCII case-insensitive search across all three database engines.
+		keyword := strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(strings.ToLower(filter.Keyword))
+		query = query.Where("LOWER(content) LIKE ? ESCAPE '!'", "%"+keyword+"%")
 	}
 	if filter.Start > 0 {
 		query = query.Where("created_at >= ?", filter.Start)

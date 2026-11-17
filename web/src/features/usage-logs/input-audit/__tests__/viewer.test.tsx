@@ -180,7 +180,7 @@ it('mobile message lists fill the available height and scroll inside the page', 
 })
 
 it.each([false, true])(
-  'next and previous pages keep the user filter (mobile=%s)',
+  'pagination preserves user and keyword filters and a new search returns to page one (mobile=%s)',
   async (mobile) => {
     const matchMedia = window.matchMedia.bind(window)
     vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
@@ -197,10 +197,13 @@ it.each([false, true])(
     fireEvent.change(screen.getByRole('textbox', { name: 'User ID' }), {
       target: { value: '4' },
     })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message keyword' }), {
+      target: { value: '审计' },
+    })
     await userEvent.click(screen.getByRole('button', { name: 'Search' }))
     await waitFor(() =>
       expect(api.get).toHaveBeenCalledWith('/api/input-audit', {
-        params: expect.objectContaining({ user_id: 4, p: 1 }),
+        params: expect.objectContaining({ user_id: 4, keyword: '审计', p: 1 }),
       })
     )
     const next = await screen.findByRole('button', { name: 'Go to next page' })
@@ -220,7 +223,12 @@ it.each([false, true])(
     await userEvent.click(next)
     await waitFor(() =>
       expect(api.get).toHaveBeenCalledWith('/api/input-audit', {
-        params: expect.objectContaining({ user_id: 4, p: 2, page_size: 20 }),
+        params: expect.objectContaining({
+          user_id: 4,
+          keyword: '审计',
+          p: 2,
+          page_size: 20,
+        }),
       })
     )
     await screen.findByText('page-2-user (#4)')
@@ -230,7 +238,12 @@ it.each([false, true])(
     await screen.findByText('page-3-user (#4)')
     expect(next).toBeDisabled()
     expect(api.get).toHaveBeenLastCalledWith('/api/input-audit', {
-      params: expect.objectContaining({ user_id: 4, p: 3, page_size: 20 }),
+      params: expect.objectContaining({
+        user_id: 4,
+        keyword: '审计',
+        p: 3,
+        page_size: 20,
+      }),
     })
     if (mobile) await screen.findByText('3 / 3')
     await userEvent.click(
@@ -247,10 +260,64 @@ it.each([false, true])(
       ).toBeDisabled()
     )
     expect(api.get).toHaveBeenLastCalledWith('/api/input-audit', {
-      params: expect.objectContaining({ user_id: 4, p: 1, page_size: 20 }),
+      params: expect.objectContaining({
+        user_id: 4,
+        keyword: '审计',
+        p: 1,
+        page_size: 20,
+      }),
+    })
+    await userEvent.click(next)
+    await screen.findByText('page-2-user (#4)')
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Search' })).toBeEnabled()
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Search' }))
+    await screen.findByText('alice (#4)')
+    expect(api.get).toHaveBeenCalledWith('/api/input-audit', {
+      params: expect.objectContaining({ keyword: '审计', p: 1 }),
     })
   }
 )
+
+it('message keyword drafts only apply on search, trim outer spaces, combine with request filters and clear on reset', async () => {
+  render(
+    <QueryClientProvider client={client}>
+      <InputAuditViewer />
+    </QueryClientProvider>
+  )
+  await screen.findByText('alice (#4)')
+  const keyword = screen.getByRole('textbox', { name: 'Message keyword' })
+  fireEvent.change(keyword, { target: { value: '  100%_审计  ' } })
+  fireEvent.change(screen.getByRole('textbox', { name: 'Request ID' }), {
+    target: { value: 'request-a' },
+  })
+  expect(api.get).not.toHaveBeenCalledWith('/api/input-audit', {
+    params: expect.objectContaining({ keyword: expect.any(String) }),
+  })
+  fireEvent.keyDown(keyword, { key: 'Enter', isComposing: true })
+  expect(api.get).not.toHaveBeenCalledWith('/api/input-audit', {
+    params: expect.objectContaining({ keyword: expect.any(String) }),
+  })
+  await userEvent.click(keyword)
+  await userEvent.keyboard('{Enter}')
+  await waitFor(() =>
+    expect(api.get).toHaveBeenCalledWith('/api/input-audit', {
+      params: expect.objectContaining({
+        keyword: '100%_审计',
+        request_id: 'request-a',
+        p: 1,
+      }),
+    })
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Reset' }))
+  expect(keyword).toHaveValue('')
+  await waitFor(() =>
+    expect(api.get).toHaveBeenLastCalledWith('/api/input-audit', {
+      params: { p: 1, page_size: 20 },
+    })
+  )
+})
 
 it('settings remain open after a rejected save and close after a successful retry', async () => {
   const put = vi

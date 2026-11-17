@@ -4,7 +4,9 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -13,7 +15,12 @@ import (
 )
 
 func GetInputAudits(c *gin.Context) {
-	filter := model.InputAuditFilter{RequestId: c.Query("request_id")}
+	keyword := c.Query("keyword")
+	if !utf8.ValidString(keyword) || utf8.RuneCountInString(keyword) > 256 || strings.ContainsRune(keyword, '\x00') {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid audit filters"})
+		return
+	}
+	filter := model.InputAuditFilter{RequestId: c.Query("request_id"), Keyword: strings.TrimSpace(keyword)}
 	values := []struct {
 		key    string
 		target *int64
