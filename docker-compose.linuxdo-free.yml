@@ -9,6 +9,7 @@ services:
     ports:
       - "127.0.0.1:${NEW_API_PORT:-3001}:3000"
     environment:
+      ERROR_LOG_ENABLED: "true"
       SQL_DSN: "newapi_linuxdo_free:${MYSQL_PASSWORD:?Set a dedicated database password}@tcp(new-api-mysql:3306)/new_api_linuxdo_free?charset=utf8mb4&parseTime=True&loc=Local"
       SESSION_SECRET: "${SESSION_SECRET:?Set an independent session secret}"
       CRYPTO_SECRET: "${CRYPTO_SECRET:?Set an independent crypto secret}"
@@ -28,6 +29,7 @@ services:
       - ./logs:/app/logs
     networks:
       - mysql
+    stop_grace_period: 130s
     healthcheck:
       test: [CMD-SHELL, 'wget -q -O - http://127.0.0.1:3000/api/status | grep -q ''"success":true''']
       interval: 30s
