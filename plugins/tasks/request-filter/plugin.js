@@ -6,11 +6,17 @@ export const meta = {
     en: "Rejects requests whose text matches a keyword or regular expression",
     zh: "拒绝文本命中关键词或正则表达式的请求",
   },
-  version: "1.0.0",
+  version: "1.0.1",
   author: { name: "QuantumNous" },
   configSchema: {
     type: "object",
     properties: {
+      normalizeText: {
+        type: "boolean",
+        title: { en: "Normalize text", zh: "规范化文本" },
+        description: { en: "Normalize full-width characters and remove invisible separators", zh: "规范化全角字符并移除不可见分隔符" },
+        default: false,
+      },
       rules: {
         type: "array",
         title: { en: "Rules", zh: "规则" },
@@ -349,6 +355,9 @@ function hasKeywords(config) {
 // firstMatch returns the id of the first rule that matches one of texts,
 // "keywords" when only the keyword list does, or "".
 function firstMatch(config, rules, texts) {
+  if (config.normalizeText === true) {
+    texts = texts.map((text) => text.normalize("NFKC").replace(/[\u200B-\u200F\u2060\uFEFF]/g, ""));
+  }
   if (rules.length > 0) {
     const lowered = texts.map((text) => text.toLowerCase());
     for (const rule of rules) {

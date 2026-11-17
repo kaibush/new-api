@@ -1290,6 +1290,23 @@ func TestRequestFilterLegacyCheckedText(t *testing.T) {
 	assert.Nil(t, result.Rejected)
 }
 
+func TestRequestFilterTextNormalization(t *testing.T) {
+	t.Run("optional normalization applies to regexes and keyword lists", func(t *testing.T) {
+		for _, config := range []map[string]any{
+			{"keywords": "falcon", "normalizeText": true},
+			{"rules": []map[string]any{{"id": "falcon", "type": "regex", "pattern": "falcon"}}, "normalizeText": true},
+		} {
+			body := `{"messages":[{"role":"user","content":"ｆａｌ\u200bｃｏｎ"}]}`
+			result := dryRunBuiltIn(t, "request-filter", config, body)
+			require.NotNil(t, result.Rejected)
+			assert.Equal(t, "request_filtered", result.Rejected.Code)
+			assert.JSONEq(t, body, string(result.Body))
+			config["normalizeText"] = false
+			assert.Nil(t, dryRunBuiltIn(t, "request-filter", config, body).Rejected)
+		}
+	})
+}
+
 // A text file read whole takes the redacted text. A PDF that holds a match
 // cannot be rewritten: with the check before sending on it rejects the
 // request, off it goes as it is and the record says so.
