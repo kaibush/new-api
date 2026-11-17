@@ -508,6 +508,16 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const showAdminIp =
     !!props.log.ip && (showTiming || (props.isAdmin && isTopup))
   const adminInfo = other?.admin_info
+  const blockedPluginSteps = props.isAdmin
+    ? (adminInfo?.request_plugins?.filter(
+        (step) => step.action === 'reject' || step.action === 'stop'
+      ) ?? [])
+    : []
+  const otherPluginSteps = props.isAdmin
+    ? (adminInfo?.request_plugins?.filter(
+        (step) => step.action !== 'reject' && step.action !== 'stop'
+      ) ?? [])
+    : []
   const topupAuditFields =
     isTopup && props.isAdmin && adminInfo
       ? ([
@@ -653,6 +663,16 @@ export function DetailsDialog(props: DetailsDialogProps) {
       bodyClassName='pr-2 sm:pr-4'
     >
       <div className='w-full max-w-full min-w-0 space-y-2.5 overflow-x-hidden py-1 sm:space-y-3'>
+        {blockedPluginSteps.length > 0 && (
+          <DetailSection
+            icon={<AlertTriangle className='size-3.5' aria-hidden='true' />}
+            label={t('Request blocking details')}
+            variant='danger'
+          >
+            <RequestPluginAdminSteps steps={blockedPluginSteps} />
+          </DetailSection>
+        )}
+
         {/* Overview section - key identifiers */}
         <div className='min-w-0 space-y-1'>
           {props.log.request_id && (
@@ -917,9 +937,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
           </DetailSection>
         ) : null}
 
-        {props.isAdmin && adminInfo?.request_plugins?.length ? (
+        {otherPluginSteps.length > 0 ? (
           <DetailSection label={t('Request processing steps')}>
-            <RequestPluginAdminSteps steps={adminInfo.request_plugins} />
+            <RequestPluginAdminSteps steps={otherPluginSteps} />
           </DetailSection>
         ) : null}
 

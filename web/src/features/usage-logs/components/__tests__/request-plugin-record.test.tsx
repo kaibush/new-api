@@ -22,7 +22,7 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, describe, expect, test, vi } from 'vitest'
 
@@ -155,11 +155,11 @@ function withClient(children: React.ReactNode) {
   )
 }
 
-function renderDetails(isAdmin: boolean) {
+function renderDetails(isAdmin: boolean, log: UsageLog = makeLog()) {
   render(
     withClient(
       <DetailsDialog
-        log={makeLog()}
+        log={log}
         isAdmin={isAdmin}
         isRoot={false}
         open
@@ -182,6 +182,115 @@ function ModelCell(props: { other?: LogOtherData }) {
   if (!cell) throw new Error('The log list must have a model column')
   return <>{flexRender(cell.column.columnDef.cell, cell.getContext())}</>
 }
+
+const rejection: LogOtherData = {
+  request_plugins: [
+    {
+      plugin: 'request-filter',
+      name: 'Request filter',
+      stage: 'ingress',
+      rejected: { code: 'request_filtered' },
+    },
+  ],
+  admin_info: {
+    request_plugins: [
+      {
+        instance: 'rp_keywords',
+        name: 'High-risk keyword filter',
+        plugin: 'request-filter',
+        stage: 'ingress',
+        action: 'continue',
+      },
+      {
+        instance: 'rp_filter',
+        name: 'Prompt filter',
+        plugin: 'request-filter',
+        stage: 'ingress',
+        action: 'reject',
+        rule: 'jailbreak-mode-command',
+      },
+    ],
+  },
+}
+
+test('a rejected request opens with the rejecting instance and rule before identifiers and passing steps', () => {
+  renderDetails(true, { ...makeLog(rejection), type: 5 })
+  const dialog = screen.getByRole('dialog')
+  const details = within(dialog)
+  const blocked = details.getByText('Request blocking details')
+  const identifier = details.getByText('Request ID')
+  expect(
+    blocked.compareDocumentPosition(identifier) &
+      Node.DOCUMENT_POSITION_FOLLOWING
+  ).toBeTruthy()
+  const blockingSection = blocked.parentElement
+  if (!blockingSection) throw new Error('Blocking details must have a section')
+  expect(within(blockingSection).getByText('Blocked')).toBeVisible()
+  expect(
+    within(blockingSection).getByText('Prompt filter (rp_filter)')
+  ).toBeVisible()
+  expect(within(blockingSection).getByText('Matched rule')).toBeVisible()
+  expect(details.getAllByText('jailbreak-mode-command')).toHaveLength(1)
+  expect(
+    within(blockingSection).queryByText(
+      'High-risk keyword filter (rp_keywords)'
+    )
+  ).toBeNull()
+  expect(details.getByText('Continue')).toBeVisible()
+})
+
+test('the log owner cannot see the rejecting instance or matched rule in blocking details', () => {
+  renderDetails(false, { ...makeLog(rejection), type: 5 })
+  expect(screen.queryByText('Request blocking details')).toBeNull()
+  expect(screen.queryByText('Prompt filter (rp_filter)')).toBeNull()
+  expect(screen.queryByText('jailbreak-mode-command')).toBeNull()
+  expect(screen.getByText('Blocked (code: request_filtered)')).toBeVisible()
+})
+
+test.each([
+  {
+    action: 'stop',
+    stage: 'reply',
+    rule: 'reply-rule',
+    findings: [
+      { rule: 'reply-rule', count: 1 },
+      { rule: 'other-rule', count: 1 },
+    ],
+    result: 'Stopped',
+    rules: 'reply-rule, other-rule',
+  },
+  {
+    action: 'reject',
+    stage: 'ingress',
+    result: 'Blocked',
+    rules: 'Rule not recorded',
+  },
+])(
+  'blocking details show $result and $rules when the rule comes from findings or was not recorded',
+  (scenario) => {
+    renderDetails(true, {
+      ...makeLog({
+        admin_info: {
+          request_plugins: [
+            {
+              instance: 'rp_filter',
+              plugin: 'request-filter',
+              action: scenario.action,
+              stage: scenario.stage,
+              rule: scenario.rule,
+              findings: scenario.findings,
+            },
+          ],
+        },
+      }),
+      type: 5,
+    })
+    expect(screen.getByText('Request blocking details')).toBeVisible()
+    expect(screen.getByText(scenario.result)).toBeVisible()
+    expect(screen.getByText(scenario.rules)).toBeVisible()
+    expect(screen.queryByText('Request processing steps')).toBeNull()
+  }
+)
 
 describe('request processing in the log details', () => {
   test('each plugin shows its stage, notice, changes, headers, effort, media and findings', () => {

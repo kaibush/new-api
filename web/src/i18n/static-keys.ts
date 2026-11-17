@@ -19,6 +19,13 @@ For commercial licensing, please contact support@quantumnous.com
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
+  // Request plugin execution results in administrator log details.
+  'Continue',
+  'Blocked',
+  'Stopped',
+  'Error',
+  'Not checked',
+  'Allowlist exemption',
   'Select a valid console page.',
   // Database maintenance API errors and task labels.
   'A database cleanup is already running. Wait for it to finish.',

@@ -79,6 +79,16 @@ const FINDING_CATEGORY_LABELS: Record<string, string> = {
   custom: 'Custom rule',
 }
 
+const ADMIN_ACTION_LABELS: Record<string, string> = {
+  continue: 'Continue',
+  pass: 'Continue',
+  reject: 'Blocked',
+  stop: 'Stopped',
+  fail: 'Error',
+  unchecked: 'Not checked',
+  bypass: 'Allowlist exemption',
+}
+
 const IMAGE_FORMAT_NAMES: Record<string, string> = {
   'image/png': 'PNG',
   'image/jpeg': 'JPEG',
@@ -452,6 +462,7 @@ export function RequestPluginAdminSteps(props: {
           ),
         ]
         const error = step.error_class || step.error
+        const blocked = step.action === 'reject' || step.action === 'stop'
         return (
           <div
             key={id}
@@ -463,6 +474,28 @@ export function RequestPluginAdminSteps(props: {
                 step.name ? `${step.name} (${step.instance})` : step.instance
               }
             />
+            {step.action && (
+              <DetailRow
+                label={t('Result')}
+                value={
+                  <StatusBadge
+                    variant={blocked ? 'danger' : 'neutral'}
+                    label={t(ADMIN_ACTION_LABELS[step.action] ?? step.action)}
+                    size='sm'
+                    copyable={false}
+                  />
+                }
+              />
+            )}
+            {(blocked || rules.length > 0) && (
+              <DetailRow
+                label={t('Matched rule')}
+                value={
+                  rules.length > 0 ? rules.join(', ') : t('Rule not recorded')
+                }
+                mono
+              />
+            )}
             <DetailRow label={t('Plugin')} value={step.plugin} mono />
             {step.version && (
               <DetailRow label={t('Version')} value={step.version} mono />
@@ -487,9 +520,6 @@ export function RequestPluginAdminSteps(props: {
               />
             )}
             {error && <DetailRow label={t('Error')} value={error} mono />}
-            {rules.length > 0 && (
-              <DetailRow label={t('Rules')} value={rules.join(', ')} mono />
-            )}
           </div>
         )
       })}
