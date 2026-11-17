@@ -64,6 +64,33 @@ type BatchTaskResult struct {
 // 打破 service -> relay -> relay/channel -> service 的循环依赖。
 var GetTaskAdaptorFunc func(platform constant.TaskPlatform) TaskPollingAdaptor
 
+// ReportTaskFunc is injected by main: it hands a task that reached its final
+// state to the request plugins' report hooks (requestplugin.ReportTask).
+var ReportTaskFunc func(task *model.Task)
+
+// reportFinalTask reports a task once, after its final state is stored and
+// settled. A task no instance may report costs nothing.
+func reportFinalTask(task *model.Task) {
+	if ReportTaskFunc != nil && task.PrivateData.RequestPlugins != nil {
+		ReportTaskFunc(task)
+	}
+}
+
+// reportFailedTasks reports tasks failed in one bulk update with reason.
+func reportFailedTasks(tasks []*model.Task, reason string) {
+	now := time.Now().Unix()
+	for _, task := range tasks {
+		if task == nil || task.PrivateData.RequestPlugins == nil {
+			continue
+		}
+		task.Status, task.Progress, task.FailReason = model.TaskStatusFailure, "100%", reason
+		if task.FinishTime == 0 {
+			task.FinishTime = now
+		}
+		reportFinalTask(task)
+	}
+}
+
 // sweepTimedOutTasks 在主轮询之前独立清理超时任务。
 // 每次最多处理 100 条，剩余的下个周期继续处理。
 // 使用 per-task CAS (UpdateWithStatus) 防止覆盖被正常轮询已推进的任务。
@@ -111,6 +138,7 @@ func sweepTimedOutTasks(ctx context.Context) {
 		if !isLegacy && task.Quota != 0 {
 			RefundTaskQuota(ctx, task, reason)
 		}
+		reportFinalTask(task)
 	}
 
 	if timedOutCount > 0 {
@@ -166,11 +194,13 @@ func RunTaskPollingOnce(ctx context.Context, report func(processed, total int)) 
 		taskChannelM := make(map[int][]string)
 		taskM := make(map[string]*model.Task)
 		nullTaskIds := make([]int64, 0)
+		var nullTasks []*model.Task
 		for _, task := range tasks {
 			upstreamID := task.GetUpstreamTaskID()
 			if upstreamID == "" {
 				// 统计失败的未完成任务
 				nullTaskIds = append(nullTaskIds, task.ID)
+				nullTasks = append(nullTasks, task)
 				continue
 			}
 			taskM[upstreamID] = task
@@ -185,7 +215,8 @@ func RunTaskPollingOnce(ctx context.Context, report func(processed, total int)) 
 			if err != nil {
 				logger.LogError(ctx, fmt.Sprintf("Fix null task_id task error: %v", err))
 			} else {
-				logger.LogInfo(ctx, fmt.Sprintf("Fix null task_id task success: %v", nullTaskIds))
+				logger.LogInfo(ctx, common.LogText("Fix null task_id task success: %v", nullTaskIds))
+				reportFailedTasks(nullTasks, "")
 			}
 		}
 		if len(taskChannelM) == 0 {
@@ -259,7 +290,9 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 			"progress":    "100%",
 		})
 		if err != nil {
-			common.SysLog(fmt.Sprintf("UpdateSunoTask error: %v", err))
+			common.SysLog(common.LogText("UpdateSunoTask error: %v", err))
+		} else {
+			reportFailedTasks(bulkFailedTasks(taskIds, taskM), "Failed to get the channel information. Please contact the administrator")
 		}
 		return err
 	}
@@ -304,11 +337,15 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 	if err != nil {
 		return recordPollFailureForTasks(ctx, adaptor, tasks, pollClassHookError, resp.StatusCode, err.Error())
 	}
+	batch := make(map[string]*model.Task, len(tasks))
+	for _, task := range tasks {
+		batch[task.GetUpstreamTaskID()] = task
+	}
 	for upstreamID, responseItem := range responseItems {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		task := taskM[upstreamID]
+		task := batch[upstreamID]
 		if task == nil {
 			logger.LogWarn(ctx, fmt.Sprintf("Batch task response ignored: unknown task_id=%s", upstreamID))
 			continue
@@ -434,7 +471,9 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 			"progress":    "100%",
 		})
 		if errUpdate != nil {
-			common.SysLog(fmt.Sprintf("UpdateVideoTask error: %v", errUpdate))
+			common.SysLog(common.LogText("UpdateVideoTask error: %v", errUpdate))
+		} else {
+			reportFailedTasks(bulkFailedTasks(taskIds, taskM), "Failed to get the channel information. Please contact the administrator")
 		}
 		return fmt.Errorf("CacheGetChannel failed: %w", err)
 	}
@@ -632,6 +671,16 @@ func finalizeTerminalTask(ctx context.Context, adaptor TaskPollingAdaptor, task 
 	if task.Status == model.TaskStatusFailure && !billingSettled && task.Quota != 0 {
 		RefundTaskQuota(ctx, task, task.FailReason)
 	}
+	reportFinalTask(task)
+}
+
+// bulkFailedTasks are the tasks of upstream ids a bulk update failed.
+func bulkFailedTasks(upstreamIDs []string, tasks map[string]*model.Task) []*model.Task {
+	failed := make([]*model.Task, 0, len(upstreamIDs))
+	for _, upstreamID := range upstreamIDs {
+		failed = append(failed, tasks[upstreamID])
+	}
+	return failed
 }
 
 func redactVideoResponseBody(body []byte) []byte {

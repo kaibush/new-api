@@ -132,6 +132,30 @@ type taskPluginListItem struct {
 	InFlightCount int64          `json:"in_flight_count"`
 }
 
+// taskPluginParts advertises only capabilities supported by this host.
+// Provider and credential hooks are reserved for a future host integration.
+type taskPluginParts struct {
+	Task           bool     `json:"task"`
+	Provider       bool     `json:"provider"`
+	Transform      bool     `json:"transform"`
+	TransformHooks []string `json:"transform_hooks"`
+	Login          bool     `json:"login"`
+	Refresh        bool     `json:"refresh"`
+}
+
+// loadedTaskPluginParts reads the parts of a plugin the runtime holds from its
+// manifest and its exports.
+func loadedTaskPluginParts(plugin *jsplugin.LoadedPlugin) taskPluginParts {
+	return taskPluginParts{
+		Task:           plugin.Meta.HasTaskPart(),
+		Provider:       false,
+		Transform:      plugin.Meta.HasTransformPart(),
+		TransformHooks: append([]string{}, plugin.TransformHooks()...),
+		Login:          false,
+		Refresh:        false,
+	}
+}
+
 type taskPluginRebuildOutcome struct {
 	Status           string    `json:"status"`
 	AttemptedAt      time.Time `json:"attempted_at"`
@@ -664,8 +688,18 @@ func GetTaskPluginOptions(c *gin.Context) {
 			if layer == 1 && setting.IsTaskPluginFactoryDisabled(meta.Key) {
 				continue
 			}
-			if _, ok := jsplugin.DefaultRegistry.Get(meta.Key); !ok {
-				continue
+			loaded, ok := jsplugin.DefaultRegistry.Get(meta.Key)
+			switchedOff := !ok
+			if switchedOff {
+				// With the master switch off, a plugin's request processing
+				// part still runs; its channel parts do not.
+				if loaded, ok = jsplugin.DefaultRegistry.GetIgnoringMasterSwitch(meta.Key); !ok || !loaded.Meta.HasTransformPart() {
+					continue
+				}
+			}
+			parts := loadedTaskPluginParts(loaded)
+			if switchedOff {
+				parts.Task, parts.Provider, parts.Login, parts.Refresh = false, false, false, false
 			}
 			seen[meta.Key] = true
 			hasIcon := false
@@ -676,21 +710,34 @@ func GetTaskPluginOptions(c *gin.Context) {
 			} else {
 				_, _, hasIcon = plugins.Icon(meta.Key)
 			}
-			options = append(options, gin.H{
-				"key":           meta.Key,
-				"name":          meta.Name,
-				"description":   meta.Description,
-				"icon":          meta.Icon,
-				"hasIcon":       hasIcon,
-				"baseUrl":       meta.BaseURL,
-				"sortPriority":  meta.SortPriority,
-				"website":       meta.Website,
-				"models":        meta.Models,
-				"channelTypes":  meta.ChannelTypes,
-				"upstreams":     meta.Upstreams,
-				"usageSchema":   meta.UsageSchema,
-				"usageProfiles": meta.UsageProfiles,
-			})
+			option := gin.H{
+				"key":             meta.Key,
+				"name":            meta.Name,
+				"description":     meta.Description,
+				"icon":            meta.Icon,
+				"hasIcon":         hasIcon,
+				"baseUrl":         meta.BaseURL,
+				"sortPriority":    meta.SortPriority,
+				"website":         meta.Website,
+				"models":          meta.Models,
+				"channelTypes":    meta.ChannelTypes,
+				"upstreams":       meta.Upstreams,
+				"usageSchema":     meta.UsageSchema,
+				"usageProfiles":   meta.UsageProfiles,
+				"configSchema":    meta.ConfigSchema,
+				"task":            parts.Task,
+				"provider":        parts.Provider,
+				"transform":       parts.Transform,
+				"transform_hooks": parts.TransformHooks,
+				"samples":         append([]jsplugin.Sample{}, meta.Samples...),
+				"optional":        meta.Optional,
+				"login":           parts.Login,
+				"refresh":         parts.Refresh,
+			}
+			if meta.NameI18n != nil {
+				option["name_i18n"] = meta.NameI18n
+			}
+			options = append(options, option)
 		}
 	}
 	sort.Slice(options, func(i, j int) bool {

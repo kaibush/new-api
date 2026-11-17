@@ -407,9 +407,6 @@ func TestSharedTaskBillingExpressionSelectionAndFrozenSettlement(t *testing.T) {
 	}
 }
 
-// Issue #7478: task APIs answer 201 Created or 202 Accepted on submission.
-// Every 2xx must reach parseSubmitResponse; only other statuses are upstream
-// failures that keep the upstream status and body.
 func TestRelayTaskSubmitAcceptsAnySuccessfulUpstreamStatus(t *testing.T) {
 	service.InitHttpClient()
 	const source = `

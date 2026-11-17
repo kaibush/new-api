@@ -16,11 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { TaskPluginOption } from '@/features/channels/api'
 import { api, type ApiRequestConfig } from '@/lib/api'
 import { createServerError } from '@/lib/server-error-message'
 
 import type {
   ApiResponse,
+  RequestPluginDryRunRequest,
+  RequestPluginDryRunResult,
+  RequestPluginInstance,
   MarketplaceSource,
   TaskPluginDetail,
   TaskPluginListItem,
@@ -199,4 +203,39 @@ export async function setTaskPluginEnabledOption(enabled: boolean) {
     mutationConfig
   )
   requireSuccess(response.data)
+}
+/** The request processing plugins an instance can use. */
+export async function listRequestPluginOptions() {
+  const response = await api.get<ApiResponse<TaskPluginOption[]>>(
+    '/api/task_plugin_options'
+  )
+  return requireSuccess(response.data).filter((option) => option.transform)
+}
+
+export async function listRequestPluginInstances() {
+  const response = await api.get<
+    ApiResponse<{ instances: RequestPluginInstance[] | null }>
+  >('/api/request_plugin/instances')
+  return requireSuccess(response.data).instances ?? []
+}
+
+/** Replaces the whole list; its order is the order instances run in. */
+export async function saveRequestPluginInstances(
+  instances: RequestPluginInstance[]
+) {
+  const response = await api.put<
+    ApiResponse<{ instances: RequestPluginInstance[] | null }>
+  >('/api/request_plugin/instances', { instances }, mutationConfig)
+  return requireSuccess(response.data).instances ?? []
+}
+
+export async function dryRunRequestPlugins(
+  request: RequestPluginDryRunRequest
+) {
+  const response = await api.post<ApiResponse<RequestPluginDryRunResult>>(
+    '/api/request_plugin/dry_run',
+    request,
+    mutationConfig
+  )
+  return requireSuccess(response.data)
 }

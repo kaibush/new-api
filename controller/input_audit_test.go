@@ -15,8 +15,12 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/request_plugin_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -374,4 +378,57 @@ func TestInputAuditAPIRequiresRootAndValidFilters(t *testing.T) {
 		router.ServeHTTP(response, request)
 		assert.Equal(t, http.StatusUnauthorized, response.Code)
 	}
+}
+
+func TestInputAuditRetainsOriginalBeforePluginRedactionAndRejection(t *testing.T) {
+	db := inputAuditTestDB(t, "sqlite")
+	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.InputAudit{}))
+	previousDB, previousErrorLog := model.DB, constant.ErrorLogEnabled
+	previousInstances, err := common.Marshal(request_plugin_setting.GetInstances())
+	require.NoError(t, err)
+	model.DB, constant.ErrorLogEnabled = db, false
+	t.Cleanup(func() {
+		model.DB, constant.ErrorLogEnabled = previousDB, previousErrorLog
+		require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: string(previousInstances)}))
+	})
+	require.NoError(t, service.StartInputAuditRecorder())
+	recorder := service.CurrentInputAuditRecorder()
+	settings := model.DefaultInputAuditSettings()
+	settings.Enabled = true
+	require.NoError(t, recorder.UpdateSettings(context.Background(), settings))
+	t.Cleanup(func() {
+		settings.Enabled = false
+		require.NoError(t, recorder.UpdateSettings(context.Background(), settings))
+		service.StopInputAuditRecorder(context.Background())
+	})
+	source := `export const meta = {apiVersion:1,key:"audit-retention",name:"Audit retention",version:"1.0.0",author:{name:"Test"}};
+ export function ingress(ctx, req) {
+  if (ctx.config.reject) return {action:"reject",code:"audit.blocked",message:req.body.messages[0].content};
+  return {action:"continue",effects:[{type:"json.patch",ops:[{op:"replace",path:"/messages/0/content",value:"REDACTED"}]}]};
+ }`
+	plugin, err := jsplugin.DefaultRegistry.Register(source, jsplugin.Options{})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, jsplugin.DefaultRegistry.Unregister(plugin.Meta.Key)) })
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: `[{
+ "id":"redact","name":"Redact","plugin":"audit-retention","enabled":true,"global":true,"config":{}},
+ {"id":"reject","name":"Reject","plugin":"audit-retention","enabled":true,"global":true,"config":{"reject":true}}]`}))
+	response := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(response)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"audit-model","messages":[{"role":"user","content":"original evidence"}]}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	common.SetContextKey(c, constant.ContextKeyUserId, 55)
+	common.SetContextKey(c, constant.ContextKeyOriginalModel, "audit-model")
+	c.Set(common.RequestIdKey, "audit-request")
+	Relay(c, types.RelayFormatOpenAI)
+	assert.Equal(t, http.StatusBadRequest, response.Code)
+	assert.Contains(t, response.Body.String(), "REDACTED")
+	assert.NotContains(t, response.Body.String(), "original evidence")
+	recorder.Flush(context.Background())
+	found, total, err := model.QueryInputAudits(db, model.InputAuditFilter{}, 0, 20)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, total)
+	require.Len(t, found, 1)
+	assert.Equal(t, "original evidence", found[0].Content)
+	assert.Equal(t, "audit-request", found[0].RequestId)
+	assert.Equal(t, 55, found[0].UserId)
 }

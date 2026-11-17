@@ -166,10 +166,13 @@ require (
 )
 
 require (
-	github.com/Calcium-Ion/moejs v0.1.0-alpha.6
 	github.com/ClickHouse/clickhouse-go/v2 v2.46.0
+	github.com/HugoSmits86/nativewebp v1.3.0
+	github.com/MoeForge/moego v0.1.0-alpha.3
+	github.com/MoeForge/moejs v0.1.0
 	github.com/QuantumNous/new-api/relaykit v0.0.0
 	github.com/QuantumNous/new-api/tokenkit v0.0.0
+	github.com/ledongthuc/pdf v0.0.0-20261020125853-5e46805f718e
 )
 
 replace github.com/QuantumNous/new-api/relaykit => ./relaykit

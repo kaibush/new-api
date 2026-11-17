@@ -18,6 +18,8 @@ import (
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/plugins"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/request_plugin_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -1360,4 +1362,53 @@ func TestUploadTaskPluginStoresSidecarIconAndServesIt(t *testing.T) {
 	context.Request = httptest.NewRequest(http.MethodGet, "/api/plugin/task/no-such-plugin/icon", nil)
 	GetTaskPluginIcon(context)
 	assert.Equal(t, http.StatusNotFound, missing.Code)
+}
+
+func TestRequestPluginInstanceValidationAndConfigDisclosure(t *testing.T) {
+	plugin, err := jsplugin.DefaultRegistry.Register(`export const meta={apiVersion:1,key:"policy-fixture",name:"Policy",version:"1.0.0",author:{name:"Test"},configSchema:{type:"object",required:["apiKey"],properties:{apiKey:{type:"string",title:"API key",format:"password",minLength:1}}}};
+ export function ingress(){ return {action:"continue"}; }`, jsplugin.Options{})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, jsplugin.DefaultRegistry.Unregister(plugin.Meta.Key)) })
+	instance := request_plugin_setting.Instance{Name: "Policy", Plugin: plugin.Meta.Key, Enabled: true, Global: true, Models: []string{" test-model ", "test-model"}, Config: []byte(`{"apiKey":"fixture-secret"}`)}
+	normalized, err := normalizeRequestPluginInstances([]request_plugin_setting.Instance{instance})
+	require.NoError(t, err)
+	require.Len(t, normalized, 1)
+	assert.NotEmpty(t, normalized[0].ID)
+	assert.Equal(t, []string{"test-model"}, normalized[0].Models)
+	_, err = normalizeRequestPluginInstances([]request_plugin_setting.Instance{normalized[0], normalized[0]})
+	require.Error(t, err)
+	invalid := instance
+	invalid.Config = []byte(`{}`)
+	_, err = normalizeRequestPluginInstances([]request_plugin_setting.Instance{invalid})
+	require.Error(t, err)
+	previous, err := common.Marshal(request_plugin_setting.GetInstances())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: string(previous)}))
+	})
+	encoded, err := common.Marshal(normalized)
+	require.NoError(t, err)
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: string(encoded)}))
+	for _, role := range []int{common.RoleAdminUser, common.RoleRootUser} {
+		response := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(response)
+		c.Set("role", role)
+		GetRequestPluginInstances(c)
+		require.Equal(t, http.StatusOK, response.Code)
+		var reply struct {
+			Data struct {
+				Instances []request_plugin_setting.Instance `json:"instances"`
+			} `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &reply))
+		require.Len(t, reply.Data.Instances, 1)
+		assert.Equal(t, normalized[0].ID, reply.Data.Instances[0].ID)
+		if role == common.RoleRootUser {
+			assert.JSONEq(t, string(normalized[0].Config), string(reply.Data.Instances[0].Config))
+		} else {
+			assert.NotContains(t, response.Body.String(), "fixture-secret")
+			assert.Equal(t, "null", string(reply.Data.Instances[0].Config))
+		}
+	}
+	assert.JSONEq(t, string(normalized[0].Config), string(request_plugin_setting.GetInstances()[0].Config))
 }

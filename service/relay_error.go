@@ -73,6 +73,11 @@ func ProcessChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		})
 	}
 
+	RecordRelayErrorLog(c, channelError.ChannelId, err, relayInfo)
+}
+
+// RecordRelayErrorLog also records rejections before a channel is selected.
+func RecordRelayErrorLog(c *gin.Context, channelID int, err *types.NewAPIError, relayInfo *relaycommon.RelayInfo) {
 	if constant.ErrorLogEnabled && types.IsRecordErrorLog(err) {
 		userId := c.GetInt("id")
 		tokenName := c.GetString("token_name")
@@ -80,6 +85,7 @@ func ProcessChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		tokenId := c.GetInt("token_id")
 		userGroup := c.GetString("group")
 		other := model.NewLogOther()
+		appendRequestPluginRecord(relayInfo, other)
 		if c.Request != nil && c.Request.URL != nil {
 			other.SetPublic("request_path", c.Request.URL.Path)
 		}
@@ -90,7 +96,7 @@ func ProcessChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		if policy := PublicErrorPolicy(); policy.Enabled() {
 			body, _ := common.Marshal(gin.H{"error": err.ToOpenAIError()})
 			input := ErrorFilterInput(c, err.StatusCode, err.Error(), "", "")
-			input.ChannelID = channelError.ChannelId
+			input.ChannelID = channelID
 			_, filtered := RewritePublicError(policy, input, body, true)
 			if filtered.Action != "preserve" {
 				other.SetAdmin("original_error", publicMessage)
@@ -109,6 +115,6 @@ func ProcessChannelError(c *gin.Context, channelError types.ChannelError, err *t
 			startTime = time.Now()
 		}
 		useTimeSeconds := int(time.Since(startTime).Seconds())
-		model.RecordErrorLog(c, userId, channelError.ChannelId, modelName, tokenName, publicMessage, tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
+		model.RecordErrorLog(c, userId, channelID, modelName, tokenName, publicMessage, tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
 	}
 }

@@ -239,6 +239,7 @@ import {
   ChannelConfigurationStatusIndicator,
 } from './channel-configuration'
 import { ChannelProviderPicker } from './channel-provider-picker'
+import { ChannelRequestPluginsField } from './channel-request-plugins-field'
 import {
   ChannelApiAccessSection,
   ChannelAuthSection,
@@ -286,6 +287,7 @@ const SENSITIVE_FORM_FIELDS = [
   'other',
   'key_mode',
   'param_override',
+  'request_plugins',
   'header_override',
   'settings',
   'setting',
@@ -2760,6 +2762,33 @@ export function ChannelMutateDrawer({
             </FormItem>
           )}
         />
+
+        {canBindTaskPlugin && (
+          <FormField
+            control={form.control}
+            name='request_plugins'
+            render={({ field }) => (
+              <FormItem className='space-y-3 border-t pt-4'>
+                <div className='space-y-1'>
+                  <FormLabel>{t('Request processing plugins')}</FormLabel>
+                  <FormDescription>
+                    {t(
+                      "Instances for all requests or for this channel's groups also apply."
+                    )}
+                  </FormDescription>
+                </div>
+                <FormControl>
+                  <ChannelRequestPluginsField
+                    value={field.value ?? []}
+                    onChange={field.onChange}
+                    disabled={sensitiveLocked || isSubmitting}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        )}
 
         <FormField
           control={form.control}

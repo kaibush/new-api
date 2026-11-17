@@ -33,6 +33,12 @@ type Adaptor interface {
 	ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeminiChatRequest) (any, error)
 }
 
+// ResponsesRequestFinalizer applies provider rules after channel overrides.
+// Pass-through requests bypass this hook.
+type ResponsesRequestFinalizer interface {
+	FinalizeResponsesRequest(info *relaycommon.RelayInfo, body []byte) ([]byte, error)
+}
+
 type TaskAdaptor interface {
 	Init(info *relaycommon.RelayInfo)
 

@@ -273,3 +273,6 @@ const (
 	TopUpStatusExpired  = "expired"
 	TopUpStatusCanceled = "canceled"
 )
+
+// DefaultLanguage selects the language of server-side configuration labels.
+var DefaultLanguage string

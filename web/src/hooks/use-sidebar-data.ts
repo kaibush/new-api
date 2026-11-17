@@ -198,6 +198,12 @@ export function useSidebarData(): SidebarData {
             requiredRole: ROLE.SUPER_ADMIN,
           },
           {
+            title: t('Request processing'),
+            url: '/request-processing',
+            icon: PlugZap,
+            requiredRole: ROLE.SUPER_ADMIN,
+          },
+          {
             title: t('Task Plugins'),
             url: '/task-plugins',
             icon: PlugZap,

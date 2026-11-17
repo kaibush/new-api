@@ -310,3 +310,19 @@ export function stringToColor(str: string): string {
 
   return `hsl(${hue}, ${saturation}%, ${lightness}%)`
 }
+
+const BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB']
+
+/** A byte count in decimal units, for example 1.2 MB. */
+export function formatBytes(
+  bytes: number,
+  locales?: Intl.LocalesArgument
+): string {
+  let value = bytes
+  let unit = 0
+  while (Math.abs(value) >= 1000 && unit < BYTE_UNITS.length - 1) {
+    value /= 1000
+    unit += 1
+  }
+  return `${Intl.NumberFormat(locales, { maximumFractionDigits: 1 }).format(value)} ${BYTE_UNITS[unit]}`
+}

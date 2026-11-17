@@ -16,8 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type {
+  RequestPluginConfigSchema,
+  RequestPluginSample,
+} from '@/features/task-plugins/types'
 import { getGroups as getUserGroups } from '@/features/users/api'
 import { api, type ApiRequestConfig } from '@/lib/api'
+import type { LocalizedTextValue } from '@/lib/localized-text'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
 import type { InferenceStatus } from './lib/inference-status'
@@ -67,6 +72,8 @@ export type TaskPluginOption = {
   website?: string
   key: string
   name: string
+  /** The name in other languages; `name` is the fallback. */
+  name_i18n?: LocalizedTextValue | null
   description?: Record<string, string> | null
   icon?: string
   hasIcon?: boolean
@@ -74,14 +81,45 @@ export type TaskPluginOption = {
   models: string[]
   channelTypes?: number[] | null
   upstreams?: string[] | null
+  /** The plugin can submit tasks. */
+  task?: boolean
+  /** The plugin serves relay routes. */
+  provider?: boolean
+  /** The plugin logs in to get its credentials; task-only plugins can too. */
+  login?: boolean
+  refresh?: boolean
+  /** The plugin processes requests; a plugin with only this part has no channel. */
+  transform?: boolean
+  /** A failure of the plugin is skipped instead of refusing the request. */
+  optional?: boolean
+  /** The request processing stages the plugin runs at. */
+  transform_hooks?: string[] | null
+  configSchema?: RequestPluginConfigSchema
+  /** Requests the plugin offers for trying it out. */
+  samples?: RequestPluginSample[] | null
+  /** The settings a channel of the plugin takes, kept in its settings. */
+  channelConfig?: RequestPluginConfigSchema | null
+  /** The format of a channel key line, shown on the key field. */
+  keyHint?: LocalizedTextValue | null
+  /** The plugin checks typed-in keys when the channel is saved. */
+  checkKey?: boolean
+  /** The plugin can query the channel balance. */
+  balance?: boolean
+  /** The client paths of the plugin's relay routes. */
+  relayPaths?: string[] | null
+  /** A channel of the plugin can serve the Responses WebSocket. */
+  responsesWebsocket?: boolean
 }
 
+/** The plugins a channel can be bound to: request processing alone is not one. */
 export async function getTaskPluginOptions(): Promise<TaskPluginOption[]> {
   const response = await api.get<{
     success: boolean
     data: TaskPluginOption[]
   }>('/api/task_plugin_options')
-  return requireServerSuccess(response.data).data
+  return (requireServerSuccess(response.data).data ?? []).filter(
+    (option) => option.task !== false
+  )
 }
 
 export type CodexUsageResponse = {

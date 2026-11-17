@@ -348,3 +348,9 @@ const (
 	MsgCustomOAuthBindingNotFound   = "custom_oauth.binding_not_found"
 	MsgCustomOAuthProviderIdInvalid = "custom_oauth.provider_id_field_invalid"
 )
+
+const (
+	MsgRelayRequestRejected     = "relay.request_rejected"
+	MsgRelayRequestPluginFailed = "relay.request_plugin_failed"
+	MsgRelayResponseRejected    = "relay.response_rejected"
+)

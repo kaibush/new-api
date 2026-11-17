@@ -32,18 +32,16 @@ func TestApplyUpstreamBodyMetadataSetsReplayableMetadata(t *testing.T) {
 	require.NoError(t, err)
 	defer closer.Close()
 
-	// NewRequest hides the body's dynamic type behind req.Body, so metadata
-	// extraction must use the original body passed to NewRequest.
+	// A replayable request body now owns a closable cursor. Metadata must
+	// remain available through both the request body and the original reader.
 	req, err := http.NewRequest(http.MethodPost, "https://example.com/v1/chat/completions", body)
 	require.NoError(t, err)
 	assert.Nil(t, req.GetBody)
 	assert.Zero(t, req.ContentLength)
-	_, requestBodyIsReplayable := req.Body.(common.ReplayableBody)
-	assert.False(t, requestBodyIsReplayable)
 
 	ApplyUpstreamBodyMetadata(req, req.Body)
-	assert.Nil(t, req.GetBody)
-	assert.Zero(t, req.ContentLength)
+	require.NotNil(t, req.GetBody)
+	assert.EqualValues(t, len(payload), req.ContentLength)
 
 	ApplyUpstreamBodyMetadata(req, body)
 

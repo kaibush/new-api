@@ -203,6 +203,10 @@ func UpdateOption(c *gin.Context) {
 		})
 		return
 	}
+	if option.Key == "request_plugin_setting.instances" {
+		common.ApiErrorT(c, "Request plugin instances cannot be changed through the general settings API")
+		return
+	}
 	switch option.Value.(type) {
 	case bool:
 		option.Value = common.Interface2String(option.Value.(bool))

@@ -152,7 +152,44 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			}
 		}
 	}
-	if _, exists := c.Get("task_request"); !exists {
+	// On a native path several plugins declare, the channel may have bound a
+	// plugin other than the one that prepared the request; it decodes again,
+	// as after a request plugin changed the body.
+	refreshed := c.GetBool(pluginruntime.ContextKeyRequestRefreshed)
+	if pinnedValue, exists := c.Get(pluginruntime.ContextKeyPinnedRoute); exists {
+		if pinned, ok := pinnedValue.(pluginruntime.PinnedRoute); ok && (len(pinned.Candidates) > 1 || refreshed) && pinned.Plugin == a.plugin {
+			if requestValue, present := c.Get(pluginruntime.ContextKeyRouteRequest); present {
+				if requestContext, valid := requestValue.(pluginruntime.RouteRequestContext); valid {
+					requestContext.Params = pluginruntime.RouteParams(c.Params, pinned.Route)
+					resolvedValue, requestBodyText, callErr := a.plugin.Engine.CallPathWithMemberJSON(
+						context.WithoutCancel(c.Request.Context()), 0, a.plugin.Meta.JSONTextMember("requestBody"),
+						"native", []string{pinned.Route.Decode}, requestContext.JSValueFor(a.plugin.Meta),
+					)
+					resolved, resolvedOK := resolvedValue.(map[string]any)
+					kind, _ := resolved["kind"].(string)
+					resolvedModel, _ := resolved["model"].(string)
+					owned := slices.Contains(a.plugin.Meta.Models, resolvedModel)
+					if callErr != nil || !resolvedOK || kind != string(pluginruntime.RouteTypeSubmit) || !owned || resolvedModel != c.GetString("resolved_task_model") {
+						return service.TaskErrorWrapperLocal(fmt.Errorf("final task plugin decoder rejected the pinned model"), "plugin_request_invalid", http.StatusBadRequest)
+					}
+					if _, forbidden := resolved["renderer"]; forbidden {
+						return service.TaskErrorWrapperLocal(fmt.Errorf("decoder must not return renderer"), "plugin_request_invalid", http.StatusBadRequest)
+					}
+					requestContext.RequestBody = resolved["requestBody"]
+					c.Set(pluginruntime.ContextKeyRouteRequest, requestContext)
+					c.Set("task_request", requestContext.RequestBody)
+					c.Set(pluginruntime.ContextKeyRequestBodyText, requestBodyText)
+					action := pinned.Route.Action
+					if resolvedAction, valid := resolved["action"].(string); valid && strings.TrimSpace(resolvedAction) != "" {
+						action = resolvedAction
+					}
+					c.Set("task_action", action)
+					info.Action = action
+				}
+			}
+		}
+	}
+	if request, exists := c.Get("task_request"); !exists || refreshed && isBasicTaskRequest(request) {
 		if taskErr := relaycommon.ValidateBasicTaskRequest(c, info, "image_to_video"); taskErr != nil {
 			return taskErr
 		}
@@ -176,6 +213,12 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		}
 	}
 	return nil
+}
+
+// isBasicTaskRequest reports a task_request ValidateBasicTaskRequest stored.
+func isBasicTaskRequest(request any) bool {
+	_, basic := request.(relaycommon.TaskSubmitReq)
+	return basic
 }
 
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {

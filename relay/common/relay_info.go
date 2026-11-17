@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/pkg/requestpatch"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
@@ -19,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	hosttypes "github.com/QuantumNous/new-api/types"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/tidwall/gjson"
@@ -164,6 +166,18 @@ type RelayInfo struct {
 	RuntimeHeadersOverride                map[string]any
 	UseRuntimeHeadersOverride             bool
 	ParamOverrideAudit                    []string
+	// RequestPluginSteps is the audit of the request plugin runs, every
+	// stage and attempt in order.
+	RequestPluginSteps []RequestPluginStep
+	// RequestPluginHeaders are the header.patch effects of the current
+	// attempt's outbound stage; ApplyHeaderOverride applies them last.
+	RequestPluginHeaders []requestpatch.Effect
+	// RequestPluginRecord is the public record of the request plugin changes:
+	// the request's ingress, then the current attempt's stages.
+	RequestPluginRecord []RequestPluginRecord
+	// requestPluginIngressRecord counts the ingress entries of
+	// RequestPluginRecord, which every attempt keeps.
+	requestPluginIngressRecord int
 
 	PriceData hosttypes.PriceData
 
@@ -270,6 +284,8 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	info.SendResponseCount = 0
 	info.ClaudeToChatStreamState = nil
 	info.ChatToGeminiStreamState = nil
+	info.RequestPluginHeaders = nil
+	info.RequestPluginRecord = info.RequestPluginRecord[:min(info.requestPluginIngressRecord, len(info.RequestPluginRecord))]
 	channelType := common.GetContextKeyInt(c, constant.ContextKeyChannelType)
 	paramOverride := common.GetContextKeyStringMap(c, constant.ContextKeyChannelParamOverride)
 	headerOverride := common.GetContextKeyStringMap(c, constant.ContextKeyChannelHeaderOverride)
@@ -1264,4 +1280,21 @@ func RemoveGeminiDisabledFields(jsonData []byte) ([]byte, error) {
 		return jsonData, nil
 	}
 	return jsonDataAfter, nil
+}
+
+// DeleteJSONMember removes every copy of the member at path. A client body
+// may repeat a key, and most upstream parsers read the last copy, so a
+// surviving copy could reach the upstream after the gateway removed or
+// replaced the first one.
+func DeleteJSONMember(doc *ojson.Doc, path string) error {
+	for doc.Get(path).Exists() {
+		size := doc.Len()
+		if err := doc.Delete(path); err != nil {
+			return err
+		}
+		if doc.Len() == size {
+			return fmt.Errorf("delete %s: member was not removed", path)
+		}
+	}
+	return nil
 }

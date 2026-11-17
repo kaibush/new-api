@@ -40,6 +40,9 @@ type ErrorCode string
 const (
 	ErrorCodeInvalidRequest         ErrorCode = "invalid_request"
 	ErrorCodeSensitiveWordsDetected ErrorCode = "sensitive_words_detected"
+	ErrorCodeRequestRejected        ErrorCode = "request_rejected"
+	ErrorCodeRequestPluginFailed    ErrorCode = "request_plugin_failed"
+	ErrorCodeResponseRejected       ErrorCode = "response_rejected"
 	ErrorCodeViolationFeeGrokCSAM   ErrorCode = "violation_fee.grok.csam"
 
 	// new api error
@@ -145,7 +148,23 @@ func (e *NewAPIError) ErrorWithStatusCode() string {
 	return fmt.Sprintf("status_code=%d, %s", e.StatusCode, msg)
 }
 
-func (e *NewAPIError) MaskSensitiveError() string {
+// maskSensitiveMessage keeps a locally generated policy code readable while
+// applying the existing address and credential masking to the message. Only
+// host policy errors use this suffix; upstream errors always mask the full text.
+func (e *NewAPIError) maskSensitiveMessage(message string, upstreamURLs ...string) string {
+	if e.errorType == ErrorTypeNewAPIError && (e.errorCode == ErrorCodeRequestRejected || e.errorCode == ErrorCodeResponseRejected) {
+		if start := strings.LastIndex(message, " (code: "); start >= 0 {
+			if end := strings.IndexByte(message[start:], ')'); end >= 0 {
+				end += start + 1
+				return kitutil.MaskSensitiveInfo(message[:start], upstreamURLs...) + message[start:end] + kitutil.MaskSensitiveInfo(message[end:], upstreamURLs...)
+			}
+		}
+	}
+	return kitutil.MaskSensitiveInfo(message, upstreamURLs...)
+}
+
+// MaskSensitiveError preserves the gateway policy of masking all addresses.
+func (e *NewAPIError) MaskSensitiveError(upstreamURLs ...string) string {
 	if e == nil {
 		return ""
 	}
@@ -156,14 +175,14 @@ func (e *NewAPIError) MaskSensitiveError() string {
 	if e.errorCode == ErrorCodeCountTokenFailed {
 		return errStr
 	}
-	return kitutil.MaskSensitiveInfo(errStr)
+	return e.maskSensitiveMessage(errStr, upstreamURLs...)
 }
 
-func (e *NewAPIError) MaskSensitiveErrorWithStatusCode() string {
+func (e *NewAPIError) MaskSensitiveErrorWithStatusCode(upstreamURLs ...string) string {
 	if e == nil {
 		return ""
 	}
-	msg := e.MaskSensitiveError()
+	msg := e.MaskSensitiveError(upstreamURLs...)
 	if e.StatusCode == 0 {
 		return msg
 	}
@@ -177,7 +196,8 @@ func (e *NewAPIError) SetMessage(message string) {
 	e.Err = errors.New(message)
 }
 
-func (e *NewAPIError) ToOpenAIError() OpenAIError {
+// ToOpenAIError masks addresses and credentials in the message.
+func (e *NewAPIError) ToOpenAIError(upstreamURLs ...string) OpenAIError {
 	var result OpenAIError
 	switch e.errorType {
 	case ErrorTypeOpenAIError:
@@ -202,7 +222,7 @@ func (e *NewAPIError) ToOpenAIError() OpenAIError {
 		}
 	}
 	if e.errorCode != ErrorCodeCountTokenFailed {
-		result.Message = kitutil.MaskSensitiveInfo(result.Message)
+		result.Message = e.maskSensitiveMessage(result.Message, upstreamURLs...)
 	}
 	if result.Message == "" {
 		result.Message = string(e.errorType)
@@ -210,7 +230,8 @@ func (e *NewAPIError) ToOpenAIError() OpenAIError {
 	return result
 }
 
-func (e *NewAPIError) ToClaudeError() ClaudeError {
+// ToClaudeError masks the upstream addresses like ToOpenAIError.
+func (e *NewAPIError) ToClaudeError(upstreamURLs ...string) ClaudeError {
 	var result ClaudeError
 	switch e.errorType {
 	case ErrorTypeOpenAIError:
@@ -231,7 +252,7 @@ func (e *NewAPIError) ToClaudeError() ClaudeError {
 		}
 	}
 	if e.errorCode != ErrorCodeCountTokenFailed {
-		result.Message = kitutil.MaskSensitiveInfo(result.Message)
+		result.Message = e.maskSensitiveMessage(result.Message, upstreamURLs...)
 	}
 	if result.Message == "" {
 		result.Message = string(e.errorType)
