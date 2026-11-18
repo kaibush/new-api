@@ -42,6 +42,7 @@ const EMPTY: ModelReviewUser[] = []
 
 export function ModelReviewDashboard(props: {
   active?: boolean
+  showHeading?: boolean
   jobID?: number
   userID?: number
   onSelectUser: (id: number) => void
@@ -181,13 +182,15 @@ export function ModelReviewDashboard(props: {
   })
   return (
     <section aria-label={t('User review dashboard')} className='space-y-3'>
-      <h3 className='font-medium'>{t('User review dashboard')}</h3>
+      {props.showHeading !== false && (
+        <h3 className='font-medium'>{t('User review dashboard')}</h3>
+      )}
       <p className='text-muted-foreground text-xs'>
         {t(
           'Counts use the latest retained result for each message in the selected scope. Only results requiring human review count as suspected anomalies; they are not confirmed violations.'
         )}
       </p>
-      <div className='grid grid-cols-1 gap-2 sm:grid-cols-3'>
+      <div className='grid grid-cols-3 gap-2'>
         {[
           { label: t('Reviewed messages'), value: query.data?.reviewed },
           { label: t('Suspected anomalies'), value: query.data?.suspected },
@@ -203,7 +206,7 @@ export function ModelReviewDashboard(props: {
             className='gap-2 py-3'
           >
             <CardHeader className='px-3'>
-              <CardTitle className='text-muted-foreground text-xs font-normal'>
+              <CardTitle className='text-muted-foreground min-h-8 text-[11px] font-normal sm:min-h-0 sm:text-xs'>
                 {item.label}
               </CardTitle>
             </CardHeader>
@@ -216,6 +219,7 @@ export function ModelReviewDashboard(props: {
         ))}
       </div>
       <DataTablePage
+        fixedHeight={false}
         table={table}
         columns={columns}
         isLoading={query.isPending}

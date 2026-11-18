@@ -162,6 +162,7 @@ function MatchList(props: { requestID?: string; active?: boolean }) {
         )}
       </p>
       <DataTablePage
+        fixedHeight={false}
         table={table}
         columns={columns}
         isLoading={query.isPending}

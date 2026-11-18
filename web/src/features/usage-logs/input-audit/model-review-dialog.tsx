@@ -47,7 +47,12 @@ import { ModelReviewResults } from './model-review-results'
 import { ModelReviewSettingsForm } from './model-review-settings'
 
 export function ModelReviewDialog(
-  props: { embedded?: boolean; active?: boolean } = {}
+  props: {
+    embedded?: boolean
+    active?: boolean
+    view?: string
+    onViewChange?: (view: string) => void
+  } = {}
 ) {
   const { t, i18n } = useTranslation()
   const userID = useAuthStore((state) => state.auth.user?.id)
@@ -55,7 +60,12 @@ export function ModelReviewDialog(
   const labels = useModelReviewLabels()
   const [open, setOpen] = useState(false)
   const visible = (props.embedded || open) && props.active !== false
-  const [tab, setTab] = useState('overview')
+  const [localTab, setLocalTab] = useState('overview')
+  const tab = props.view ?? localTab
+  const setTab = (value: string) => {
+    setLocalTab(value)
+    props.onViewChange?.(value)
+  }
   const [mode, setMode] = useState('incremental')
   const [scope, setScope] = useState<number>()
   const [selectedJob, setSelectedJob] = useState<number>()
@@ -92,6 +102,7 @@ export function ModelReviewDialog(
   return (
     <AuditFeatureSurface
       embedded={props.embedded}
+      showHeading={!props.embedded}
       open={open}
       onOpenChange={setOpen}
       title={t('Model review')}
@@ -104,17 +115,16 @@ export function ModelReviewDialog(
         onValueChange={(value) => setTab(String(value))}
         className='min-w-0'
       >
-        <TabsList
-          className='bg-background w-full justify-start overflow-x-auto border-b group-data-horizontal/tabs:h-11 [&>button]:h-10 [&>button]:min-w-28 [&>button]:shrink-0'
-          variant='line'
-        >
-          <TabsTrigger value='overview'>{t('Review task queue')}</TabsTrigger>
-          <TabsTrigger value='dashboard'>
-            {t('User review dashboard')}
-          </TabsTrigger>
-          <TabsTrigger value='results'>{t('Results')}</TabsTrigger>
-          <TabsTrigger value='settings'>{t('Settings')}</TabsTrigger>
-        </TabsList>
+        {!props.embedded && (
+          <TabsList className='w-fit max-w-full overflow-x-auto' variant='line'>
+            <TabsTrigger value='overview'>{t('Review task queue')}</TabsTrigger>
+            <TabsTrigger value='dashboard'>
+              {t('User review dashboard')}
+            </TabsTrigger>
+            <TabsTrigger value='results'>{t('Results')}</TabsTrigger>
+            <TabsTrigger value='settings'>{t('Settings')}</TabsTrigger>
+          </TabsList>
+        )}
         <TabsContent value='overview' className='space-y-4 pt-3'>
           {jobs.isError || settings.isError ? (
             <ErrorState
@@ -240,6 +250,7 @@ export function ModelReviewDialog(
         <TabsContent value='dashboard' className='pt-3'>
           {tab === 'dashboard' && (
             <ModelReviewDashboard
+              showHeading={!props.embedded}
               active={visible}
               onSelectUser={(id) => {
                 setSelectedUser(id)

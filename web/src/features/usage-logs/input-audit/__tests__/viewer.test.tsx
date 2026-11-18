@@ -27,6 +27,7 @@ import {
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
+import { PageFooterProvider } from '@/components/layout/components/page-footer'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -204,26 +205,27 @@ it('selecting a user by name sends its ID and reset clears the selection', async
   expect(picker).toHaveValue('')
 })
 
-it('audit tabs have equal touch heights and scroll horizontally without sharing message filters', async () => {
+it('grouped audit navigation uses compact buttons and keeps filters inside the active page', async () => {
   render(
     <QueryClientProvider client={client}>
       <InputAuditViewer />
     </QueryClientProvider>
   )
-  const navigation = screen.getByRole('tablist', { name: 'Audit management' })
-  const tabs = within(navigation).getAllByRole('tab')
-  expect(tabs).toHaveLength(6)
-  expect(navigation).toHaveClass(
-    'overflow-x-auto',
-    'shrink-0',
-    '[&>button]:h-10'
-  )
+  const navigation = screen.getByRole('navigation', {
+    name: 'Audit management',
+  })
+  const tabs = within(navigation).getAllByRole('button')
+  expect(tabs).toHaveLength(9)
+  expect(navigation).toHaveClass('shrink-0', 'w-44')
+  for (const button of tabs) {
+    expect(button).toHaveClass('h-10', 'w-full', 'justify-start')
+  }
   expect(navigation).not.toContainElement(
     screen.getByRole('textbox', { name: 'Message keyword' })
   )
-  expect(tabs[0]).toHaveAttribute('aria-selected', 'true')
+  expect(tabs[0]).toHaveAttribute('aria-current', 'page')
   await userEvent.click(
-    within(navigation).getByRole('tab', { name: 'Interception evidence' })
+    within(navigation).getByRole('button', { name: 'Interception evidence' })
   )
   expect(
     await screen.findByRole('region', { name: 'Interception evidence' })
@@ -233,7 +235,7 @@ it('audit tabs have equal touch heights and scroll horizontally without sharing 
     screen.queryByRole('textbox', { name: 'Message keyword' })
   ).not.toBeInTheDocument()
   await userEvent.click(
-    within(navigation).getByRole('tab', { name: 'User message' })
+    within(navigation).getByRole('button', { name: 'User message' })
   )
   expect(screen.getByRole('textbox', { name: 'Message keyword' })).toBeVisible()
 })
@@ -410,7 +412,9 @@ it('inline settings preserve edits after a rejected save and successful retry', 
       <InputAuditViewer />
     </QueryClientProvider>
   )
-  await userEvent.click(await screen.findByRole('tab', { name: 'Settings' }))
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Input audit settings' })
+  )
   const dialog = await screen.findByRole('region', {
     name: 'Input audit settings',
   })
@@ -446,7 +450,9 @@ it('out-of-range storage settings show validation without sending an update', as
       <InputAuditViewer />
     </QueryClientProvider>
   )
-  await userEvent.click(await screen.findByRole('tab', { name: 'Settings' }))
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Input audit settings' })
+  )
   const dialog = await screen.findByRole('region', {
     name: 'Input audit settings',
   })
@@ -511,7 +517,7 @@ it('allowlisting a user keeps audit collection and only selects content filterin
     </QueryClientProvider>
   )
   await userEvent.click(
-    await screen.findByRole('tab', { name: 'User allowlist' })
+    await screen.findByRole('button', { name: 'User allowlist' })
   )
   const dialog = await screen.findByRole('region', { name: 'User allowlist' })
   await userEvent.click(
@@ -802,7 +808,7 @@ it('retained review cases remain reachable from their own paginated and filtered
     </QueryClientProvider>
   )
   await userEvent.click(
-    await screen.findByRole('tab', { name: 'Review cases' })
+    await screen.findByRole('button', { name: 'Review cases' })
   )
   const dialog = await screen.findByRole('region', { name: 'Review cases' })
   await within(dialog).findByRole('button', { name: 'Review' })
@@ -843,11 +849,11 @@ it('audit management entries are grouped separately from search actions', async 
       <InputAuditViewer />
     </QueryClientProvider>
   )
-  const management = await screen.findByRole('tablist', {
+  const management = await screen.findByRole('navigation', {
     name: 'Audit management',
   })
   expect(
-    within(management).getByRole('tab', { name: 'Model review' })
+    within(management).getByRole('button', { name: 'Review task queue' })
   ).toBeInTheDocument()
   expect(
     within(management).queryByRole('button', { name: 'Search' })
@@ -892,7 +898,7 @@ it.each(['Delete', 'Delete selected', 'Clear filtered messages'])(
   }
 )
 
-it('switching feature tabs preserves drafts and does not fetch unopened management screens', async () => {
+it('switching management pages preserves drafts and does not fetch unopened management screens', async () => {
   render(
     <QueryClientProvider client={client}>
       <InputAuditViewer />
@@ -903,9 +909,11 @@ it('switching feature tabs preserves drafts and does not fetch unopened manageme
   expect(api.get).not.toHaveBeenCalledWith('/api/input-audit/allowlist')
   const keyword = screen.getByRole('textbox', { name: 'Message keyword' })
   await userEvent.type(keyword, 'draft query')
-  const navigation = screen.getByRole('tablist', { name: 'Audit management' })
+  const navigation = screen.getByRole('navigation', {
+    name: 'Audit management',
+  })
   await userEvent.click(
-    within(navigation).getByRole('tab', { name: 'Settings' })
+    within(navigation).getByRole('button', { name: 'Input audit settings' })
   )
   const settingsPage = await screen.findByRole('region', {
     name: 'Input audit settings',
@@ -916,13 +924,13 @@ it('switching feature tabs preserves drafts and does not fetch unopened manageme
   )
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   await userEvent.click(
-    within(navigation).getByRole('tab', { name: 'User message' })
+    within(navigation).getByRole('button', { name: 'User message' })
   )
   expect(screen.getByRole('textbox', { name: 'Message keyword' })).toHaveValue(
     'draft query'
   )
   await userEvent.click(
-    within(navigation).getByRole('tab', { name: 'Settings' })
+    within(navigation).getByRole('button', { name: 'Input audit settings' })
   )
   expect(
     within(settingsPage).getByRole('spinbutton', { name: 'Stored characters' })
@@ -955,4 +963,54 @@ it('mobile message details use viewport height and close with Escape returning f
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   )
   expect(trigger).toHaveFocus()
+})
+
+it('mobile audit navigation uses one grouped selector without a tab bar or sidebar', async () => {
+  const original = window.matchMedia.bind(window)
+  vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+    ...original(query),
+    matches: query === '(max-width: 767px)' || query === '(max-width: 640px)',
+  }))
+  render(
+    <QueryClientProvider client={client}>
+      <InputAuditViewer />
+    </QueryClientProvider>
+  )
+  const selector = screen.getByRole('combobox', { name: 'Audit management' })
+  expect(selector).toHaveValue('messages')
+  expect(
+    screen.queryByRole('navigation', { name: 'Audit management' })
+  ).not.toBeInTheDocument()
+  expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
+  await userEvent.selectOptions(selector, 'settings')
+  expect(
+    await screen.findByRole('region', { name: 'Input audit settings' })
+  ).toBeVisible()
+  expect(
+    screen.queryByRole('textbox', { name: 'Message keyword' })
+  ).not.toBeInTheDocument()
+  await userEvent.selectOptions(selector, 'messages')
+  expect(screen.getByRole('textbox', { name: 'Message keyword' })).toBeVisible()
+})
+
+it('switching away from messages removes its pagination from the shared page footer', async () => {
+  const footer = document.createElement('div')
+  document.body.appendChild(footer)
+  const view = render(
+    <QueryClientProvider client={client}>
+      <PageFooterProvider container={footer}>
+        <InputAuditViewer />
+      </PageFooterProvider>
+    </QueryClientProvider>
+  )
+  await within(footer).findByRole('button', { name: 'Go to next page' })
+  await userEvent.click(
+    within(
+      screen.getByRole('navigation', { name: 'Audit management' })
+    ).getByRole('button', { name: 'Input audit settings' })
+  )
+  await screen.findByRole('region', { name: 'Input audit settings' })
+  expect(footer).toBeEmptyDOMElement()
+  view.unmount()
+  footer.remove()
 })

@@ -166,6 +166,7 @@ export function InputAuditCasesDialog(
         contentClassName='sm:max-w-4xl'
       >
         <DataTablePage
+          fixedHeight={false}
           table={table}
           columns={columns}
           isLoading={query.isPending}

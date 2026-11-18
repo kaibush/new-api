@@ -342,6 +342,7 @@ export function ModelReviewQueue(props: {
         </div>
       </div>
       <DataTablePage
+        fixedHeight={false}
         table={table}
         columns={columns}
         isLoading={props.loading}

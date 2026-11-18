@@ -16,6 +16,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import {
+  Message01Icon,
+  Shield01Icon,
+  File01Icon,
+  Task01Icon,
+  DashboardSquare01Icon,
+  UserGroupIcon,
+  Settings01Icon,
+} from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { lazy, Suspense, useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -36,12 +46,17 @@ import {
 } from '@/components/ui/accordion'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  NativeSelect,
+  NativeSelectOption,
+  NativeSelectOptGroup,
+} from '@/components/ui/native-select'
 import { UserSelector } from '@/components/user-selector'
 import { useMediaQuery } from '@/hooks'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
 import { ROLE } from '@/lib/roles'
+import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { CompactDateTimeRangePicker } from '../components/compact-date-time-range-picker'
@@ -203,7 +218,7 @@ function InputAuditMessages(props: { active?: boolean }) {
         emptyTitle={
           query.isError ? t('Failed to load audit records') : t('No records')
         }
-        paginationInFooter
+        paginationInFooter={props.active !== false}
         showMobileBulkActions
         mobileProps={{ enableRowSelection: canRead }}
         bulkActions={
@@ -456,7 +471,8 @@ function InputAuditCollectionStatus(props: { status: InputAuditStatus }) {
 export function InputAuditViewer() {
   const { t } = useTranslation()
   const user = useAuthStore((state) => state.auth.user)
-  const [tab, setTab] = useState('messages')
+  const isMobile = useMediaQuery('(max-width: 767px)')
+  const [page, setPage] = useState('messages')
   const [visited, setVisited] = useState(['messages'])
   const canRead = user?.role === ROLE.SUPER_ADMIN
   const status = useQuery({
@@ -465,86 +481,200 @@ export function InputAuditViewer() {
     enabled: canRead,
     retry: false,
   })
-  if (!canRead) return <InputAuditMessages />
-  const items = [
-    { value: 'messages', label: t('User message') },
-    { value: 'matches', label: t('Interception evidence') },
-    { value: 'cases', label: t('Review cases') },
-    { value: 'model', label: t('Model review') },
-    { value: 'allowlist', label: t('User allowlist') },
-    { value: 'settings', label: t('Settings') },
+  const groups = [
+    {
+      label: t('Input Audits'),
+      items: [
+        { value: 'messages', icon: Message01Icon, label: t('User message') },
+        {
+          value: 'matches',
+          icon: Shield01Icon,
+          label: t('Interception evidence'),
+        },
+        { value: 'cases', icon: File01Icon, label: t('Review cases') },
+      ],
+    },
+    {
+      label: t('Model review'),
+      items: [
+        {
+          value: 'model-overview',
+          icon: Task01Icon,
+          label: t('Review task queue'),
+        },
+        {
+          value: 'model-dashboard',
+          icon: DashboardSquare01Icon,
+          label: t('User review dashboard'),
+        },
+        { value: 'model-results', icon: File01Icon, label: t('Results') },
+      ],
+    },
+    {
+      label: t('Settings'),
+      items: [
+        { value: 'allowlist', icon: UserGroupIcon, label: t('User allowlist') },
+        {
+          value: 'settings',
+          icon: Settings01Icon,
+          label: t('Input audit settings'),
+        },
+        {
+          value: 'model-settings',
+          icon: Settings01Icon,
+          label: `${t('Model review')} · ${t('Settings')}`,
+        },
+      ],
+    },
   ]
+  const items = groups.flatMap((group) => group.items)
+  const modelVisible = page.startsWith('model-')
+  const selected = items.find((item) => item.value === page)
+  const navigate = (value: string) => {
+    setPage(value)
+    const key = value.startsWith('model-') ? 'model' : value
+    setVisited((previous) =>
+      previous.includes(key) ? previous : [...previous, key]
+    )
+  }
+  if (!canRead) return <InputAuditMessages />
   return (
-    <Tabs
-      value={tab}
-      onValueChange={(value) => {
-        setTab(String(value))
-        setVisited((previous) =>
-          previous.includes(String(value))
-            ? previous
-            : [...previous, String(value)]
-        )
-      }}
-      className='h-full min-h-0 min-w-0 gap-3'
-    >
-      <TabsList
-        aria-label={t('Audit management')}
-        variant='line'
-        className='w-full shrink-0 justify-start overflow-x-auto border-b group-data-horizontal/tabs:h-11 [&>button]:h-10 [&>button]:min-w-28 [&>button]:shrink-0 [&>button]:px-3'
-      >
-        {items.map((item) => (
-          <TabsTrigger key={item.value} value={item.value}>
-            {item.label}
-          </TabsTrigger>
-        ))}
-      </TabsList>
-      {items.map((item) => (
-        <TabsContent
-          key={item.value}
-          value={item.value}
-          keepMounted
-          className='min-h-0 min-w-0 overflow-y-auto overscroll-contain data-[hidden]:hidden'
+    <div className='flex h-full min-h-0 min-w-0 flex-col gap-3 md:flex-row md:gap-5'>
+      {isMobile ? (
+        <NativeSelect
+          aria-label={t('Audit management')}
+          value={page}
+          onChange={(event) => navigate(event.target.value)}
+          className='w-full shrink-0 [&>select]:h-10'
         >
-          {visited.includes(item.value) && (
-            <Suspense fallback={<LoadingState />}>
-              {item.value === 'messages' && (
-                <InputAuditMessages active={tab === 'messages'} />
-              )}
-              {item.value === 'matches' && (
-                <MatchesDialog embedded active={tab === 'matches'} />
-              )}
-              {item.value === 'cases' && (
-                <InputAuditCasesDialog embedded active={tab === 'cases'} />
-              )}
-              {item.value === 'model' && (
-                <ModelReviewDialog embedded active={tab === 'model'} />
-              )}
-              {(item.value === 'allowlist' || item.value === 'settings') &&
-                status.isPending && <LoadingState />}
-              {(item.value === 'allowlist' || item.value === 'settings') &&
-                status.isError && (
-                  <ErrorState onRetry={() => void status.refetch()} />
-                )}
-              {item.value === 'allowlist' && status.data && (
-                <InputAuditAllowlistDialog
-                  embedded
-                  active={tab === 'allowlist'}
-                  collectionEnabled={status.data.settings.enabled}
-                />
-              )}
-              {item.value === 'settings' && status.data && (
-                <>
-                  <InputAuditCollectionStatus status={status.data} />
-                  <InputAuditSettingsDialog
-                    embedded
-                    settings={status.data.settings}
+          {groups.map((group) => (
+            <NativeSelectOptGroup key={group.label} label={group.label}>
+              {group.items.map((item) => (
+                <NativeSelectOption key={item.value} value={item.value}>
+                  {item.label}
+                </NativeSelectOption>
+              ))}
+            </NativeSelectOptGroup>
+          ))}
+        </NativeSelect>
+      ) : (
+        <nav
+          aria-label={t('Audit management')}
+          className='w-44 shrink-0 space-y-5 overflow-y-auto py-2 pr-1 lg:w-48'
+        >
+          {groups.map((group) => (
+            <div key={group.label} className='space-y-1'>
+              <p className='text-muted-foreground px-3 pb-1 text-xs font-medium'>
+                {group.label}
+              </p>
+              {group.items.map((item) => (
+                <Button
+                  key={item.value}
+                  variant='ghost'
+                  aria-current={page === item.value ? 'page' : undefined}
+                  onClick={() => navigate(item.value)}
+                  className={cn(
+                    'h-10 w-full justify-start rounded-lg px-3 text-sm font-normal',
+                    page === item.value &&
+                      'bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary font-medium'
+                  )}
+                >
+                  <HugeiconsIcon
+                    icon={item.icon}
+                    className='size-4 shrink-0'
+                    strokeWidth={1.75}
+                    aria-hidden='true'
                   />
-                </>
+                  {item.label}
+                </Button>
+              ))}
+            </div>
+          ))}
+        </nav>
+      )}
+      <div className='bg-card flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border'>
+        <header className='flex shrink-0 items-center gap-3 border-b px-4 py-3 sm:px-5'>
+          {selected && (
+            <span className='bg-primary/10 text-primary flex size-8 items-center justify-center rounded-lg'>
+              <HugeiconsIcon
+                icon={selected.icon}
+                className='size-4'
+                strokeWidth={1.75}
+                aria-hidden='true'
+              />
+            </span>
+          )}
+          <h2 className='text-base font-semibold'>{selected?.label}</h2>
+        </header>
+        {items
+          .filter((item) => !item.value.startsWith('model-'))
+          .map((item) => (
+            <div
+              key={item.value}
+              hidden={page !== item.value}
+              className={cn(
+                'min-h-0 min-w-0 flex-1',
+                page !== item.value ? 'hidden' : 'flex flex-col',
+                item.value !== 'messages' &&
+                  'overflow-y-auto overscroll-contain p-4 sm:p-5 [&>section>h2]:sr-only'
               )}
+            >
+              {visited.includes(item.value) && (
+                <Suspense fallback={<LoadingState />}>
+                  {item.value === 'messages' && (
+                    <InputAuditMessages active={page === 'messages'} />
+                  )}
+                  {item.value === 'matches' && (
+                    <MatchesDialog embedded active={page === 'matches'} />
+                  )}
+                  {item.value === 'cases' && (
+                    <InputAuditCasesDialog embedded active={page === 'cases'} />
+                  )}
+                  {(item.value === 'allowlist' || item.value === 'settings') &&
+                    status.isPending && <LoadingState />}
+                  {(item.value === 'allowlist' || item.value === 'settings') &&
+                    status.isError && (
+                      <ErrorState onRetry={() => void status.refetch()} />
+                    )}
+                  {item.value === 'allowlist' && status.data && (
+                    <InputAuditAllowlistDialog
+                      embedded
+                      active={page === 'allowlist'}
+                      collectionEnabled={status.data.settings.enabled}
+                    />
+                  )}
+                  {item.value === 'settings' && status.data && (
+                    <>
+                      <InputAuditCollectionStatus status={status.data} />
+                      <InputAuditSettingsDialog
+                        embedded
+                        settings={status.data.settings}
+                      />
+                    </>
+                  )}
+                </Suspense>
+              )}
+            </div>
+          ))}
+        <div
+          hidden={!modelVisible}
+          className={cn(
+            'min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5',
+            !modelVisible && 'hidden'
+          )}
+        >
+          {visited.includes('model') && (
+            <Suspense fallback={<LoadingState />}>
+              <ModelReviewDialog
+                embedded
+                active={modelVisible}
+                view={modelVisible ? page.slice(6) : undefined}
+                onViewChange={(view) => navigate(`model-${view}`)}
+              />
             </Suspense>
           )}
-        </TabsContent>
-      ))}
-    </Tabs>
+        </div>
+      </div>
+    </div>
   )
 }

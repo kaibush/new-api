@@ -26,16 +26,19 @@ import { cn } from '@/lib/utils'
 export function AuditFeatureSurface(
   props: ComponentProps<typeof Dialog> & {
     embedded?: boolean
+    showHeading?: boolean
   }
 ) {
-  const { embedded, ...dialogProps } = props
+  const { embedded, showHeading = true, ...dialogProps } = props
   if (embedded) {
     return (
       <section
         aria-label={typeof props.title === 'string' ? props.title : undefined}
         className='min-w-0 space-y-4'
       >
-        <h2 className='text-base font-semibold'>{props.title}</h2>
+        {showHeading && (
+          <h2 className='text-base font-semibold'>{props.title}</h2>
+        )}
         {props.description && (
           <p className='text-muted-foreground text-sm'>{props.description}</p>
         )}

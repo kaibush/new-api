@@ -228,6 +228,7 @@ export function ModelReviewResults(props: {
   return (
     <>
       <DataTablePage
+        fixedHeight={false}
         table={table}
         columns={columns}
         isLoading={query.isPending}

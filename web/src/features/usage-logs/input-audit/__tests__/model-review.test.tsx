@@ -31,6 +31,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { InputAuditViewer } from '..'
 import type { ModelReviewSettings, ModelReviewJob } from '../model-review-api'
 import { ModelReviewDialog } from '../model-review-dialog'
 
@@ -643,4 +644,40 @@ it('dashboard cleanup deletes only the selected user after confirmation', async 
       data: { all: true, user_id: 4 },
     })
   )
+})
+
+it('audit sidebar opens the dashboard directly and selecting a user navigates to results without nested tabs', async () => {
+  render(
+    <QueryClientProvider client={client}>
+      <InputAuditViewer />
+    </QueryClientProvider>
+  )
+  const navigation = screen.getByRole('navigation', {
+    name: 'Audit management',
+  })
+  await userEvent.click(
+    within(navigation).getByRole('button', { name: 'User review dashboard' })
+  )
+  const dashboard = await screen.findByRole('region', {
+    name: 'User review dashboard',
+  })
+  await within(dashboard).findByText('Fraud · 2')
+  expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
+  expect(
+    within(navigation).getByRole('button', { name: 'User review dashboard' })
+  ).toHaveAttribute('aria-current', 'page')
+  await userEvent.click(
+    within(dashboard).getByRole('button', { name: 'Results' })
+  )
+  await waitFor(() =>
+    expect(api.get).toHaveBeenCalledWith('/api/input-audit/model/results', {
+      params: expect.objectContaining({ user_id: 4, status: 'review' }),
+    })
+  )
+  expect(
+    within(navigation).getByRole('button', { name: 'Results' })
+  ).toHaveAttribute('aria-current', 'page')
+  expect(
+    screen.queryByRole('region', { name: 'User review dashboard' })
+  ).not.toBeInTheDocument()
 })
