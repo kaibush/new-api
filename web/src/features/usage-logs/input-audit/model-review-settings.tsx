@@ -59,6 +59,7 @@ const providerEndpoints: Record<string, string> = {
 const schema = z
   .object({
     enabled: z.boolean(),
+    paused: z.boolean().optional(),
     automatic: z.boolean(),
     endpoint: z.string().max(2000),
     key_env: z.string(),
@@ -72,7 +73,7 @@ const schema = z
     concurrency: z.number().int().min(1).max(5),
     chunk_chars: z.number().int().min(1000).max(16000),
     timeout_seconds: z.number().int().min(5).max(120),
-    request_interval_seconds: z.number().int().min(1).max(60),
+    request_interval_seconds: z.number().int().min(0).max(60),
     retries: z.number().int().min(0).max(3),
     confidence_threshold: z.number().int().min(0).max(100),
     retention_days: z.number().int().min(1).max(90),
@@ -174,12 +175,6 @@ export function ModelReviewSettingsForm(props: {
       max: 5,
     },
     {
-      name: 'batch_size' as const,
-      label: t('Messages per review job'),
-      min: 1,
-      max: 1000,
-    },
-    {
       name: 'chunk_chars' as const,
       label: t('Characters per model request'),
       min: 1000,
@@ -194,7 +189,7 @@ export function ModelReviewSettingsForm(props: {
     {
       name: 'request_interval_seconds' as const,
       label: t('Request interval (seconds)'),
-      min: 1,
+      min: 0,
       max: 60,
     },
     { name: 'retries' as const, label: t('Retries'), min: 0, max: 3 },
@@ -401,7 +396,7 @@ export function ModelReviewSettingsForm(props: {
             <AccordionContent>
               <p className='text-muted-foreground mb-4 text-xs'>
                 {t(
-                  'Review up to 5 messages concurrently. The request interval is shared by all workers, text chunks and retries. Rate limits and server errors pause new requests; retries use exponential backoff. Saved changes apply to new jobs.'
+                  'Review up to 5 messages concurrently until the queue is empty. Set the shared request interval to 0 to run without a fixed delay. Rate limits and server errors pause new requests; retries use exponential backoff. Saved changes apply to new jobs.'
                 )}
               </p>
               <p className='text-muted-foreground mb-4 text-xs'>

@@ -29,24 +29,21 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Field, FieldLabel } from '@/components/ui/field'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { UserIdentity } from '@/components/user-identity'
 import { UserSelector } from '@/components/user-selector'
 import { toIntlLocale } from '@/i18n/languages'
-import dayjs from '@/lib/dayjs'
 import { formatNumber } from '@/lib/format'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { useModelReviewLabels } from './case-labels'
 import {
-  cancelModelReview,
   getModelReviewJobs,
   getModelReviewSummary,
   getModelReviewSettings,
   startModelReview,
 } from './model-review-api'
-import {
-  ModelReviewResults,
-} from './model-review-results'
-import { useModelReviewLabels } from './case-labels'
+import { ModelReviewDashboard } from './model-review-dashboard'
+import { ModelReviewQueue } from './model-review-queue'
+import { ModelReviewResults } from './model-review-results'
 import { ModelReviewSettingsForm } from './model-review-settings'
 
 export function ModelReviewDialog() {
@@ -59,6 +56,7 @@ export function ModelReviewDialog() {
   const [mode, setMode] = useState('incremental')
   const [scope, setScope] = useState<number>()
   const [selectedJob, setSelectedJob] = useState<number>()
+  const [selectedUser, setSelectedUser] = useState<number>()
   const client = useQueryClient()
   const settings = useQuery({
     queryKey: ['model-review-settings', userID],
@@ -86,15 +84,7 @@ export function ModelReviewDialog() {
       void client.invalidateQueries({ queryKey: ['model-review-jobs'] })
     },
   })
-  const cancel = useMutation({
-    mutationFn: cancelModelReview,
-    onSuccess: () => {
-      void client.invalidateQueries({ queryKey: ['model-review-jobs'] })
-    },
-  })
-  const active = jobs.data?.find((job) =>
-    ['running', 'pending'].includes(job.status)
-  )
+  const active = jobs.data?.find((job) => job.status === 'running')
   const latest = jobs.data?.[0]
   return (
     <Dialog
@@ -110,8 +100,11 @@ export function ModelReviewDialog() {
         onValueChange={(value) => setTab(String(value))}
         className='min-w-0'
       >
-        <TabsList className='bg-background sticky top-0 z-10 grid w-full grid-cols-3 border'>
-          <TabsTrigger value='overview'>{t('Overview')}</TabsTrigger>
+        <TabsList className='bg-background sticky top-0 z-10 grid w-full grid-cols-2 border sm:grid-cols-4'>
+          <TabsTrigger value='overview'>{t('Review task queue')}</TabsTrigger>
+          <TabsTrigger value='dashboard'>
+            {t('User review dashboard')}
+          </TabsTrigger>
           <TabsTrigger value='results'>{t('Results')}</TabsTrigger>
           <TabsTrigger value='settings'>{t('Settings')}</TabsTrigger>
         </TabsList>
@@ -197,7 +190,7 @@ export function ModelReviewDialog() {
                   </div>
                   <p className='text-muted-foreground text-xs'>
                     {t(
-                      'Each run reviews up to the configured batch limit. Incremental mode skips previously attempted messages; failed reviews can be retried separately.'
+                      'Start once to review all retained messages in the selected scope. A bounded queue feeds concurrent workers automatically, and each result is saved immediately. Failed reviews can be retried separately.'
                     )}
                   </p>
                   <div className='flex flex-wrap items-center justify-between gap-3'>
@@ -210,7 +203,6 @@ export function ModelReviewDialog() {
                       disabled={
                         !settings.data?.enabled ||
                         jobs.isPending ||
-                        !!active ||
                         start.isPending
                       }
                       onClick={() => start.mutate({ mode, user_id: scope })}
@@ -225,87 +217,41 @@ export function ModelReviewDialog() {
                   )}
                 </CardContent>
               </Card>
-              <div className='flex items-center justify-between'>
-                <h3 className='font-medium'>{t('Recent review jobs')}</h3>
-                <Button
-                  size='sm'
-                  variant='ghost'
-                  onClick={() => {
-                    setSelectedJob(undefined)
-                    setTab('results')
-                  }}
-                >
-                  {t('All results')}
-                </Button>
-              </div>
-              {jobs.isPending && <LoadingState />}
-              {!jobs.isPending && !jobs.data?.length && (
-                <p className='text-muted-foreground py-6 text-center'>
-                  {t('No records')}
-                </p>
-              )}
-              <div className='max-h-80 space-y-2 overflow-y-auto'>
-                {jobs.data?.map((job) => (
-                  <article
-                    key={job.id}
-                    className='flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between'
-                  >
-                    <div className='min-w-0 space-y-1'>
-                      <div className='flex flex-wrap items-center gap-2'>
-                        <span className='font-medium'>#{job.id}</span>
-                        <Badge variant='secondary'>{labels[job.status]}</Badge>
-                        <span className='text-muted-foreground text-xs'>
-                          {dayjs.unix(job.created_at).format('MM-DD HH:mm')}
-                        </span>
-                      </div>
-                      <p className='text-muted-foreground text-xs'>
-                        {t(
-                          'Reviewed: {{count}} · needs review: {{flagged}} · failed: {{failed}}',
-                          {
-                            count: formatNumber(job.processed, locale),
-                            flagged: formatNumber(job.flagged, locale),
-                            failed: formatNumber(job.failed, locale),
-                          }
-                        )}
-                      </p>
-                      {job.user_id > 0 && <UserIdentity userId={job.user_id} />}
-                    </div>
-                    <div className='flex shrink-0 gap-2'>
-                      <Button
-                        variant='outline'
-                        size='sm'
-                        onClick={() => {
-                          setSelectedJob(job.id)
-                          setTab('results')
-                        }}
-                      >
-                        {t('Results')}
-                      </Button>
-                      {['pending', 'running'].includes(job.status) && (
-                        <Button
-                          variant='outline'
-                          size='sm'
-                          disabled={cancel.isPending}
-                          onClick={() => cancel.mutate(job.id)}
-                        >
-                          {t('Cancel')}
-                        </Button>
-                      )}
-                    </div>
-                  </article>
-                ))}
-              </div>
+              <ModelReviewQueue
+                jobs={jobs.data ?? []}
+                loading={jobs.isPending}
+                paused={settings.data?.paused ?? false}
+                onSelectJob={(id) => {
+                  setSelectedJob(id)
+                  setSelectedUser(undefined)
+                  setTab('results')
+                }}
+              />
             </>
           )}
         </TabsContent>
+        <TabsContent value='dashboard' className='pt-3'>
+          {tab === 'dashboard' && (
+            <ModelReviewDashboard
+              onSelectUser={(id) => {
+                setSelectedUser(id)
+                setSelectedJob(undefined)
+                setTab('results')
+              }}
+            />
+          )}
+        </TabsContent>
         <TabsContent value='results' className='pt-3'>
-          {selectedJob && (
+          {(selectedJob || selectedUser) && (
             <div className='mb-3 flex items-center justify-between'>
-              <Badge variant='outline'>#{selectedJob}</Badge>
+              <Badge variant='outline'>#{selectedJob ?? selectedUser}</Badge>
               <Button
                 variant='ghost'
                 size='sm'
-                onClick={() => setSelectedJob(undefined)}
+                onClick={() => {
+                  setSelectedJob(undefined)
+                  setSelectedUser(undefined)
+                }}
               >
                 {t('All results')}
               </Button>
@@ -313,8 +259,10 @@ export function ModelReviewDialog() {
           )}
           {tab === 'results' && (
             <ModelReviewResults
-              key={selectedJob ?? 'all'}
+              key={`${selectedJob ?? 'all'}-${selectedUser ?? 'all'}`}
               jobID={selectedJob}
+              userID={selectedUser}
+              status={selectedUser ? 'review' : undefined}
             />
           )}
         </TabsContent>

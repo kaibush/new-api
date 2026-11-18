@@ -1139,13 +1139,22 @@ func TestInputAuditConcurrentReviewAndUserDashboard(t *testing.T) {
 			settings := model.DefaultInputAuditReviewSettings()
 			settings.Enabled, settings.Endpoint, settings.Model = true, upstream.URL, "review-model"
 			settings.KeyEnv = ""
-			settings.Concurrency, settings.BatchSize, settings.RequestIntervalSeconds, settings.Retries = 3, 3, 1, 0
+			settings.Concurrency, settings.BatchSize, settings.RequestIntervalSeconds, settings.Retries = 3, 3, 0, 0
 			require.NoError(t, model.SaveInputAuditReviewSettings(db, settings))
 			for i := range 4 {
 				require.NoError(t, db.Create(&model.InputAudit{UserId: 9, ContentHash: fmt.Sprint(i), Content: "evidence", CreatedAt: time.Now().Unix()}).Error)
 			}
-			job, err := model.CreateInputAuditReviewJob(db, "incremental", 0, 1, false)
+			job, err := model.CreateInputAuditReviewJob(db, "all", 0, 1, false)
 			require.NoError(t, err)
+			// Recover an expired lease with an out-of-order result already saved.
+			// Cursor remains zero; the completed message must not be sent again.
+			require.NoError(t, db.Create(&model.InputAuditReviewResult{JobId: job.Id, AuditId: 3, UserId: 9, Status: "review", Category: "fraud"}).Error)
+			require.NoError(t, db.Model(&model.InputAudit{}).Where("id = ?", 3).Update("review_attempted_at", time.Now().Unix()).Error)
+			require.NoError(t, db.Model(&job).Updates(map[string]any{"status": "running", "processed": 1, "flagged": 1, "lease_until": time.Now().Unix() - 1, "lease_token": "expired-owner"}).Error)
+			require.NoError(t, model.PruneInputAuditReviews(db, 30, time.Now().Unix()))
+			var checkpoints int64
+			require.NoError(t, db.Model(&model.InputAuditReviewResult{}).Where("job_id = ?", job.Id).Count(&checkpoints).Error)
+			assert.Equal(t, int64(1), checkpoints)
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			finished := make(chan error, 1)
@@ -1162,13 +1171,14 @@ func TestInputAuditConcurrentReviewAndUserDashboard(t *testing.T) {
 			assert.Equal(t, int32(3), calls.Load())
 			close(release)
 			require.NoError(t, <-finished)
+			assert.Equal(t, int32(3), calls.Load())
 			require.NoError(t, db.First(&job, job.Id).Error)
 			assert.Equal(t, "completed", job.Status)
-			assert.Equal(t, 3, job.Processed)
-			assert.Equal(t, 3, job.Flagged)
+			assert.Equal(t, 4, job.Processed)
+			assert.Equal(t, 4, job.Flagged)
 			var remaining int64
 			require.NoError(t, db.Model(&model.InputAudit{}).Where("review_attempted_at IS NULL OR review_attempted_at = ?", 0).Count(&remaining).Error)
-			assert.Equal(t, int64(1), remaining)
+			assert.Zero(t, remaining)
 			for _, mode := range []string{"cancelled", "ownership_lost", "context_cancelled"} {
 				t.Run(mode, func(t *testing.T) {
 					ready := make(chan struct{}, 3)
@@ -1203,7 +1213,7 @@ func TestInputAuditConcurrentReviewAndUserDashboard(t *testing.T) {
 					}
 					switch mode {
 					case "cancelled":
-						require.NoError(t, db.Model(&current).Update("status", "cancelled").Error)
+						require.NoError(t, db.Model(&current).Updates(map[string]any{"status": "cancelled", "lease_until": 0}).Error)
 					case "ownership_lost":
 						require.NoError(t, db.Model(&current).Update("lease_token", "replacement-owner").Error)
 					case "context_cancelled":
@@ -1216,7 +1226,7 @@ func TestInputAuditConcurrentReviewAndUserDashboard(t *testing.T) {
 					assert.Zero(t, count)
 					require.NoError(t, db.First(&current, current.Id).Error)
 					assert.Zero(t, current.Processed)
-					require.NoError(t, db.Model(&current).Update("status", "cancelled").Error)
+					require.NoError(t, db.Model(&current).Updates(map[string]any{"status": "cancelled", "lease_until": 0}).Error)
 				})
 			}
 			// Newest verdicts replace earlier ones; failure and missing evidence are
@@ -1239,7 +1249,7 @@ func TestInputAuditConcurrentReviewAndUserDashboard(t *testing.T) {
 				suspected, total, categories int
 			}{
 				{"", 2, 2, 2},
-				{fmt.Sprintf("?job_id=%d", job.Id), 3, 1, 1},
+				{fmt.Sprintf("?job_id=%d", job.Id), 4, 1, 1},
 				{"?user_id=10", 0, 1, 0},
 			} {
 				w := httptest.NewRecorder()
@@ -1683,4 +1693,110 @@ func TestInputAuditReviewCredentialDisclosureProof(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(encoded), "audit-saved-secret")
 	assert.NotContains(t, string(encoded), proof.ProofToken)
+}
+
+func TestInputAuditQueueManagementAndDeletion(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := inputAuditTestDB(t, dialect)
+			require.NoError(t, db.Migrator().DropTable(&model.InputAuditReviewResult{}, &model.InputAuditReviewJob{}))
+			require.NoError(t, db.AutoMigrate(&model.Option{}, &model.InputAudit{}, &model.InputAuditEvidence{}, &model.InputAuditMatch{}, &model.InputAuditCase{}, &model.InputAuditReviewJob{}, &model.InputAuditReviewResult{}))
+			settings := model.DefaultInputAuditReviewSettings()
+			settings.Enabled = true
+			settings.Endpoint = "http://127.0.0.1:3000/v1/chat/completions"
+			settings.Model = "review"
+			settings.APIKey = "queue-secret"
+			settings.KeyEnv = ""
+			require.NoError(t, model.SaveInputAuditReviewSettings(db, settings))
+			first := model.InputAudit{UserId: 1, ContentHash: "one", RequestId: "one", Content: "literal %_! text", CreatedAt: time.Now().Unix(), ReviewAttemptedAt: time.Now().Unix()}
+			second := model.InputAudit{UserId: 2, ContentHash: "two", RequestId: "two", Content: "other", CreatedAt: time.Now().Unix()}
+			require.NoError(t, db.Create(&first).Error)
+			require.NoError(t, db.Create(&second).Error)
+			require.NoError(t, db.Create(&model.InputAuditEvidence{UserId: 1, RequestId: "one", ContentHash: "one", Body: "private submitted text"}).Error)
+			require.NoError(t, db.Create(&model.InputAuditMatch{UserId: 1, RequestId: "one", Evidence: "private match"}).Error)
+			archive := model.InputAuditCase{AuditId: first.Id, UserId: 1, Status: "pending", Version: 1, Snapshot: "retained human evidence"}
+			require.NoError(t, db.Create(&archive).Error)
+			one, err := model.CreateInputAuditReviewJob(db, "all", 1, 1, false)
+			require.NoError(t, err)
+			two, err := model.CreateInputAuditReviewJob(db, "all", 2, 1, false)
+			require.NoError(t, err)
+			_, err = model.CreateInputAuditReviewJob(db, "all", 1, 1, false)
+			require.Error(t, err)
+			require.NoError(t, model.SetInputAuditReviewQueuePaused(db, true))
+			_, err = model.ClaimInputAuditReviewJob(db, "blocked", time.Now().Unix())
+			assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+			require.NoError(t, model.SetInputAuditReviewQueuePaused(db, false))
+			claimed, err := model.ClaimInputAuditReviewJob(db, "owner", time.Now().Unix())
+			require.NoError(t, err)
+			assert.Equal(t, one.Id, claimed.Id)
+			_, err = model.ClaimInputAuditReviewJob(db, "other-owner", time.Now().Unix())
+			assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+			assert.Error(t, model.UpdateQueuedInputAuditReviewJob(db, one.Id, "all", 1, 5, 0))
+			require.NoError(t, model.UpdateQueuedInputAuditReviewJob(db, two.Id, "incremental", 2, 5, 0))
+			require.NoError(t, db.First(&two, two.Id).Error)
+			var captured model.InputAuditReviewSettings
+			require.NoError(t, common.UnmarshalJsonStr(two.Settings, &captured))
+			assert.Equal(t, 5, captured.Concurrency)
+			assert.Zero(t, captured.RequestIntervalSeconds)
+			assert.Error(t, model.UpdateQueuedInputAuditReviewJob(db, two.Id, "bad", 2, 5, 0))
+			assert.Error(t, model.UpdateQueuedInputAuditReviewJob(db, two.Id, "all", 2, 6, 0))
+			result := model.InputAuditReviewResult{JobId: one.Id, AuditId: first.Id, UserId: 1, Status: "review", Category: "fraud"}
+			require.NoError(t, db.Create(&result).Error)
+			assert.Error(t, model.DeleteInputAuditReviewJobs(db, []int64{one.Id}))
+			assert.Error(t, model.DeleteInputAuditReviewResults(db, []int64{result.Id}, 0, 0, ""))
+			assert.Error(t, model.DeleteInputAuditMessages(db, []int64{first.Id}, model.InputAuditFilter{}))
+			count, err := model.CancelInputAuditReviewQueue(db)
+			require.NoError(t, err)
+			assert.Equal(t, int64(2), count)
+			require.NoError(t, db.First(&one, one.Id).Error)
+			assert.Equal(t, "cancelled", one.Status)
+			_, err = model.ClaimInputAuditReviewJob(db, "still-stopping", time.Now().Unix())
+			assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+			assert.Error(t, model.DeleteInputAuditReviewJobs(db, []int64{one.Id}))
+			require.NoError(t, db.Model(&one).Update("lease_until", 0).Error)
+			require.NoError(t, model.DeleteInputAuditReviewJobs(db, []int64{two.Id}))
+			require.NoError(t, model.DeleteInputAuditReviewResults(db, []int64{result.Id}, 0, 0, ""))
+			var stored model.InputAudit
+			require.NoError(t, db.First(&stored, first.Id).Error)
+			assert.NotZero(t, stored.ReviewAttemptedAt)
+			_, err = model.NextInputAuditForReview(db, model.InputAuditReviewJob{Mode: "incremental", UserId: 1, UpperId: second.Id})
+			assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+			// User-scoped cleanup never removes another user's retained results.
+			a := model.InputAuditReviewResult{JobId: one.Id, AuditId: first.Id, UserId: 1, Status: "failed"}
+			b := model.InputAuditReviewResult{JobId: 999, AuditId: second.Id, UserId: 2, Status: "review"}
+			require.NoError(t, db.Create(&a).Error)
+			require.NoError(t, db.Create(&b).Error)
+			require.NoError(t, model.DeleteInputAuditReviewResults(db, nil, 0, 1, ""))
+			require.NoError(t, db.First(&b, b.Id).Error)
+			// Literal wildcard filtering and evidence cleanup share list semantics.
+			require.NoError(t, model.DeleteInputAuditMessages(db, nil, model.InputAuditFilter{Keyword: "%_!", UserId: 1}))
+			assert.ErrorIs(t, db.First(&stored, first.Id).Error, gorm.ErrRecordNotFound)
+			require.NoError(t, db.First(&second, second.Id).Error)
+			var evidenceCount, matchCount int64
+			require.NoError(t, db.Model(&model.InputAuditEvidence{}).Where("user_id = ?", 1).Count(&evidenceCount).Error)
+			assert.Zero(t, evidenceCount)
+			require.NoError(t, db.Model(&model.InputAuditMatch{}).Where("user_id = ?", 1).Count(&matchCount).Error)
+			assert.Zero(t, matchCount)
+			require.NoError(t, db.First(&archive, archive.Id).Error)
+			assert.Equal(t, "retained human evidence", archive.Snapshot)
+			require.NoError(t, model.DeleteInputAuditReviewJobs(db, []int64{one.Id}))
+			paused, err := model.LoadInputAuditReviewSettings(db)
+			require.NoError(t, err)
+			assert.True(t, paused.Paused)
+			assert.Equal(t, "queue-secret", paused.APIKey)
+			previous := model.DB
+			model.DB = db
+			defer func() { model.DB = previous }()
+			router := gin.New()
+			router.DELETE("/jobs", DeleteInputAuditReviewJobs)
+			router.DELETE("/results", DeleteInputAuditReviewResults)
+			router.DELETE("/messages", DeleteInputAudits)
+			router.PUT("/queue", PauseInputAuditReviewQueue)
+			for _, tc := range []struct{ method, path, body string }{{"DELETE", "/jobs", "{}"}, {"DELETE", "/results", "{}"}, {"DELETE", "/messages", "{}"}, {"PUT", "/queue", "{}"}, {"DELETE", "/results", `{"all":true,"user_id":-1}`}, {"DELETE", "/jobs", `{"ids":[-1]}`}} {
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body)))
+				assert.Equal(t, 400, w.Code)
+			}
+		})
+	}
 }

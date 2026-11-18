@@ -299,3 +299,12 @@ export async function updateInputAuditSettings(
   )
   return requireServerSuccess(response.data)
 }
+
+export async function deleteInputAudits(
+  values: { ids?: number[]; all?: boolean } & Partial<InputAuditFilters>
+) {
+  const response = await api.delete<ApiResponse>('/api/input-audit', {
+    data: values,
+  })
+  requireServerSuccess(response.data)
+}

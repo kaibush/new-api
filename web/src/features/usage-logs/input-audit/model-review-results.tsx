@@ -16,15 +16,21 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { DataTablePage, useDataTable } from '@/components/data-table'
+import { ConfirmDialog } from '@/components/confirm-dialog'
+import {
+  DataTablePage,
+  DataTableBulkActions,
+  useDataTable,
+} from '@/components/data-table'
 import { Dialog } from '@/components/dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { UserIdentity } from '@/components/user-identity'
@@ -38,14 +44,18 @@ import { useInputAuditCaseLabels, useModelReviewLabels } from './case-labels'
 import { InputAuditCasePanel } from './case-panel'
 import {
   getModelReviewResults,
+  deleteModelReviewResults,
   type ModelReviewFilters,
   type ModelReviewResult,
 } from './model-review-api'
-import { ModelReviewDashboard } from './model-review-dashboard'
 
 const EMPTY: ModelReviewResult[] = []
 
-export function ModelReviewResults(props: { jobID?: number }) {
+export function ModelReviewResults(props: {
+  jobID?: number
+  userID?: number
+  status?: string
+}) {
   const { t, i18n } = useTranslation()
   const userID = useAuthStore((state) => state.auth.user?.id)
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
@@ -54,8 +64,30 @@ export function ModelReviewResults(props: { jobID?: number }) {
   const [filters, setFilters] = useState<ModelReviewFilters>({
     p: 1,
     page_size: 20,
-    status: '',
+    status: props.status ?? '',
+    user_id: props.userID,
     job_id: props.jobID,
+  })
+
+  const client = useQueryClient()
+  const [deletion, setDeletion] = useState<{
+    ids?: number[]
+    all?: boolean
+    job_id?: number
+    user_id?: number
+    status?: string
+  }>()
+  const remove = useMutation({
+    mutationFn: deleteModelReviewResults,
+    onSuccess: () => {
+      setDeletion(undefined)
+      setSelected(undefined)
+      table.resetRowSelection()
+      setFilters((previous) => ({ ...previous, p: 1 }))
+      void client.invalidateQueries({ queryKey: ['model-review-results'] })
+      void client.invalidateQueries({ queryKey: ['model-review-users'] })
+      void client.invalidateQueries({ queryKey: ['model-review-jobs'] })
+    },
   })
   const [selected, setSelected] = useState<ModelReviewResult>()
   const query = useQuery({
@@ -66,6 +98,32 @@ export function ModelReviewResults(props: { jobID?: number }) {
   })
   const columns = useMemo<ColumnDef<ModelReviewResult>[]>(
     () => [
+      {
+        id: 'select',
+        header: ({ table }) => (
+          <Checkbox
+            checked={table.getIsAllPageRowsSelected()}
+            indeterminate={
+              table.getIsSomePageRowsSelected() &&
+              !table.getIsAllPageRowsSelected()
+            }
+            onCheckedChange={(value) =>
+              table.toggleAllPageRowsSelected(Boolean(value))
+            }
+            aria-label={t('Select all')}
+          />
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={row.getIsSelected()}
+            onCheckedChange={(value) => row.toggleSelected(Boolean(value))}
+            aria-label={t('Select row')}
+          />
+        ),
+        enableSorting: false,
+        enableHiding: false,
+        size: 40,
+      },
       {
         accessorKey: 'user_id',
         header: t('User'),
@@ -124,8 +182,23 @@ export function ModelReviewResults(props: { jobID?: number }) {
         ),
         meta: { label: t('Details') },
       },
+      {
+        id: 'delete',
+        header: t('Delete'),
+        cell: ({ row }) => (
+          <Button
+            variant='destructive'
+            size='sm'
+            disabled={remove.isPending}
+            onClick={() => setDeletion({ ids: [row.original.id] })}
+          >
+            {t('Delete')}
+          </Button>
+        ),
+        meta: { label: t('Delete') },
+      },
     ],
-    [t, labels, categories, locale]
+    [t, labels, categories, locale, remove.isPending]
   )
   const { table } = useDataTable({
     columns,
@@ -148,29 +221,43 @@ export function ModelReviewResults(props: { jobID?: number }) {
     getRowId: (row) => String(row.id),
     manualPagination: true,
     enableSorting: false,
-    enableRowSelection: false,
+    enableRowSelection: true,
   })
   return (
     <>
-      <ModelReviewDashboard
-        key={`${props.jobID ?? 'all'}-${filters.user_id ?? 'all'}`}
-        jobID={props.jobID}
-        userID={filters.user_id}
-        onSelectUser={(id) =>
-          setFilters({ ...filters, p: 1, user_id: id, status: 'review' })
-        }
-      />
       <DataTablePage
         table={table}
         columns={columns}
         isLoading={query.isPending}
         isFetching={query.isFetching}
         paginationInFooter={false}
+        showMobileBulkActions
+        mobileProps={{ enableRowSelection: true }}
+        bulkActions={
+          <DataTableBulkActions table={table} entityName={t('Review result')}>
+            <Button
+              variant='destructive'
+              disabled={
+                remove.isPending ||
+                table.getFilteredSelectedRowModel().rows.length > 100
+              }
+              onClick={() =>
+                setDeletion({
+                  ids: table
+                    .getFilteredSelectedRowModel()
+                    .rows.map((row) => row.original.id),
+                })
+              }
+            >
+              {t('Delete selected')}
+            </Button>
+          </DataTableBulkActions>
+        }
         emptyTitle={
           query.isError ? t('Failed to load audit records') : t('No records')
         }
         toolbar={
-          <div className='grid gap-2 sm:grid-cols-[1fr_1fr_auto]'>
+          <div className='grid gap-2 sm:grid-cols-[1fr_1fr_auto_auto]'>
             <UserSelector
               value={filters.user_id}
               onChange={(id) => setFilters({ ...filters, p: 1, user_id: id })}
@@ -198,9 +285,46 @@ export function ModelReviewResults(props: { jobID?: number }) {
             >
               {t('Refresh')}
             </Button>
+            <Button
+              variant='destructive'
+              disabled={
+                query.isFetching || remove.isPending || !query.data?.total
+              }
+              onClick={() =>
+                setDeletion({
+                  all: true,
+                  job_id: filters.job_id,
+                  user_id: filters.user_id,
+                  status: filters.status,
+                })
+              }
+            >
+              {t('Clear filtered results')}
+            </Button>
           </div>
         }
       />
+      <ConfirmDialog
+        open={!!deletion}
+        onOpenChange={(open) => {
+          if (!open && !remove.isPending) setDeletion(undefined)
+        }}
+        title={t('Delete review results')}
+        desc={
+          deletion?.all
+            ? t(
+                'Delete all review results matching the selected task, user and status filters. This cannot be undone.'
+              )
+            : t('Delete the selected review results. This cannot be undone.')
+        }
+        destructive
+        isLoading={remove.isPending}
+        handleConfirm={() => {
+          if (deletion) remove.mutate(deletion)
+        }}
+        confirmText={t('Delete')}
+      />
+
       {selected && (
         <Dialog
           open

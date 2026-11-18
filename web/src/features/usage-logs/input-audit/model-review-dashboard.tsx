@@ -16,11 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { DataTablePage, useDataTable } from '@/components/data-table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -31,7 +32,11 @@ import { formatNumber } from '@/lib/format'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { useInputAuditCaseLabels } from './case-labels'
-import { getModelReviewUsers, type ModelReviewUser } from './model-review-api'
+import {
+  getModelReviewUsers,
+  deleteModelReviewResults,
+  type ModelReviewUser,
+} from './model-review-api'
 
 const EMPTY: ModelReviewUser[] = []
 
@@ -45,6 +50,18 @@ export function ModelReviewDashboard(props: {
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const categories = useInputAuditCaseLabels().categories
   const onSelectUser = props.onSelectUser
+  const client = useQueryClient()
+  const [deletingUser, setDeletingUser] = useState<number>()
+  const remove = useMutation({
+    mutationFn: (id: number) =>
+      deleteModelReviewResults({ all: true, user_id: id }),
+    onSuccess: () => {
+      setDeletingUser(undefined)
+      void client.invalidateQueries({ queryKey: ['model-review-users'] })
+      void client.invalidateQueries({ queryKey: ['model-review-results'] })
+      void client.invalidateQueries({ queryKey: ['model-review-jobs'] })
+    },
+  })
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 10 })
   const query = useQuery({
     queryKey: [
@@ -131,8 +148,23 @@ export function ModelReviewDashboard(props: {
         ),
         meta: { label: t('Results') },
       },
+      {
+        id: 'delete',
+        header: t('Delete'),
+        cell: ({ row }) => (
+          <Button
+            variant='destructive'
+            size='sm'
+            disabled={remove.isPending}
+            onClick={() => setDeletingUser(row.original.user_id)}
+          >
+            {t('Clear user results')}
+          </Button>
+        ),
+        meta: { label: t('Delete') },
+      },
     ],
-    [t, locale, categories, onSelectUser]
+    [t, locale, categories, onSelectUser, remove.isPending]
   )
   const { table } = useDataTable({
     columns,
@@ -198,6 +230,22 @@ export function ModelReviewDashboard(props: {
             </Button>
           ) : undefined
         }
+      />
+      <ConfirmDialog
+        open={deletingUser !== undefined}
+        onOpenChange={(open) => {
+          if (!open && !remove.isPending) setDeletingUser(undefined)
+        }}
+        title={t('Clear user results')}
+        desc={t(
+          'Delete all retained review results for this user. This cannot be undone.'
+        )}
+        destructive
+        isLoading={remove.isPending}
+        handleConfirm={() => {
+          if (deletingUser !== undefined) remove.mutate(deletingUser)
+        }}
+        confirmText={t('Delete')}
       />
     </section>
   )

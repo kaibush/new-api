@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -97,4 +98,34 @@ func UpdateInputAuditSettings(c *gin.Context) {
 	}
 	recordManageAudit(c, "input_audit.settings", map[string]any{"enabled": settings.Enabled, "retention_days": settings.RetentionDays, "max_records": settings.MaxRecords, "max_chars": settings.MaxChars})
 	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+func DeleteInputAudits(c *gin.Context) {
+	var request struct {
+		IDs       []int64 `json:"ids"`
+		All       bool    `json:"all"`
+		UserID    int     `json:"user_id"`
+		RequestID string  `json:"request_id"`
+		Keyword   string  `json:"keyword"`
+		Start     int64   `json:"start_timestamp"`
+		End       int64   `json:"end_timestamp"`
+	}
+	if err := common.DecodeJson(http.MaxBytesReader(c.Writer, c.Request.Body, 8192), &request); err != nil || len(request.IDs) > 100 || (!request.All && len(request.IDs) == 0) || (request.All && len(request.IDs) > 0) || slices.ContainsFunc(request.IDs, func(id int64) bool { return id < 1 }) || request.UserID < 0 || request.Start < 0 || request.End < 0 || (request.Start > 0 && request.End > 0 && request.End < request.Start) || len(request.RequestID) > 64 || !utf8.ValidString(request.Keyword) || utf8.RuneCountInString(request.Keyword) > 256 || strings.ContainsRune(request.Keyword, '\x00') {
+		c.JSON(400, gin.H{"success": false, "message": "Invalid audit filters"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancel()
+	db := model.DB.WithContext(ctx)
+	if _, err := model.LoadInputAuditReviewSettings(db); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	filter := model.InputAuditFilter{UserId: request.UserID, RequestId: request.RequestID, Keyword: strings.TrimSpace(request.Keyword), Start: request.Start, End: request.End}
+	if err := model.DeleteInputAuditMessages(db, request.IDs, filter); err != nil {
+		c.JSON(409, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	recordManageAudit(c, "input_audit.messages_delete", map[string]any{"message_ids": request.IDs, "user_id": request.UserID, "request_id": request.RequestID})
+	c.JSON(200, gin.H{"success": true})
 }

@@ -177,6 +177,16 @@ type InputAuditFilter struct {
 
 func QueryInputAudits(db *gorm.DB, filter InputAuditFilter, offset, limit int) ([]InputAudit, int64, error) {
 	rows := []InputAudit{}
+	query := filteredInputAudits(db, filter)
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return rows, 0, err
+	}
+	err := query.Order("created_at DESC").Order("id DESC").Offset(offset).Limit(limit).Find(&rows).Error
+	return rows, total, err
+}
+
+func filteredInputAudits(db *gorm.DB, filter InputAuditFilter) *gorm.DB {
 	query := db.Model(&InputAudit{})
 	if filter.UserId > 0 {
 		query = query.Where("user_id = ?", filter.UserId)
@@ -196,10 +206,56 @@ func QueryInputAudits(db *gorm.DB, filter InputAuditFilter, offset, limit int) (
 	if filter.End > 0 {
 		query = query.Where("created_at <= ?", filter.End)
 	}
-	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		return rows, 0, err
-	}
-	err := query.Order("created_at DESC").Order("id DESC").Offset(offset).Limit(limit).Find(&rows).Error
-	return rows, total, err
+	return query
+}
+
+// DeleteInputAuditMessages removes live submitted text and its derived review
+// evidence. Independently retained human case snapshots keep their audit trail.
+func DeleteInputAuditMessages(db *gorm.DB, ids []int64, filter InputAuditFilter) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		var guard Option
+		if err := lockForUpdate(tx).Where(&Option{Key: InputAuditReviewOption}).First(&guard).Error; err != nil {
+			return err
+		}
+		var active int64
+		if err := tx.Model(&InputAuditReviewJob{}).Where("lease_until > ?", time.Now().Unix()).Count(&active).Error; err != nil {
+			return err
+		}
+		if active > 0 {
+			return errors.New("Pause or stop the review queue before deleting submitted messages")
+		}
+		var upper InputAudit
+		if err := tx.Select("id").Order("id DESC").Limit(1).Find(&upper).Error; err != nil {
+			return err
+		}
+		query := filteredInputAudits(tx, filter).Where("id <= ?", upper.Id)
+		if len(ids) > 0 {
+			query = query.Where("id IN ?", ids)
+		}
+		for {
+			var rows []InputAudit
+			if err := query.Session(&gorm.Session{}).Select("id, user_id, request_id, content_hash").Order("id").Limit(100).Find(&rows).Error; err != nil {
+				return err
+			}
+			if len(rows) == 0 {
+				return nil
+			}
+			deleted := make([]int64, 0, len(rows))
+			for _, row := range rows {
+				deleted = append(deleted, row.Id)
+				if err := tx.Where("user_id = ? AND request_id = ? AND content_hash = ?", row.UserId, row.RequestId, row.ContentHash).Delete(&InputAuditEvidence{}).Error; err != nil {
+					return err
+				}
+				if err := tx.Where("user_id = ? AND request_id = ?", row.UserId, row.RequestId).Delete(&InputAuditMatch{}).Error; err != nil {
+					return err
+				}
+			}
+			if err := tx.Where("audit_id IN ?", deleted).Delete(&InputAuditReviewResult{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("id IN ?", deleted).Delete(&InputAudit{}).Error; err != nil {
+				return err
+			}
+		}
+	})
 }

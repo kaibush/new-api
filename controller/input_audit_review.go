@@ -113,11 +113,32 @@ func GetInputAuditReviewJobs(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 	rows := []model.InputAuditReviewJob{}
-	if err := model.DB.WithContext(ctx).Order("id DESC").Limit(20).Find(&rows).Error; err != nil {
+	if err := model.DB.WithContext(ctx).Where("status IN ?", []string{"pending", "running"}).Order("id").Limit(100).Find(&rows).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	c.JSON(200, gin.H{"success": true, "data": rows})
+	var history []model.InputAuditReviewJob
+	if err := model.DB.WithContext(ctx).Where("status NOT IN ?", []string{"pending", "running"}).Order("id DESC").Limit(1000).Find(&history).Error; err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	rows = append(rows, history...)
+	type jobResponse struct {
+		model.InputAuditReviewJob
+		Concurrency            int `json:"concurrency"`
+		RequestIntervalSeconds int `json:"request_interval_seconds"`
+	}
+	response := make([]jobResponse, 0, len(rows))
+	for _, row := range rows {
+		settings := model.DefaultInputAuditReviewSettings()
+		settings.Concurrency = 1
+		if err := common.UnmarshalJsonStr(row.Settings, &settings); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		response = append(response, jobResponse{row, settings.Concurrency, settings.RequestIntervalSeconds})
+	}
+	c.JSON(200, gin.H{"success": true, "data": response})
 }
 func GetInputAuditReviewResults(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
@@ -280,4 +301,144 @@ func GetInputAuditReviewCredential(c *gin.Context) {
 	}
 	recordManageAudit(c, "input_audit.credentials_view", nil)
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"api_key": key}})
+}
+
+// Queued jobs may change scope and pacing before dispatch. The singleton guard
+// serializes edits with claims so settings cannot change under a running worker.
+func UpdateInputAuditReviewJob(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("job_id"), 10, 64)
+	if err != nil || id < 1 {
+		c.JSON(400, gin.H{"success": false, "message": "Invalid job ID"})
+		return
+	}
+	var request struct {
+		Mode                   string `json:"mode"`
+		UserID                 int    `json:"user_id"`
+		Concurrency            int    `json:"concurrency"`
+		RequestIntervalSeconds int    `json:"request_interval_seconds"`
+	}
+	if err := common.DecodeJson(http.MaxBytesReader(c.Writer, c.Request.Body, 2048), &request); err != nil || !slices.Contains([]string{"incremental", "all", "failed"}, request.Mode) || request.UserID < 0 {
+		c.JSON(400, gin.H{"success": false, "message": "Invalid model review scope"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+	err = model.UpdateQueuedInputAuditReviewJob(model.DB.WithContext(ctx), id, request.Mode, request.UserID, request.Concurrency, request.RequestIntervalSeconds)
+	if err != nil {
+		c.JSON(409, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	recordManageAudit(c, "input_audit.model_job_update", map[string]any{"job_id": id, "mode": request.Mode, "user_id": request.UserID})
+	c.JSON(200, gin.H{"success": true})
+}
+
+func ClearInputAuditReviewQueue(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+	count, err := model.CancelInputAuditReviewQueue(model.DB.WithContext(ctx))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	recordManageAudit(c, "input_audit.model_queue_clear", map[string]any{"count": count})
+	c.JSON(200, gin.H{"success": true})
+}
+
+func PauseInputAuditReviewQueue(c *gin.Context) {
+	var request struct {
+		Paused *bool `json:"paused"`
+	}
+	if err := common.DecodeJson(http.MaxBytesReader(c.Writer, c.Request.Body, 1024), &request); err != nil || request.Paused == nil {
+		c.JSON(400, gin.H{"success": false, "message": "Invalid model review settings"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+	if err := model.SetInputAuditReviewQueuePaused(model.DB.WithContext(ctx), *request.Paused); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	recordManageAudit(c, "input_audit.model_queue_pause", map[string]any{"paused": *request.Paused})
+	c.JSON(200, gin.H{"success": true})
+}
+
+func DeleteInputAuditReviewJobs(c *gin.Context) {
+	var request struct {
+		IDs     []int64 `json:"ids"`
+		Stop    bool    `json:"stop"`
+		History bool    `json:"history"`
+	}
+	if err := common.DecodeJson(http.MaxBytesReader(c.Writer, c.Request.Body, 4096), &request); err != nil || (len(request.IDs) == 0 && !request.History) || (request.History && len(request.IDs) > 0) || len(request.IDs) > 100 || slices.ContainsFunc(request.IDs, func(id int64) bool { return id < 1 }) {
+		c.JSON(400, gin.H{"success": false, "message": "Invalid job ID"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+	if request.History {
+		var rows []model.InputAuditReviewJob
+		if err := model.DB.WithContext(ctx).Select("id").Where("status NOT IN ? AND lease_until <= ?", []string{"pending", "running"}, time.Now().Unix()).Limit(1000).Find(&rows).Error; err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		for _, row := range rows {
+			request.IDs = append(request.IDs, row.Id)
+		}
+		if len(request.IDs) == 0 {
+			c.JSON(200, gin.H{"success": true})
+			return
+		}
+	}
+	if request.Stop {
+		update := model.DB.WithContext(ctx).Model(&model.InputAuditReviewJob{}).Where("id IN ? AND status IN ?", request.IDs, []string{"pending", "running"}).Updates(map[string]any{"status": "cancelled", "updated_at": time.Now().Unix()})
+		if update.Error != nil {
+			common.ApiError(c, update.Error)
+			return
+		}
+		for {
+			var active int64
+			if err := model.DB.WithContext(ctx).Model(&model.InputAuditReviewJob{}).Where("id IN ? AND lease_until > ?", request.IDs, time.Now().Unix()).Count(&active).Error; err != nil {
+				common.ApiError(c, err)
+				return
+			}
+			if active == 0 {
+				break
+			}
+			timer := time.NewTimer(100 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				c.JSON(409, gin.H{"success": false, "message": "Stop active review jobs before deleting them"})
+				return
+			case <-timer.C:
+			}
+		}
+	}
+	if err := model.DeleteInputAuditReviewJobs(model.DB.WithContext(ctx), request.IDs); err != nil {
+		c.JSON(409, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	recordManageAudit(c, "input_audit.model_jobs_delete", map[string]any{"job_ids": request.IDs})
+	c.JSON(200, gin.H{"success": true})
+}
+
+func DeleteInputAuditReviewResults(c *gin.Context) {
+	var request struct {
+		IDs    []int64 `json:"ids"`
+		All    bool    `json:"all"`
+		JobID  int64   `json:"job_id"`
+		UserID int     `json:"user_id"`
+		Status string  `json:"status"`
+	}
+	if err := common.DecodeJson(http.MaxBytesReader(c.Writer, c.Request.Body, 4096), &request); err != nil || len(request.IDs) > 100 || (!request.All && len(request.IDs) == 0) || (request.All && len(request.IDs) > 0) || request.JobID < 0 || request.UserID < 0 || slices.ContainsFunc(request.IDs, func(id int64) bool { return id < 1 }) || (request.Status != "" && !slices.Contains([]string{"safe", "review", "insufficient_evidence", "failed"}, request.Status)) {
+		c.JSON(400, gin.H{"success": false, "message": "Invalid audit filters"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+	if err := model.DeleteInputAuditReviewResults(model.DB.WithContext(ctx), request.IDs, request.JobID, request.UserID, request.Status); err != nil {
+		c.JSON(409, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	recordManageAudit(c, "input_audit.model_results_delete", map[string]any{"result_ids": request.IDs, "job_id": request.JobID, "user_id": request.UserID, "status": request.Status})
+	c.JSON(200, gin.H{"success": true})
 }

@@ -277,7 +277,7 @@ func RunInputAuditReviewer(ctx context.Context, db *gorm.DB) {
 				lastCleanup = time.Now()
 			}
 		}
-		if !settings.Enabled {
+		if !settings.Enabled || settings.Paused {
 			continue
 		}
 		if settings.Automatic {
@@ -289,31 +289,29 @@ func RunInputAuditReviewer(ctx context.Context, db *gorm.DB) {
 	}
 }
 
-// Each step claims a bounded batch using an expiring database lease. A heartbeat
+// A job owns an expiring lease while its producer and consumers drain the scope. A heartbeat
 // cancels in-flight calls after cancellation or ownership loss. Commit checks
 // the token again so stale workers can never publish results or advance progress.
 func ProcessInputAuditReviewStep(ctx context.Context, db *gorm.DB, client *http.Client) error {
 	now := time.Now().Unix()
-	var job model.InputAuditReviewJob
-	err := db.WithContext(ctx).Where("status IN ? AND lease_until <= ?", []string{"pending", "running"}, now).Order("id").First(&job).Error
+	random := make([]byte, 16)
+	if _, err := rand.Read(random); err != nil {
+		return err
+	}
+	token := hex.EncodeToString(random)
+	job, err := model.ClaimInputAuditReviewJob(db.WithContext(ctx), token, now)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	random := make([]byte, 16)
-	if _, err = rand.Read(random); err != nil {
-		return err
-	}
-	token := hex.EncodeToString(random)
-	claim := db.WithContext(ctx).Model(&model.InputAuditReviewJob{}).Where("id = ? AND status IN ? AND lease_until <= ?", job.Id, []string{"pending", "running"}, now).Updates(map[string]any{"status": "running", "lease_until": now + 90, "lease_token": token, "updated_at": now})
-	if claim.Error != nil {
-		return claim.Error
-	}
-	if claim.RowsAffected != 1 {
-		return nil
-	}
+	defer func() {
+		cleanupCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
+		// Release only our own lease, after all producer/consumer goroutines exit.
+		_ = db.WithContext(cleanupCtx).Model(&model.InputAuditReviewJob{}).Where("id = ? AND lease_token = ?", job.Id, token).Update("lease_until", 0).Error
+	}()
 	// Existing job snapshots retain serial execution until a new job is started.
 	settings := model.DefaultInputAuditReviewSettings()
 	settings.Concurrency = 1
@@ -323,27 +321,11 @@ func ProcessInputAuditReviewStep(ctx context.Context, db *gorm.DB, client *http.
 	if err = settings.Validate(); err != nil {
 		return err
 	}
-	audits := make([]model.InputAudit, 0, settings.Concurrency)
-	scan := job
-	for range min(settings.Concurrency, max(0, settings.BatchSize-job.Processed)) {
-		audit, nextErr := model.NextInputAuditForReview(db.WithContext(ctx), scan)
-		if errors.Is(nextErr, gorm.ErrRecordNotFound) {
-			break
-		}
-		if nextErr != nil {
-			return nextErr
-		}
-		audits = append(audits, audit)
-		scan.Cursor = audit.Id
-	}
-	if len(audits) == 0 {
-		return db.WithContext(ctx).Model(&model.InputAuditReviewJob{}).Where("id = ? AND lease_token = ? AND status = ?", job.Id, token, "running").Updates(map[string]any{"status": "completed", "lease_until": 0, "updated_at": time.Now().Unix()}).Error
-	}
 	reviewCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		tick := time.NewTicker(10 * time.Second)
+		tick := time.NewTicker(time.Second)
 		defer tick.Stop()
 		for {
 			select {
@@ -351,7 +333,7 @@ func ProcessInputAuditReviewStep(ctx context.Context, db *gorm.DB, client *http.
 				return
 			case <-tick.C:
 				current, e := model.LoadInputAuditReviewSettings(db.WithContext(reviewCtx))
-				if e != nil || !current.Enabled {
+				if e != nil || !current.Enabled || current.Paused {
 					cancel()
 					return
 				}
@@ -380,9 +362,43 @@ func ProcessInputAuditReviewStep(ctx context.Context, db *gorm.DB, client *http.
 	pacedClient := *client
 	pacedClient.Transport = transport
 	settings.RequestIntervalSeconds = 0 // The shared transport paces every call.
-	results := make([]model.InputAuditReviewResult, len(audits))
+	// A bounded producer queue feeds consumers continuously. BatchSize is only
+	// an internal prefetch bound, never a limit on how many messages a job reviews.
+	queue := make(chan model.InputAudit, max(1, min(settings.BatchSize, settings.Concurrency*2)))
+	results := make(chan model.InputAuditReviewResult, settings.Concurrency)
+	producerError := make(chan error, 1)
 	var workers sync.WaitGroup
-	for i := range audits {
+	workers.Go(func() {
+		defer close(queue)
+		defer func() {
+			if recover() != nil {
+				producerError <- errors.New("model audit producer panicked")
+				cancel()
+			}
+		}()
+		scan := job
+		for {
+			audit, e := model.NextInputAuditForReview(db.WithContext(reviewCtx), scan)
+			if errors.Is(e, gorm.ErrRecordNotFound) {
+				return
+			}
+			if e != nil {
+				if reviewCtx.Err() != nil {
+					return
+				}
+				producerError <- e
+				cancel()
+				return
+			}
+			select {
+			case queue <- audit:
+				scan.Cursor = audit.Id
+			case <-reviewCtx.Done():
+				return
+			}
+		}
+	})
+	for range settings.Concurrency {
 		workers.Go(func() {
 			defer func() {
 				if recover() != nil {
@@ -390,43 +406,73 @@ func ProcessInputAuditReviewStep(ctx context.Context, db *gorm.DB, client *http.
 					common.SysError("model audit review panicked")
 				}
 			}()
-			results[i] = ReviewInputAudit(reviewCtx, db.WithContext(reviewCtx), &pacedClient, settings, audits[i])
-			results[i].JobId = job.Id
+			for {
+				select {
+				case <-reviewCtx.Done():
+					return
+				case audit, open := <-queue:
+					if !open {
+						return
+					}
+					result := ReviewInputAudit(reviewCtx, db.WithContext(reviewCtx), &pacedClient, settings, audit)
+					result.JobId = job.Id
+					select {
+					case results <- result:
+					case <-reviewCtx.Done():
+						return
+					}
+				}
+			}
 		})
 	}
-	workers.Wait()
+	go func() {
+		workers.Wait()
+		close(results)
+	}()
+	var saveError error
+	for result := range results {
+		if reviewCtx.Err() != nil || saveError != nil {
+			continue
+		}
+		lostLease := false
+		saveError = db.WithContext(reviewCtx).Transaction(func(tx *gorm.DB) error {
+			changes := map[string]any{"processed": gorm.Expr("processed + 1"), "updated_at": time.Now().Unix()}
+			if result.Status == "review" || result.Status == "insufficient_evidence" {
+				changes["flagged"] = gorm.Expr("flagged + 1")
+			}
+			if result.Status == "failed" {
+				changes["failed"] = gorm.Expr("failed + 1")
+			}
+			update := tx.Model(&model.InputAuditReviewJob{}).Where("id = ? AND lease_token = ? AND status = ?", job.Id, token, "running").Updates(changes)
+			if update.Error != nil {
+				return update.Error
+			}
+			if update.RowsAffected != 1 {
+				lostLease = true
+				return nil
+			}
+			if e := tx.Model(&model.InputAudit{}).Where("id = ?", result.AuditId).Update("review_attempted_at", time.Now().Unix()).Error; e != nil {
+				return e
+			}
+			return tx.Create(&result).Error
+		})
+		if saveError != nil || lostLease {
+			cancel()
+		}
+	}
 	cancelled := reviewCtx.Err() != nil
 	cancel()
 	<-done
+	if saveError != nil && !errors.Is(saveError, context.Canceled) && !errors.Is(saveError, context.DeadlineExceeded) {
+		return saveError
+	}
+	select {
+	case e := <-producerError:
+		return e
+	default:
+	}
 	if cancelled {
 		return nil
 	}
-	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		flagged, failed := 0, 0
-		ids := make([]int64, len(audits))
-		for i, result := range results {
-			ids[i] = audits[i].Id
-			if result.Status == "review" || result.Status == "insufficient_evidence" {
-				flagged++
-			}
-			if result.Status == "failed" {
-				failed++
-			}
-		}
-		changes := map[string]any{"cursor": scan.Cursor, "processed": gorm.Expr("processed + ?", len(results)), "flagged": gorm.Expr("flagged + ?", flagged), "failed": gorm.Expr("failed + ?", failed), "lease_until": 0, "updated_at": time.Now().Unix()}
-		if job.Processed+len(results) >= settings.BatchSize {
-			changes["status"] = "completed"
-		}
-		update := tx.Model(&model.InputAuditReviewJob{}).Where("id = ? AND lease_token = ? AND status = ?", job.Id, token, "running").Updates(changes)
-		if update.Error != nil {
-			return update.Error
-		}
-		if update.RowsAffected != 1 {
-			return nil
-		}
-		if err := tx.Model(&model.InputAudit{}).Where("id IN ?", ids).Update("review_attempted_at", time.Now().Unix()).Error; err != nil {
-			return err
-		}
-		return tx.Create(&results).Error
-	})
+	return db.WithContext(ctx).Model(&model.InputAuditReviewJob{}).Where("id = ? AND lease_token = ? AND status = ?", job.Id, token, "running").Updates(map[string]any{"status": "completed", "cursor": job.UpperId, "lease_until": 0, "updated_at": time.Now().Unix()}).Error
 }

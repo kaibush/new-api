@@ -16,11 +16,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { DataTablePage, useDataTable } from '@/components/data-table'
+import { ConfirmDialog } from '@/components/confirm-dialog'
+import {
+  DataTablePage,
+  DataTableBulkActions,
+  useDataTable,
+} from '@/components/data-table'
 import {
   Accordion,
   AccordionItem,
@@ -45,6 +50,7 @@ import {
 import { InputAuditAllowlistDialog } from './allowlist-dialog'
 import {
   getInputAudits,
+  deleteInputAudits,
   getInputAuditStatus,
   type InputAudit,
   type InputAuditFilters,
@@ -86,7 +92,25 @@ export function InputAuditViewer() {
     enabled: canRead,
     retry: false,
   })
-  const columns = useInputAuditColumns()
+  const [deletion, setDeletion] = useState<
+    { ids?: number[]; all?: boolean } & Partial<InputAuditFilters>
+  >()
+  const remove = useMutation({
+    mutationFn: deleteInputAudits,
+    onSuccess: () => {
+      setDeletion(undefined)
+      table.resetRowSelection()
+      setFilters((previous) => ({ ...previous, p: 1 }))
+      void queryClient.invalidateQueries({ queryKey: ['input-audits'] })
+      void queryClient.invalidateQueries({ queryKey: ['input-audit-matches'] })
+      void queryClient.invalidateQueries({ queryKey: ['model-review-results'] })
+      void queryClient.invalidateQueries({ queryKey: ['model-review-users'] })
+      void queryClient.invalidateQueries({ queryKey: ['model-review-summary'] })
+    },
+  })
+  const columns = useInputAuditColumns(
+    canRead ? (id) => setDeletion({ ids: [id] }) : undefined
+  )
   const { table } = useDataTable({
     columns,
     data:
@@ -111,7 +135,7 @@ export function InputAuditViewer() {
         }
       })
     },
-    enableRowSelection: false,
+    enableRowSelection: canRead,
     enableSorting: false,
     manualFiltering: true,
     manualPagination: true,
@@ -147,223 +171,280 @@ export function InputAuditViewer() {
     void status.refetch()
   }
   return (
-    <DataTablePage
-      table={table}
-      columns={columns}
-      isLoading={query.isPending && canRead}
-      isFetching={query.isFetching}
-      emptyTitle={
-        query.isError ? t('Failed to load audit records') : t('No records')
-      }
-      paginationInFooter
-      compactPagination={isMobile}
-      toolbar={
-        <div className='flex flex-col gap-2'>
-          <Accordion>
-            <AccordionItem value='collection'>
-              <AccordionTrigger className='py-2'>
-                {t('Input audit settings')}
-              </AccordionTrigger>
-              <AccordionContent className='space-y-2'>
-                <p className='text-muted-foreground text-xs'>
-                  {t(
-                    'Short messages are stored in full. Long messages retain the beginning and end. Time is when the gateway received the first matching input.'
-                  )}
-                </p>
-                <p className='text-muted-foreground text-xs'>
-                  {t(
-                    'Keyword search matches stored message text. Omitted text cannot be searched.'
-                  )}
-                </p>
-                {status.data && (
-                  <p role='status' className='text-muted-foreground text-xs'>
+    <>
+      <DataTablePage
+        table={table}
+        columns={columns}
+        isLoading={query.isPending && canRead}
+        isFetching={query.isFetching}
+        emptyTitle={
+          query.isError ? t('Failed to load audit records') : t('No records')
+        }
+        paginationInFooter
+        showMobileBulkActions
+        mobileProps={{ enableRowSelection: canRead }}
+        bulkActions={
+          canRead && (
+            <DataTableBulkActions table={table} entityName={t('User message')}>
+              <Button
+                variant='destructive'
+                disabled={
+                  remove.isPending ||
+                  table.getFilteredSelectedRowModel().rows.length > 100
+                }
+                onClick={() =>
+                  setDeletion({
+                    ids: table
+                      .getFilteredSelectedRowModel()
+                      .rows.map((row) => row.original.id),
+                  })
+                }
+              >
+                {t('Delete selected')}
+              </Button>
+            </DataTableBulkActions>
+          )
+        }
+        compactPagination={isMobile}
+        toolbar={
+          <div className='flex flex-col gap-2'>
+            <Accordion>
+              <AccordionItem value='collection'>
+                <AccordionTrigger className='py-2'>
+                  {t('Input audit settings')}
+                </AccordionTrigger>
+                <AccordionContent className='space-y-2'>
+                  <p className='text-muted-foreground text-xs'>
                     {t(
-                      'Retention: {{days}} days · {{records}} records · {{chars}} characters · text up to {{size}} MiB · dropped on this instance: {{dropped}}',
-                      {
-                        days: formatNumber(
-                          status.data.settings.retention_days,
-                          locale
-                        ),
-                        records: formatNumber(
-                          status.data.settings.max_records,
-                          locale
-                        ),
-                        chars: formatNumber(
-                          status.data.settings.max_chars,
-                          locale
-                        ),
-                        size: formatNumber(
-                          Math.ceil(
-                            (status.data.settings.max_records *
-                              status.data.settings.max_chars *
-                              4) /
-                              1024 /
-                              1024
+                      'Short messages are stored in full. Long messages retain the beginning and end. Time is when the gateway received the first matching input.'
+                    )}
+                  </p>
+                  <p className='text-muted-foreground text-xs'>
+                    {t(
+                      'Keyword search matches stored message text. Omitted text cannot be searched.'
+                    )}
+                  </p>
+                  {status.data && (
+                    <p role='status' className='text-muted-foreground text-xs'>
+                      {t(
+                        'Retention: {{days}} days · {{records}} records · {{chars}} characters · text up to {{size}} MiB · dropped on this instance: {{dropped}}',
+                        {
+                          days: formatNumber(
+                            status.data.settings.retention_days,
+                            locale
                           ),
-                          locale
-                        ),
-                        dropped: formatNumber(status.data.dropped, locale),
-                      }
-                    )}{' '}
-                    ·{' '}
-                    {status.data.settings.enabled
-                      ? t('Enabled')
-                      : t('Disabled')}
-                  </p>
-                )}
-                {status.data && (
-                  <p className='text-muted-foreground text-xs'>
-                    {t(
-                      'Evidence on this instance: {{pending}} queued · {{dropped}} dropped · {{failures}} write failures',
-                      {
-                        pending: formatNumber(
-                          status.data.evidence_pending ?? 0,
-                          locale
-                        ),
-                        dropped: formatNumber(
-                          status.data.evidence_dropped ?? 0,
-                          locale
-                        ),
-                        failures: formatNumber(
-                          status.data.evidence_write_failures ?? 0,
-                          locale
-                        ),
-                      }
-                    )}
-                  </p>
-                )}
-                {status.data && (
-                  <p className='text-muted-foreground text-xs'>
-                    {t(
-                      'Match evidence: {{pending}} queued · {{dropped}} dropped · {{failures}} write failures',
-                      {
-                        pending: formatNumber(
-                          status.data.match_pending ?? 0,
-                          locale
-                        ),
-                        dropped: formatNumber(
-                          status.data.match_dropped ?? 0,
-                          locale
-                        ),
-                        failures: formatNumber(
-                          status.data.match_write_failures ?? 0,
-                          locale
-                        ),
-                      }
-                    )}
-                  </p>
-                )}
-              </AccordionContent>
-            </AccordionItem>
-          </Accordion>
-          <LogsFilterToolbar
-            table={table}
-            filterGridClassName='sm:grid-cols-2 xl:grid-cols-6'
-            className='[&_[data-slot=input]]:h-9 [&_button]:h-9 [&_button]:rounded-md'
-            stats={
-              status.data && (
-                <nav
-                  aria-label={t('Audit management')}
-                  className='grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap [&>button]:h-9 [&>button]:w-full [&>button]:min-w-0 [&>button]:rounded-md [&>button]:px-3 [&>button]:text-sm [&>button]:whitespace-normal sm:[&>button]:w-32'
-                >
-                  <MatchesDialog />
-                  {canRead && <InputAuditCasesDialog />}
-                  <ModelReviewDialog />
-                  {canRead && (
-                    <InputAuditAllowlistDialog
-                      collectionEnabled={status.data.settings.enabled}
-                    />
+                          records: formatNumber(
+                            status.data.settings.max_records,
+                            locale
+                          ),
+                          chars: formatNumber(
+                            status.data.settings.max_chars,
+                            locale
+                          ),
+                          size: formatNumber(
+                            Math.ceil(
+                              (status.data.settings.max_records *
+                                status.data.settings.max_chars *
+                                4) /
+                                1024 /
+                                1024
+                            ),
+                            locale
+                          ),
+                          dropped: formatNumber(status.data.dropped, locale),
+                        }
+                      )}{' '}
+                      ·{' '}
+                      {status.data.settings.enabled
+                        ? t('Enabled')
+                        : t('Disabled')}
+                    </p>
                   )}
-                  <InputAuditSettingsDialog settings={status.data.settings} />
-                </nav>
-              )
-            }
-            primaryFilters={
-              <>
-                <LogsFilterField wide>
-                  <LogsFilterInput
-                    aria-label={t('Message keyword')}
-                    placeholder={t('Message keyword')}
-                    maxLength={256}
-                    value={keyword}
-                    onChange={(event) => setKeyword(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (
-                        event.key === 'Enter' &&
-                        !event.nativeEvent.isComposing &&
-                        !query.isFetching
-                      ) {
-                        search()
-                      }
+                  {status.data && (
+                    <p className='text-muted-foreground text-xs'>
+                      {t(
+                        'Evidence on this instance: {{pending}} queued · {{dropped}} dropped · {{failures}} write failures',
+                        {
+                          pending: formatNumber(
+                            status.data.evidence_pending ?? 0,
+                            locale
+                          ),
+                          dropped: formatNumber(
+                            status.data.evidence_dropped ?? 0,
+                            locale
+                          ),
+                          failures: formatNumber(
+                            status.data.evidence_write_failures ?? 0,
+                            locale
+                          ),
+                        }
+                      )}
+                    </p>
+                  )}
+                  {status.data && (
+                    <p className='text-muted-foreground text-xs'>
+                      {t(
+                        'Match evidence: {{pending}} queued · {{dropped}} dropped · {{failures}} write failures',
+                        {
+                          pending: formatNumber(
+                            status.data.match_pending ?? 0,
+                            locale
+                          ),
+                          dropped: formatNumber(
+                            status.data.match_dropped ?? 0,
+                            locale
+                          ),
+                          failures: formatNumber(
+                            status.data.match_write_failures ?? 0,
+                            locale
+                          ),
+                        }
+                      )}
+                    </p>
+                  )}
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
+            <LogsFilterToolbar
+              table={table}
+              actionStart={
+                canRead && (
+                  <Button
+                    variant='destructive'
+                    disabled={
+                      !query.data?.total || query.isFetching || remove.isPending
+                    }
+                    onClick={() => setDeletion({ ...filters, all: true })}
+                  >
+                    {t('Clear filtered messages')}
+                  </Button>
+                )
+              }
+              filterGridClassName='sm:grid-cols-2 xl:grid-cols-6'
+              className='[&_[data-slot=input]]:h-9 [&_button]:h-9 [&_button]:rounded-md'
+              stats={
+                status.data && (
+                  <nav
+                    aria-label={t('Audit management')}
+                    className='grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap [&>button]:h-9 [&>button]:w-full [&>button]:min-w-0 [&>button]:rounded-md [&>button]:px-3 [&>button]:text-sm [&>button]:whitespace-normal sm:[&>button]:w-32'
+                  >
+                    <MatchesDialog />
+                    {canRead && <InputAuditCasesDialog />}
+                    <ModelReviewDialog />
+                    {canRead && (
+                      <InputAuditAllowlistDialog
+                        collectionEnabled={status.data.settings.enabled}
+                      />
+                    )}
+                    <InputAuditSettingsDialog settings={status.data.settings} />
+                  </nav>
+                )
+              }
+              primaryFilters={
+                <>
+                  <LogsFilterField wide>
+                    <LogsFilterInput
+                      aria-label={t('Message keyword')}
+                      placeholder={t('Message keyword')}
+                      maxLength={256}
+                      value={keyword}
+                      onChange={(event) => setKeyword(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (
+                          event.key === 'Enter' &&
+                          !event.nativeEvent.isComposing &&
+                          !query.isFetching
+                        ) {
+                          search()
+                        }
+                      }}
+                    />
+                  </LogsFilterField>
+                  <LogsFilterField>
+                    <UserSelector
+                      value={userId ? Number(userId) : undefined}
+                      onChange={(id) => setUserId(id ? String(id) : '')}
+                    />
+                  </LogsFilterField>
+                  <LogsFilterField>
+                    <LogsFilterInput
+                      aria-label={t('Request ID')}
+                      placeholder={t('Request ID')}
+                      maxLength={64}
+                      value={requestId}
+                      onChange={(event) => setRequestId(event.target.value)}
+                    />
+                  </LogsFilterField>
+                  <LogsFilterField wide>
+                    <CompactDateTimeRangePicker
+                      start={start}
+                      end={end}
+                      onChange={(range) => {
+                        setStart(range.start)
+                        setEnd(range.end)
+                      }}
+                    />
+                  </LogsFilterField>
+                </>
+              }
+              hasActiveFilters={
+                !!keyword || !!userId || !!requestId || !!start || !!end
+              }
+              onSearch={search}
+              searchLoading={query.isFetching}
+              onReset={() => {
+                setUserId('')
+                setRequestId('')
+                setKeyword('')
+                setStart(undefined)
+                setEnd(undefined)
+                setInvalid(false)
+                setFilters({ p: 1, page_size: filters.page_size })
+              }}
+            />
+            {invalid && (
+              <Alert variant='destructive'>
+                <AlertDescription>
+                  {t('Invalid audit filters')}
+                </AlertDescription>
+              </Alert>
+            )}
+            {(query.isError || status.isError) && (
+              <Alert variant='destructive'>
+                <AlertDescription className='flex items-center justify-between gap-2'>
+                  {t('Failed to load audit records')}
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    onClick={() => {
+                      void query.refetch()
+                      void status.refetch()
                     }}
-                  />
-                </LogsFilterField>
-                <LogsFilterField>
-                  <UserSelector
-                    value={userId ? Number(userId) : undefined}
-                    onChange={(id) => setUserId(id ? String(id) : '')}
-                  />
-                </LogsFilterField>
-                <LogsFilterField>
-                  <LogsFilterInput
-                    aria-label={t('Request ID')}
-                    placeholder={t('Request ID')}
-                    maxLength={64}
-                    value={requestId}
-                    onChange={(event) => setRequestId(event.target.value)}
-                  />
-                </LogsFilterField>
-                <LogsFilterField wide>
-                  <CompactDateTimeRangePicker
-                    start={start}
-                    end={end}
-                    onChange={(range) => {
-                      setStart(range.start)
-                      setEnd(range.end)
-                    }}
-                  />
-                </LogsFilterField>
-              </>
-            }
-            hasActiveFilters={
-              !!keyword || !!userId || !!requestId || !!start || !!end
-            }
-            onSearch={search}
-            searchLoading={query.isFetching}
-            onReset={() => {
-              setUserId('')
-              setRequestId('')
-              setKeyword('')
-              setStart(undefined)
-              setEnd(undefined)
-              setInvalid(false)
-              setFilters({ p: 1, page_size: filters.page_size })
-            }}
-          />
-          {invalid && (
-            <Alert variant='destructive'>
-              <AlertDescription>{t('Invalid audit filters')}</AlertDescription>
-            </Alert>
-          )}
-          {(query.isError || status.isError) && (
-            <Alert variant='destructive'>
-              <AlertDescription className='flex items-center justify-between gap-2'>
-                {t('Failed to load audit records')}
-                <Button
-                  variant='outline'
-                  size='sm'
-                  onClick={() => {
-                    void query.refetch()
-                    void status.refetch()
-                  }}
-                >
-                  {t('Retry')}
-                </Button>
-              </AlertDescription>
-            </Alert>
-          )}
-        </div>
-      }
-    />
+                  >
+                    {t('Retry')}
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            )}
+          </div>
+        }
+      />
+      <ConfirmDialog
+        open={!!deletion}
+        onOpenChange={(open) => {
+          if (!open && !remove.isPending) setDeletion(undefined)
+        }}
+        title={t('Delete submitted messages')}
+        desc={t(
+          'Delete the selected submitted messages and their live evidence and model review results. Retained human review cases are preserved. Pause or stop active review tasks first. This cannot be undone.'
+        )}
+        destructive
+        isLoading={remove.isPending}
+        handleConfirm={() => {
+          if (deletion) remove.mutate(deletion)
+        }}
+        confirmText={t('Delete')}
+      />
+    </>
   )
 }

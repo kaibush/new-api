@@ -22,16 +22,47 @@ import { useTranslation } from 'react-i18next'
 
 import { TruncatedCell } from '@/components/data-table'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { UserIdentity } from '@/components/user-identity'
 import dayjs from '@/lib/dayjs'
 
 import type { InputAudit } from './api'
 import { InputAuditDetailsDialog } from './details-dialog'
 
-export function useInputAuditColumns(): ColumnDef<InputAudit>[] {
+export function useInputAuditColumns(
+  onDelete?: (id: number) => void
+): ColumnDef<InputAudit>[] {
   const { t } = useTranslation()
   return useMemo(
     () => [
+      {
+        id: 'select',
+        header: ({ table }) => (
+          <Checkbox
+            checked={table.getIsAllPageRowsSelected()}
+            indeterminate={
+              table.getIsSomePageRowsSelected() &&
+              !table.getIsAllPageRowsSelected()
+            }
+            onCheckedChange={(value) =>
+              table.toggleAllPageRowsSelected(Boolean(value))
+            }
+            aria-label={t('Select all')}
+          />
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={row.getIsSelected()}
+            onCheckedChange={(value) => row.toggleSelected(Boolean(value))}
+            aria-label={t('Select row')}
+          />
+        ),
+        enableSorting: false,
+        enableHiding: false,
+        size: 40,
+      },
+
       {
         accessorKey: 'created_at',
         header: t('Received at gateway'),
@@ -90,7 +121,23 @@ export function useInputAuditColumns(): ColumnDef<InputAudit>[] {
         cell: ({ row }) => <InputAuditDetailsDialog entry={row.original} />,
         meta: { label: t('Details') },
       },
+      {
+        id: 'delete',
+        header: t('Delete'),
+        size: 90,
+        cell: ({ row }) =>
+          onDelete ? (
+            <Button
+              variant='destructive'
+              size='sm'
+              onClick={() => onDelete(row.original.id)}
+            >
+              {t('Delete')}
+            </Button>
+          ) : null,
+        meta: { label: t('Delete') },
+      },
     ],
-    [t]
+    [t, onDelete]
   )
 }

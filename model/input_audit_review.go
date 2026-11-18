@@ -27,6 +27,7 @@ const DefaultInputAuditReviewSystemPrompt = `你是管理员的内容安全审�
 // Credentials remain server-side and are redacted from settings responses.
 type InputAuditReviewSettings struct {
 	Enabled                bool   `json:"enabled"`
+	Paused                 bool   `json:"paused"`
 	Automatic              bool   `json:"automatic"`
 	IntervalMinutes        int    `json:"interval_minutes"`
 	Endpoint               string `json:"endpoint"`
@@ -59,7 +60,7 @@ func (s InputAuditReviewSettings) Validate() error {
 		}
 	}
 
-	if s.IntervalMinutes < 1 || s.IntervalMinutes > 10080 || s.BatchSize < 1 || s.BatchSize > 1000 || s.ChunkChars < 1000 || s.ChunkChars > 16000 || s.TimeoutSeconds < 5 || s.TimeoutSeconds > 120 || s.RequestIntervalSeconds < 1 || s.RequestIntervalSeconds > 60 || s.Retries < 0 || s.Retries > 3 || s.ConfidenceThreshold < 0 || s.ConfidenceThreshold > 100 || s.RetentionDays < 1 || s.RetentionDays > 90 || len(s.Instructions) > 12000 || len(s.Model) > 200 {
+	if s.IntervalMinutes < 1 || s.IntervalMinutes > 10080 || s.BatchSize < 1 || s.BatchSize > 1000 || s.ChunkChars < 1000 || s.ChunkChars > 16000 || s.TimeoutSeconds < 5 || s.TimeoutSeconds > 120 || s.RequestIntervalSeconds < 0 || s.RequestIntervalSeconds > 60 || s.Retries < 0 || s.Retries > 3 || s.ConfidenceThreshold < 0 || s.ConfidenceThreshold > 100 || s.RetentionDays < 1 || s.RetentionDays > 90 || len(s.Instructions) > 12000 || len(s.Model) > 200 {
 		return errors.New("Invalid model review settings")
 	}
 	if len(s.APIKey) > 8192 || strings.ContainsAny(s.APIKey, "\r\n") || len(s.SystemPrompt) > 12000 {
@@ -180,7 +181,7 @@ type InputAuditReviewResult struct {
 }
 
 // Serialize job creation using the existing singleton settings row. Only one
-// active job is allowed across gateway instances; network calls hold no DB lock.
+// dispatch is serialized across gateway instances; network calls hold no DB lock.
 func CreateInputAuditReviewJob(db *gorm.DB, mode string, userID, operator int, scheduled bool) (InputAuditReviewJob, error) {
 	var job InputAuditReviewJob
 	if !slices.Contains([]string{"incremental", "all", "failed"}, mode) || userID < 0 {
@@ -202,7 +203,17 @@ func CreateInputAuditReviewJob(db *gorm.DB, mode string, userID, operator int, s
 		if err = tx.Model(&InputAuditReviewJob{}).Where("status IN ?", []string{"pending", "running"}).Count(&active).Error; err != nil {
 			return err
 		}
-		if active > 0 {
+		if scheduled && active > 0 {
+			return nil
+		}
+		if active >= 100 {
+			return errors.New("Review queue is full")
+		}
+		var duplicate int64
+		if err = tx.Model(&InputAuditReviewJob{}).Where("status IN ? AND mode = ? AND user_id = ?", []string{"pending", "running"}, mode, userID).Count(&duplicate).Error; err != nil {
+			return err
+		}
+		if duplicate > 0 {
 			return errors.New("A model review job is already active")
 		}
 		now := time.Now().Unix()
@@ -232,9 +243,52 @@ func CreateInputAuditReviewJob(db *gorm.DB, mode string, userID, operator int, s
 	return job, err
 }
 
+// ClaimInputAuditReviewJob serializes queue dispatch across gateway instances.
+// Cancelled jobs retain their lease until the old worker acknowledges stopping.
+func ClaimInputAuditReviewJob(db *gorm.DB, token string, now int64) (InputAuditReviewJob, error) {
+	var job InputAuditReviewJob
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var guard Option
+		if e := lockForUpdate(tx).Where(&Option{Key: InputAuditReviewOption}).First(&guard).Error; e != nil {
+			return e
+		}
+		settings, err := LoadInputAuditReviewSettings(tx)
+		if err != nil {
+			return err
+		}
+		if !settings.Enabled || settings.Paused {
+			return gorm.ErrRecordNotFound
+		}
+		var active int64
+		if e := tx.Model(&InputAuditReviewJob{}).Where("status IN ? AND lease_until > ?", []string{"running", "cancelled"}, now).Count(&active).Error; e != nil {
+			return e
+		}
+		if active > 0 {
+			return gorm.ErrRecordNotFound
+		}
+		if e := tx.Where("status IN ? AND lease_until <= ?", []string{"pending", "running"}, now).Order("id").First(&job).Error; e != nil {
+			return e
+		}
+		claim := tx.Model(&job).Where("status IN ? AND lease_until <= ?", []string{"pending", "running"}, now).Updates(map[string]any{"status": "running", "lease_until": now + 90, "lease_token": token, "updated_at": now})
+		if claim.Error != nil {
+			return claim.Error
+		}
+		if claim.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
+	})
+	return job, err
+}
+
 func NextInputAuditForReview(db *gorm.DB, job InputAuditReviewJob) (InputAudit, error) {
 	var row InputAudit
 	q := db.Where("id > ? AND id <= ?", job.Cursor, job.UpperId)
+	if job.Id > 0 {
+		// Cursor advances only when the whole queue drains. Persisted results
+		// exclude out-of-order completions after cancellation or lease recovery.
+		q = q.Where("id NOT IN (?)", db.Model(&InputAuditReviewResult{}).Select("audit_id").Where("job_id = ?", job.Id))
+	}
 	if job.UserId > 0 {
 		q = q.Where("user_id = ?", job.UserId)
 	}
@@ -253,7 +307,8 @@ func NextInputAuditForReview(db *gorm.DB, job InputAuditReviewJob) (InputAudit, 
 // Active jobs survive retention so workers can finish or administrators cancel.
 func PruneInputAuditReviews(db *gorm.DB, retentionDays int, now int64) error {
 	return db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("created_at < ?", now-int64(retentionDays)*86400).Delete(&InputAuditReviewResult{}).Error; err != nil {
+		active := tx.Model(&InputAuditReviewJob{}).Select("id").Where("status IN ?", []string{"pending", "running"})
+		if err := tx.Where("job_id NOT IN (?)", active).Where("created_at < ?", now-int64(retentionDays)*86400).Delete(&InputAuditReviewResult{}).Error; err != nil {
 			return err
 		}
 		var boundary InputAuditReviewResult
@@ -261,7 +316,7 @@ func PruneInputAuditReviews(db *gorm.DB, retentionDays int, now int64) error {
 			return err
 		}
 		if boundary.Id > 0 {
-			if err := tx.Where("id < ?", boundary.Id).Delete(&InputAuditReviewResult{}).Error; err != nil {
+			if err := tx.Where("job_id NOT IN (?)", active).Where("id < ?", boundary.Id).Delete(&InputAuditReviewResult{}).Error; err != nil {
 				return err
 			}
 		}
@@ -275,4 +330,153 @@ func PruneInputAuditReviews(db *gorm.DB, retentionDays int, now int64) error {
 		}
 		return tx.Where("status NOT IN ?", []string{"pending", "running"}).Where("created_at < ? OR id < ?", now-int64(retentionDays)*86400, jobBoundary.Id).Delete(&InputAuditReviewJob{}).Error
 	})
+}
+
+func UpdateQueuedInputAuditReviewJob(db *gorm.DB, id int64, mode string, userID, concurrency, interval int) error {
+	if id < 1 || userID < 0 || !slices.Contains([]string{"incremental", "all", "failed"}, mode) {
+		return errors.New("Invalid model review scope")
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		var guard Option
+		if err := lockForUpdate(tx).Where(&Option{Key: InputAuditReviewOption}).First(&guard).Error; err != nil {
+			return err
+		}
+		settings, err := LoadInputAuditReviewSettings(tx)
+		if err != nil {
+			return err
+		}
+		settings.Concurrency = concurrency
+		settings.RequestIntervalSeconds = interval
+		if err = settings.Validate(); err != nil {
+			return err
+		}
+		var duplicate int64
+		if err = tx.Model(&InputAuditReviewJob{}).Where("id <> ? AND status IN ? AND mode = ? AND user_id = ?", id, []string{"pending", "running"}, mode, userID).Count(&duplicate).Error; err != nil {
+			return err
+		}
+		if duplicate > 0 {
+			return errors.New("A model review job is already active")
+		}
+		encoded, err := common.Marshal(settings)
+		if err != nil {
+			return err
+		}
+		var upper InputAudit
+		if err = tx.Select("id").Order("id DESC").Limit(1).Find(&upper).Error; err != nil {
+			return err
+		}
+		update := tx.Model(&InputAuditReviewJob{}).Where("id = ? AND status = ?", id, "pending").Updates(map[string]any{"mode": mode, "user_id": userID, "settings": string(encoded), "upper_id": upper.Id, "updated_at": time.Now().Unix()})
+		if update.Error != nil {
+			return update.Error
+		}
+		if update.RowsAffected != 1 {
+			return errors.New("Only queued review jobs can be edited")
+		}
+		return nil
+	})
+}
+
+func DeleteInputAuditReviewJobs(db *gorm.DB, ids []int64) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		var guard Option
+		if err := lockForUpdate(tx).Where(&Option{Key: InputAuditReviewOption}).First(&guard).Error; err != nil {
+			return err
+		}
+		var active int64
+		if err := tx.Model(&InputAuditReviewJob{}).Where("id IN ? AND (status = ? OR lease_until > ?)", ids, "running", time.Now().Unix()).Count(&active).Error; err != nil {
+			return err
+		}
+		if active > 0 {
+			return errors.New("Stop active review jobs before deleting them")
+		}
+		if err := tx.Where("job_id IN ?", ids).Delete(&InputAuditReviewResult{}).Error; err != nil {
+			return err
+		}
+		return tx.Where("id IN ?", ids).Delete(&InputAuditReviewJob{}).Error
+	})
+}
+
+func DeleteInputAuditReviewResults(db *gorm.DB, ids []int64, jobID int64, userID int, status string) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		var guard Option
+		if err := lockForUpdate(tx).Where(&Option{Key: InputAuditReviewOption}).First(&guard).Error; err != nil {
+			return err
+		}
+		if len(ids) == 0 {
+			activeJobs := tx.Model(&InputAuditReviewJob{}).Where("status IN ? OR lease_until > ?", []string{"pending", "running"}, time.Now().Unix())
+			if jobID > 0 {
+				activeJobs = activeJobs.Where("id = ?", jobID)
+			} else if userID > 0 {
+				activeJobs = activeJobs.Where("user_id IN ?", []int{0, userID})
+			}
+			var active int64
+			if err := activeJobs.Count(&active).Error; err != nil {
+				return err
+			}
+			if active > 0 {
+				return errors.New("Stop active review jobs before deleting their results")
+			}
+		}
+		scope := tx.Model(&InputAuditReviewResult{}).Where("1 = 1")
+		if len(ids) > 0 {
+			scope = scope.Where("id IN ?", ids)
+		}
+		if jobID > 0 {
+			scope = scope.Where("job_id = ?", jobID)
+		}
+		if userID > 0 {
+			scope = scope.Where("user_id = ?", userID)
+		}
+		if status != "" {
+			scope = scope.Where("status = ?", status)
+		}
+		var active int64
+		jobIDs := scope.Session(&gorm.Session{}).Select("job_id")
+		if err := tx.Model(&InputAuditReviewJob{}).Where("id IN (?) AND (status IN ? OR lease_until > ?)", jobIDs, []string{"pending", "running"}, time.Now().Unix()).Count(&active).Error; err != nil {
+			return err
+		}
+		if active > 0 {
+			return errors.New("Stop active review jobs before deleting their results")
+		}
+		// Keep review_attempted_at: deleting results must not silently enqueue the
+		// same messages again. Explicit re-review remains available.
+		return scope.Delete(&InputAuditReviewResult{}).Error
+	})
+}
+
+func SetInputAuditReviewQueuePaused(db *gorm.DB, paused bool) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		var guard Option
+		if err := lockForUpdate(tx).Where(&Option{Key: InputAuditReviewOption}).First(&guard).Error; err != nil {
+			return err
+		}
+		settings, err := LoadInputAuditReviewSettings(tx)
+		if err != nil {
+			return err
+		}
+		settings.Paused = paused
+		return SaveInputAuditReviewSettings(tx, settings)
+	})
+}
+
+func CancelInputAuditReviewQueue(db *gorm.DB) (int64, error) {
+	var affected int64
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var guard Option
+		if err := lockForUpdate(tx).Where(&Option{Key: InputAuditReviewOption}).First(&guard).Error; err != nil {
+			return err
+		}
+		settings, err := LoadInputAuditReviewSettings(tx)
+		if err != nil {
+			return err
+		}
+		settings.Paused = true
+		if err = SaveInputAuditReviewSettings(tx, settings); err != nil {
+			return err
+		}
+		result := tx.Model(&InputAuditReviewJob{}).Where("status IN ?", []string{"pending", "running"}).Updates(map[string]any{"status": "cancelled", "updated_at": time.Now().Unix()})
+		affected = result.RowsAffected
+		return result.Error
+	})
+	return affected, err
 }

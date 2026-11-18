@@ -31,10 +31,11 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
-import type { ModelReviewSettings } from '../model-review-api'
+import type { ModelReviewSettings, ModelReviewJob } from '../model-review-api'
 import { ModelReviewDialog } from '../model-review-dialog'
 
 let client: QueryClient
+let jobs: ModelReviewJob[] = []
 const settings: ModelReviewSettings = {
   enabled: true,
   automatic: false,
@@ -56,6 +57,7 @@ const settings: ModelReviewSettings = {
   retention_days: 30,
 }
 beforeEach(() => {
+  jobs = []
   client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
@@ -65,7 +67,7 @@ beforeEach(() => {
       return { data: { success: true, data: settings } }
     }
     if (url === '/api/input-audit/model/jobs') {
-      return { data: { success: true, data: [] } }
+      return { data: { success: true, data: jobs } }
     }
     if (url === '/api/input-audit/model/users') {
       return {
@@ -142,7 +144,7 @@ function show() {
   )
 }
 
-it('opening review loads on demand and selecting a username submits a bounded incremental job with its ID', async () => {
+it('opening review loads on demand and selecting a username submits a continuous incremental job with its ID', async () => {
   const post = vi
     .spyOn(api, 'post')
     .mockResolvedValue({ data: { success: true, data: { id: 3 } } })
@@ -184,16 +186,20 @@ it('settings groups hide secondary controls and preserve edits while switching g
   await userEvent.click(
     screen.getByRole('button', { name: 'Processing and limits' })
   )
-  fireEvent.change(
-    screen.getByRole('spinbutton', { name: 'Messages per review job' }),
-    { target: { value: '25' } }
-  )
+  expect(
+    screen.queryByRole('spinbutton', { name: 'Messages per review job' })
+  ).not.toBeInTheDocument()
   const concurrency = screen.getByRole('spinbutton', {
     name: 'Concurrent message reviews',
   })
   expect(concurrency).toHaveValue(3)
   expect(concurrency).toHaveAttribute('max', '5')
   fireEvent.change(concurrency, { target: { value: '5' } })
+  const interval = screen.getByRole('spinbutton', {
+    name: 'Request interval (seconds)',
+  })
+  expect(interval).toHaveAttribute('min', '0')
+  fireEvent.change(interval, { target: { value: '0' } })
   await userEvent.click(
     screen.getByRole('button', { name: 'Automatic review schedule' })
   )
@@ -205,8 +211,9 @@ it('settings groups hide secondary controls and preserve edits while switching g
     expect(put).toHaveBeenCalledWith(
       '/api/input-audit/model/settings',
       expect.objectContaining({
-        batch_size: 25,
+        batch_size: 100,
         concurrency: 5,
+        request_interval_seconds: 0,
         automatic: true,
         system_prompt: settings.system_prompt,
         api_key: '',
@@ -218,13 +225,18 @@ it('settings groups hide secondary controls and preserve edits while switching g
 it('user dashboard displays anomaly categories and clicking a user filters results requiring review', async () => {
   show()
   await userEvent.click(screen.getByRole('button', { name: 'Model review' }))
-  await userEvent.click(screen.getByRole('tab', { name: 'Results' }))
+  await userEvent.click(
+    screen.getByRole('tab', { name: 'User review dashboard' })
+  )
   const dashboard = await screen.findByRole('region', {
     name: 'User review dashboard',
   })
   await waitFor(() =>
     expect(within(dashboard).getAllByText(/Fraud/).length).toBeGreaterThan(0)
   )
+  expect(
+    screen.queryByRole('button', { name: 'Details' })
+  ).not.toBeInTheDocument()
   expect(within(dashboard).getByText('Fraud · 2')).toBeVisible()
   expect(within(dashboard).getByText('Cyber abuse · 1')).toBeVisible()
   await userEvent.click(
@@ -233,6 +245,15 @@ it('user dashboard displays anomaly categories and clicking a user filters resul
   await waitFor(() =>
     expect(api.get).toHaveBeenCalledWith('/api/input-audit/model/results', {
       params: expect.objectContaining({ user_id: 4, status: 'review', p: 1 }),
+    })
+  )
+  expect(
+    screen.queryByRole('region', { name: 'User review dashboard' })
+  ).not.toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: 'All results' }))
+  await waitFor(() =>
+    expect(api.get).toHaveBeenCalledWith('/api/input-audit/model/results', {
+      params: expect.objectContaining({ user_id: undefined, status: '' }),
     })
   )
 })
@@ -264,7 +285,9 @@ it.each([false, true])(
     })
     show()
     await userEvent.click(screen.getByRole('button', { name: 'Model review' }))
-    await userEvent.click(screen.getByRole('tab', { name: 'Results' }))
+    await userEvent.click(
+      screen.getByRole('tab', { name: 'User review dashboard' })
+    )
     const dashboard = await screen.findByRole('region', {
       name: 'User review dashboard',
     })
@@ -437,4 +460,187 @@ it('saved review keys are revealed after verification and can be shown in full',
   expect(
     screen.getByRole('button', { name: 'Copy to clipboard' })
   ).toBeEnabled()
+})
+
+function queueFixture(status: string): ModelReviewJob {
+  return {
+    id: 12,
+    status,
+    mode: 'incremental',
+    user_id: 0,
+    created_at: 1700000000,
+    updated_at: 1700000000,
+    created_by: 1,
+    cursor: 0,
+    upper_id: 12000,
+    processed: 1,
+    flagged: 0,
+    failed: 0,
+    concurrency: 3,
+    request_interval_seconds: 2,
+  }
+}
+it('queued task edits persist scope and worker settings while running tasks cannot be edited', async () => {
+  jobs = [queueFixture('pending')]
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  show()
+  await userEvent.click(screen.getByRole('button', { name: 'Model review' }))
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+  const dialog = screen.getByRole('dialog', { name: 'Edit queued review task' })
+  await userEvent.selectOptions(
+    within(dialog).getByLabelText('Review scope'),
+    'failed'
+  )
+  fireEvent.change(
+    within(dialog).getByLabelText('Concurrent message reviews'),
+    { target: { value: '5' } }
+  )
+  fireEvent.change(
+    within(dialog).getByLabelText('Request interval (seconds)'),
+    { target: { value: '0' } }
+  )
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
+  await waitFor(() =>
+    expect(put).toHaveBeenCalledWith(
+      '/api/input-audit/model/jobs/12',
+      expect.objectContaining({
+        mode: 'failed',
+        concurrency: 5,
+        request_interval_seconds: 0,
+      })
+    )
+  )
+  jobs = [queueFixture('running')]
+  await client.invalidateQueries({ queryKey: ['model-review-jobs'] })
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('button', { name: 'Edit' })
+    ).not.toBeInTheDocument()
+  )
+})
+it.each(['Stop task', 'Clear queue', 'Delete', 'Clear task history'])(
+  'queue %s requires confirmation and sends the intended operation',
+  async (action) => {
+    jobs = [
+      queueFixture(action === 'Clear task history' ? 'completed' : 'running'),
+    ]
+    const post = vi
+      .spyOn(api, 'post')
+      .mockResolvedValue({ data: { success: true } })
+    const remove = vi
+      .spyOn(api, 'delete')
+      .mockResolvedValue({ data: { success: true } })
+    show()
+    await userEvent.click(screen.getByRole('button', { name: 'Model review' }))
+    await userEvent.click(await screen.findByRole('button', { name: action }))
+    expect(post).not.toHaveBeenCalled()
+    expect(remove).not.toHaveBeenCalled()
+    await userEvent.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', {
+        name: 'Confirm',
+      })
+    )
+    await waitFor(() => {
+      if (action === 'Stop task') {
+        expect(post).toHaveBeenCalledWith(
+          '/api/input-audit/model/jobs/12/cancel'
+        )
+      } else if (action === 'Clear queue') {
+        expect(post).toHaveBeenCalledWith('/api/input-audit/model/queue/clear')
+      } else {
+        expect(remove).toHaveBeenCalledWith('/api/input-audit/model/jobs', {
+          data: {
+            ids: action === 'Delete' ? [12] : [],
+            stop: true,
+            history: action === 'Clear task history',
+          },
+        })
+      }
+    })
+  }
+)
+it.each([false, true])(
+  'queue pause toggles the persisted pause setting (paused=%s)',
+  async (paused) => {
+    const previous = vi.mocked(api.get).getMockImplementation()
+    if (!previous) throw new Error('Missing API fixture')
+    vi.mocked(api.get).mockImplementation(async (url, config) =>
+      url === '/api/input-audit/model/settings'
+        ? { data: { success: true, data: { ...settings, paused } } }
+        : previous(url, config)
+    )
+    const put = vi
+      .spyOn(api, 'put')
+      .mockResolvedValue({ data: { success: true } })
+    show()
+    await userEvent.click(screen.getByRole('button', { name: 'Model review' }))
+    await userEvent.click(
+      await screen.findByRole('button', {
+        name: paused ? 'Resume queue' : 'Pause queue',
+      })
+    )
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith('/api/input-audit/model/queue', {
+        paused: !paused,
+      })
+    )
+  }
+)
+it.each(['Delete', 'Delete selected', 'Clear filtered results'])(
+  'result %s confirms before deleting only the selected scope',
+  async (action) => {
+    const remove = vi
+      .spyOn(api, 'delete')
+      .mockResolvedValue({ data: { success: true } })
+    show()
+    await userEvent.click(screen.getByRole('button', { name: 'Model review' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Results' }))
+    await screen.findByRole('button', { name: 'Details' })
+    if (action === 'Delete selected') {
+      await userEvent.click(
+        screen.getByRole('checkbox', { name: 'Select row' })
+      )
+    }
+    await userEvent.click(screen.getByRole('button', { name: action }))
+    expect(remove).not.toHaveBeenCalled()
+    await userEvent.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', {
+        name: 'Delete',
+      })
+    )
+    await waitFor(() =>
+      expect(remove).toHaveBeenCalledWith('/api/input-audit/model/results', {
+        data:
+          action === 'Clear filtered results'
+            ? { all: true, job_id: undefined, user_id: undefined, status: '' }
+            : { ids: [7] },
+      })
+    )
+  }
+)
+it('dashboard cleanup deletes only the selected user after confirmation', async () => {
+  const remove = vi
+    .spyOn(api, 'delete')
+    .mockResolvedValue({ data: { success: true } })
+  show()
+  await userEvent.click(screen.getByRole('button', { name: 'Model review' }))
+  await userEvent.click(
+    screen.getByRole('tab', { name: 'User review dashboard' })
+  )
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Clear user results' })
+  )
+  expect(remove).not.toHaveBeenCalled()
+  await userEvent.click(
+    within(screen.getByRole('alertdialog')).getByRole('button', {
+      name: 'Delete',
+    })
+  )
+  await waitFor(() =>
+    expect(remove).toHaveBeenCalledWith('/api/input-audit/model/results', {
+      data: { all: true, user_id: 4 },
+    })
+  )
 })

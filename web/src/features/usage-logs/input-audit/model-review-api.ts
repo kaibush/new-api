@@ -23,6 +23,7 @@ import { requireServerSuccess } from '@/lib/server-error-message'
 
 export interface ModelReviewSettings {
   enabled: boolean
+  paused?: boolean
   automatic: boolean
   interval_minutes: number
   endpoint: string
@@ -56,6 +57,8 @@ export interface ModelReviewJob {
   processed: number
   flagged: number
   failed: number
+  concurrency?: number
+  request_interval_seconds?: number
 }
 export interface ModelReviewResult {
   id: number
@@ -167,4 +170,43 @@ export async function revealModelReviewKey(proof: string, signal: AbortSignal) {
     })
   )
   return data.api_key
+}
+
+export async function updateModelReviewJob(
+  id: number,
+  values: {
+    mode: string
+    user_id?: number
+    concurrency: number
+    request_interval_seconds: number
+  }
+) {
+  const response = await api.put<ApiResponse>(`${base}/jobs/${id}`, values)
+  requireServerSuccess(response.data)
+}
+export async function deleteModelReviewJobs(ids: number[], history = false) {
+  const response = await api.delete<ApiResponse>(`${base}/jobs`, {
+    data: { ids, stop: true, history },
+  })
+  requireServerSuccess(response.data)
+}
+export async function clearModelReviewQueue() {
+  const response = await api.post<ApiResponse>(`${base}/queue/clear`)
+  requireServerSuccess(response.data)
+}
+export async function pauseModelReviewQueue(paused: boolean) {
+  const response = await api.put<ApiResponse>(`${base}/queue`, { paused })
+  requireServerSuccess(response.data)
+}
+export async function deleteModelReviewResults(values: {
+  ids?: number[]
+  all?: boolean
+  job_id?: number
+  user_id?: number
+  status?: string
+}) {
+  const response = await api.delete<ApiResponse>(`${base}/results`, {
+    data: values,
+  })
+  requireServerSuccess(response.data)
 }

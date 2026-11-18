@@ -855,3 +855,40 @@ it('audit management entries are grouped separately from search actions', async 
   ).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Search' })).toBeInTheDocument()
 })
+
+it.each(['Delete', 'Delete selected', 'Clear filtered messages'])(
+  'submitted message %s confirms and deletes the selected scope',
+  async (action) => {
+    const remove = vi
+      .spyOn(api, 'delete')
+      .mockResolvedValue({ data: { success: true } })
+    render(
+      <QueryClientProvider client={client}>
+        <InputAuditViewer />
+      </QueryClientProvider>
+    )
+    await screen.findByText('alice (#4)')
+    if (action === 'Delete selected') {
+      await userEvent.click(
+        screen.getByRole('checkbox', { name: 'Select row' })
+      )
+    }
+    await userEvent.click(screen.getByRole('button', { name: action }))
+    expect(remove).not.toHaveBeenCalled()
+    const confirm = screen.getByRole('alertdialog')
+    expect(
+      within(confirm).getByText(/Retained human review cases are preserved/)
+    ).toBeVisible()
+    await userEvent.click(
+      within(confirm).getByRole('button', { name: 'Delete' })
+    )
+    await waitFor(() =>
+      expect(remove).toHaveBeenCalledWith('/api/input-audit', {
+        data:
+          action === 'Clear filtered messages'
+            ? expect.objectContaining({ all: true })
+            : { ids: [1] },
+      })
+    )
+  }
+)
