@@ -35,6 +35,7 @@ export interface ModelReviewSettings {
   model: string
   instructions: string
   batch_size: number
+  concurrency: number
   chunk_chars: number
   timeout_seconds: number
   request_interval_seconds: number
@@ -79,6 +80,36 @@ export interface ModelReviewFilters {
   user_id?: number
 }
 const base = '/api/input-audit/model'
+export interface ModelReviewUser {
+  user_id: number
+  reviewed: number
+  suspected: number
+  insufficient: number
+  failed: number
+  categories: Record<string, number>
+}
+
+export async function getModelReviewUsers(filters: {
+  p: number
+  page_size: number
+  job_id?: number
+  user_id?: number
+}) {
+  const response = await api.get<
+    ApiResponse<{
+      items: ModelReviewUser[]
+      total: number
+      reviewed: number
+      suspected: number
+      affected_users: number
+    }>
+  >(`${base}/users`, { params: filters })
+  requireServerSuccess(response.data)
+  if (!response.data.data) {
+    throw new Error('Missing model review user statistics')
+  }
+  return response.data.data
+}
 export async function getModelReviewSettings() {
   const response = await api.get<ApiResponse<ModelReviewSettings>>(
     `${base}/settings`

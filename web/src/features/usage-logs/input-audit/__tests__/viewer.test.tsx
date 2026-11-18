@@ -215,20 +215,24 @@ it('audit actions share equal dimensions and wrap into two columns on narrow scr
   })
   const actions = within(navigation).getAllByRole('button')
   expect(actions).toHaveLength(5)
+  expect(navigation.parentElement?.parentElement).toContainElement(
+    screen.getByRole('textbox', { name: 'Message keyword' })
+  )
+  expect(navigation).not.toHaveClass('xl:justify-between')
   for (const action of actions) {
     expect(action.parentElement).toHaveClass(
       'grid-cols-2',
-      '[&>button]:h-10',
+      '[&>button]:h-9',
       '[&>button]:w-full',
-      'sm:[&>button]:w-40',
+      'sm:[&>button]:w-32',
       '[&>button]:whitespace-normal'
     )
   }
   expect(actions.map((action) => action.textContent)).toEqual([
     'Interception evidence',
     'Review cases',
-    'User allowlist',
     'Model review',
+    'User allowlist',
     'Settings',
   ])
   expect(

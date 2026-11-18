@@ -36,6 +36,7 @@ type InputAuditReviewSettings struct {
 	Model                  string `json:"model"`
 	Instructions           string `json:"instructions"`
 	BatchSize              int    `json:"batch_size"`
+	Concurrency            int    `json:"concurrency"`
 	ChunkChars             int    `json:"chunk_chars"`
 	TimeoutSeconds         int    `json:"timeout_seconds"`
 	RequestIntervalSeconds int    `json:"request_interval_seconds"`
@@ -45,10 +46,13 @@ type InputAuditReviewSettings struct {
 }
 
 func DefaultInputAuditReviewSettings() InputAuditReviewSettings {
-	return InputAuditReviewSettings{SystemPrompt: DefaultInputAuditReviewSystemPrompt, IntervalMinutes: 60, KeyEnv: "INPUT_AUDIT_LLM_API_KEY", BatchSize: 100, ChunkChars: 6000, TimeoutSeconds: 60, RequestIntervalSeconds: 2, Retries: 1, ConfidenceThreshold: 80, RetentionDays: 30}
+	return InputAuditReviewSettings{SystemPrompt: DefaultInputAuditReviewSystemPrompt, IntervalMinutes: 60, KeyEnv: "INPUT_AUDIT_LLM_API_KEY", BatchSize: 100, Concurrency: 3, ChunkChars: 6000, TimeoutSeconds: 60, RequestIntervalSeconds: 2, Retries: 1, ConfidenceThreshold: 80, RetentionDays: 30}
 }
 
 func (s InputAuditReviewSettings) Validate() error {
+	if s.Concurrency < 1 || s.Concurrency > 5 {
+		return errors.New("Invalid model review settings")
+	}
 	for _, value := range []string{s.Endpoint, s.Model, s.Instructions, s.KeyEnv, s.SystemPrompt, s.APIKey} {
 		if !utf8.ValidString(value) || strings.ContainsRune(value, '\x00') {
 			return errors.New("Invalid model review settings")

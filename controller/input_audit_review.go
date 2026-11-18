@@ -170,6 +170,94 @@ func GetInputAuditReviewSummary(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"unreviewed": pending}})
 }
 
+// Count the latest retained verdict for each message so retries and re-review
+// do not inflate user risk counts. A job filter scopes both selection and totals.
+func GetInputAuditReviewUsers(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+	db := model.DB.WithContext(ctx)
+	latest := db.Model(&model.InputAuditReviewResult{}).Select("MAX(id)").Group("audit_id")
+	for _, key := range []string{"job_id", "user_id"} {
+		if value := c.Query(key); value != "" {
+			id, err := strconv.ParseInt(value, 10, 64)
+			if err != nil || id < 1 {
+				c.JSON(400, gin.H{"success": false, "message": "Invalid audit filters"})
+				return
+			}
+			latest = latest.Where(key+" = ?", id)
+		}
+	}
+	page := common.GetPageQuery(c)
+	if page.Page < 1 || page.Page > 100000 || page.PageSize < 1 || page.PageSize > 100 {
+		c.JSON(400, gin.H{"success": false, "message": "Invalid pagination"})
+		return
+	}
+	var groups []struct {
+		UserId   int
+		Status   string
+		Category string
+		Count    int64
+	}
+	if err := db.Model(&model.InputAuditReviewResult{}).Select("user_id, status, category, COUNT(*) AS count").Where("id IN (?)", latest).Group("user_id, status, category").Scan(&groups).Error; err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	type userReviewSummary struct {
+		UserId       int              `json:"user_id"`
+		Reviewed     int64            `json:"reviewed"`
+		Suspected    int64            `json:"suspected"`
+		Insufficient int64            `json:"insufficient"`
+		Failed       int64            `json:"failed"`
+		Categories   map[string]int64 `json:"categories"`
+	}
+	users := make(map[int]*userReviewSummary)
+	var reviewed, suspected, affected int64
+	for _, group := range groups {
+		row := users[group.UserId]
+		if row == nil {
+			row = &userReviewSummary{UserId: group.UserId, Categories: make(map[string]int64)}
+			users[group.UserId] = row
+		}
+		row.Reviewed += group.Count
+		reviewed += group.Count
+		switch group.Status {
+		case "review":
+			if row.Suspected == 0 {
+				affected++
+			}
+			row.Suspected += group.Count
+			suspected += group.Count
+			row.Categories[group.Category] += group.Count
+		case "insufficient_evidence":
+			row.Insufficient += group.Count
+		case "failed":
+			row.Failed += group.Count
+		}
+	}
+	rows := make([]userReviewSummary, 0, len(users))
+	for _, row := range users {
+		rows = append(rows, *row)
+	}
+	slices.SortFunc(rows, func(a, b userReviewSummary) int {
+		if a.Suspected > b.Suspected {
+			return -1
+		}
+		if a.Suspected < b.Suspected {
+			return 1
+		}
+		if a.UserId < b.UserId {
+			return -1
+		}
+		if a.UserId > b.UserId {
+			return 1
+		}
+		return 0
+	})
+	start := min(page.GetStartIdx(), len(rows))
+	end := min(start+page.PageSize, len(rows))
+	c.JSON(200, gin.H{"success": true, "data": gin.H{"items": rows[start:end], "total": len(rows), "reviewed": reviewed, "suspected": suspected, "affected_users": affected}})
+}
+
 func GetInputAuditReviewCredential(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	if c.GetInt("role") != common.RoleRootUser {

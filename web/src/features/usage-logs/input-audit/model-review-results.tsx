@@ -41,6 +41,7 @@ import {
   type ModelReviewFilters,
   type ModelReviewResult,
 } from './model-review-api'
+import { ModelReviewDashboard } from './model-review-dashboard'
 
 const EMPTY: ModelReviewResult[] = []
 
@@ -151,6 +152,14 @@ export function ModelReviewResults(props: { jobID?: number }) {
   })
   return (
     <>
+      <ModelReviewDashboard
+        key={`${props.jobID ?? 'all'}-${filters.user_id ?? 'all'}`}
+        jobID={props.jobID}
+        userID={filters.user_id}
+        onSelectUser={(id) =>
+          setFilters({ ...filters, p: 1, user_id: id, status: 'review' })
+        }
+      />
       <DataTablePage
         table={table}
         columns={columns}
@@ -236,7 +245,12 @@ export function ModelReviewResults(props: { jobID?: number }) {
               </p>
             </TabsContent>
             <TabsContent value='human' className='pt-3'>
-              <p className='text-muted-foreground mb-3 text-xs'>{t('Original messages may expire before review results. Create a review case to preserve important evidence.')}</p><InputAuditCasePanel auditID={selected.audit_id} />
+              <p className='text-muted-foreground mb-3 text-xs'>
+                {t(
+                  'Original messages may expire before review results. Create a review case to preserve important evidence.'
+                )}
+              </p>
+              <InputAuditCasePanel auditID={selected.audit_id} />
             </TabsContent>
           </Tabs>
         </Dialog>

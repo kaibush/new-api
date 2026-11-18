@@ -11,7 +11,9 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -29,6 +31,72 @@ type modelReviewVerdict struct {
 	Confidence *int   `json:"confidence"`
 	Reason     string `json:"reason"`
 	Quote      string `json:"quote"`
+}
+
+// All review requests on an instance share start-time pacing and upstream
+// cooldowns, including chunks and retries. Waiting never holds the mutex.
+type inputAuditReviewTransport struct {
+	base     http.RoundTripper
+	mu       sync.Mutex
+	interval time.Duration
+	next     time.Time
+	failures int
+}
+
+func (t *inputAuditReviewTransport) CloseIdleConnections() {
+	if closer, ok := t.base.(interface{ CloseIdleConnections() }); ok {
+		closer.CloseIdleConnections()
+	}
+}
+
+func (t *inputAuditReviewTransport) Wait(ctx context.Context) error {
+	for {
+		t.mu.Lock()
+		now := time.Now()
+		if !now.Before(t.next) {
+			t.next = now.Add(t.interval)
+			t.mu.Unlock()
+			break
+		}
+		delay := t.next.Sub(now)
+		t.mu.Unlock()
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return ctx.Err()
+}
+
+func (t *inputAuditReviewTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	if err != nil || resp.StatusCode == 429 || resp.StatusCode >= 500 {
+		delay := 2 * time.Second
+		if resp != nil {
+			value := resp.Header.Get("Retry-After")
+			if seconds, e := strconv.Atoi(value); e == nil && seconds > 0 {
+				delay = time.Duration(min(seconds, 300)) * time.Second
+			} else if until, e := http.ParseTime(value); e == nil {
+				delay = max(delay, min(time.Until(until), 5*time.Minute))
+			}
+		}
+		t.mu.Lock()
+		t.failures = min(t.failures+1, 6)
+		delay = max(delay, min(time.Duration(1<<t.failures)*time.Second, time.Minute))
+		until := time.Now().Add(delay)
+		if until.After(t.next) {
+			t.next = until
+		}
+		t.mu.Unlock()
+	} else {
+		t.mu.Lock()
+		t.failures = 0
+		t.mu.Unlock()
+	}
+	return resp, err
 }
 
 // ReviewInputAudit reviews every retained text segment, with overlap at chunk
@@ -119,12 +187,21 @@ func requestAuditVerdict(ctx context.Context, client *http.Client, s model.Input
 	}
 	for attempt := 0; attempt <= s.Retries; attempt++ {
 		// Apply pacing to every upstream request, including retries and chunks.
-		timer := time.NewTimer(time.Duration(s.RequestIntervalSeconds) * (time.Duration(attempt) + 1) * time.Second)
+		delay := time.Duration(s.RequestIntervalSeconds) * time.Second
+		if attempt > 0 {
+			delay = min(time.Duration(max(1, s.RequestIntervalSeconds))*time.Second*time.Duration(1<<attempt), time.Minute)
+		}
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
 			return verdict, errors.New("review_cancelled")
 		case <-timer.C:
+		}
+		if transport, ok := client.Transport.(*inputAuditReviewTransport); ok {
+			if err := transport.Wait(ctx); err != nil {
+				return verdict, errors.New("review_cancelled")
+			}
 		}
 		requestCtx, cancel := context.WithTimeout(ctx, time.Duration(s.TimeoutSeconds)*time.Second)
 		req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, s.Endpoint, bytes.NewReader(payload))
@@ -180,6 +257,7 @@ func requestAuditVerdict(ctx context.Context, client *http.Client, s model.Input
 func RunInputAuditReviewer(ctx context.Context, db *gorm.DB) {
 	db = db.Session(&gorm.Session{Logger: gormlogger.Discard})
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client.Transport = &inputAuditReviewTransport{base: http.DefaultTransport}
 	defer client.CloseIdleConnections()
 	tick := time.NewTicker(2 * time.Second)
 	defer tick.Stop()
@@ -211,7 +289,7 @@ func RunInputAuditReviewer(ctx context.Context, db *gorm.DB) {
 	}
 }
 
-// Each step claims one record using an expiring database lease. A heartbeat
+// Each step claims a bounded batch using an expiring database lease. A heartbeat
 // cancels in-flight calls after cancellation or ownership loss. Commit checks
 // the token again so stale workers can never publish results or advance progress.
 func ProcessInputAuditReviewStep(ctx context.Context, db *gorm.DB, client *http.Client) error {
@@ -236,19 +314,30 @@ func ProcessInputAuditReviewStep(ctx context.Context, db *gorm.DB, client *http.
 	if claim.RowsAffected != 1 {
 		return nil
 	}
-	var settings model.InputAuditReviewSettings
+	// Existing job snapshots retain serial execution until a new job is started.
+	settings := model.DefaultInputAuditReviewSettings()
+	settings.Concurrency = 1
 	if err = common.UnmarshalJsonStr(job.Settings, &settings); err != nil {
 		return err
 	}
 	if err = settings.Validate(); err != nil {
 		return err
 	}
-	audit, err := model.NextInputAuditForReview(db.WithContext(ctx), job)
-	if errors.Is(err, gorm.ErrRecordNotFound) || job.Processed >= settings.BatchSize {
-		return db.WithContext(ctx).Model(&model.InputAuditReviewJob{}).Where("id = ? AND lease_token = ? AND status = ?", job.Id, token, "running").Updates(map[string]any{"status": "completed", "lease_until": 0, "updated_at": time.Now().Unix()}).Error
+	audits := make([]model.InputAudit, 0, settings.Concurrency)
+	scan := job
+	for range min(settings.Concurrency, max(0, settings.BatchSize-job.Processed)) {
+		audit, nextErr := model.NextInputAuditForReview(db.WithContext(ctx), scan)
+		if errors.Is(nextErr, gorm.ErrRecordNotFound) {
+			break
+		}
+		if nextErr != nil {
+			return nextErr
+		}
+		audits = append(audits, audit)
+		scan.Cursor = audit.Id
 	}
-	if err != nil {
-		return err
+	if len(audits) == 0 {
+		return db.WithContext(ctx).Model(&model.InputAuditReviewJob{}).Where("id = ? AND lease_token = ? AND status = ?", job.Id, token, "running").Updates(map[string]any{"status": "completed", "lease_until": 0, "updated_at": time.Now().Unix()}).Error
 	}
 	reviewCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
@@ -274,23 +363,58 @@ func ProcessInputAuditReviewStep(ctx context.Context, db *gorm.DB, client *http.
 			}
 		}
 	}()
-	result := ReviewInputAudit(reviewCtx, db.WithContext(reviewCtx), client, settings, audit)
+	transport, ok := client.Transport.(*inputAuditReviewTransport)
+	if !ok {
+		base := client.Transport
+		if base == nil {
+			base = http.DefaultTransport
+		}
+		transport = &inputAuditReviewTransport{base: base}
+	}
+	transport.mu.Lock()
+	transport.interval = time.Duration(settings.RequestIntervalSeconds) * time.Second
+	if transport.next.IsZero() {
+		transport.next = time.Now().Add(transport.interval)
+	}
+	transport.mu.Unlock()
+	pacedClient := *client
+	pacedClient.Transport = transport
+	settings.RequestIntervalSeconds = 0 // The shared transport paces every call.
+	results := make([]model.InputAuditReviewResult, len(audits))
+	var workers sync.WaitGroup
+	for i := range audits {
+		workers.Go(func() {
+			defer func() {
+				if recover() != nil {
+					cancel()
+					common.SysError("model audit review panicked")
+				}
+			}()
+			results[i] = ReviewInputAudit(reviewCtx, db.WithContext(reviewCtx), &pacedClient, settings, audits[i])
+			results[i].JobId = job.Id
+		})
+	}
+	workers.Wait()
 	cancelled := reviewCtx.Err() != nil
 	cancel()
 	<-done
 	if cancelled {
 		return nil
 	}
-	result.JobId = job.Id
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		changes := map[string]any{"cursor": audit.Id, "processed": gorm.Expr("processed + 1"), "lease_until": 0, "updated_at": time.Now().Unix()}
-		if result.Status == "review" || result.Status == "insufficient_evidence" {
-			changes["flagged"] = gorm.Expr("flagged + 1")
+		flagged, failed := 0, 0
+		ids := make([]int64, len(audits))
+		for i, result := range results {
+			ids[i] = audits[i].Id
+			if result.Status == "review" || result.Status == "insufficient_evidence" {
+				flagged++
+			}
+			if result.Status == "failed" {
+				failed++
+			}
 		}
-		if result.Status == "failed" {
-			changes["failed"] = gorm.Expr("failed + 1")
-		}
-		if job.Processed+1 >= settings.BatchSize {
+		changes := map[string]any{"cursor": scan.Cursor, "processed": gorm.Expr("processed + ?", len(results)), "flagged": gorm.Expr("flagged + ?", flagged), "failed": gorm.Expr("failed + ?", failed), "lease_until": 0, "updated_at": time.Now().Unix()}
+		if job.Processed+len(results) >= settings.BatchSize {
 			changes["status"] = "completed"
 		}
 		update := tx.Model(&model.InputAuditReviewJob{}).Where("id = ? AND lease_token = ? AND status = ?", job.Id, token, "running").Updates(changes)
@@ -300,9 +424,9 @@ func ProcessInputAuditReviewStep(ctx context.Context, db *gorm.DB, client *http.
 		if update.RowsAffected != 1 {
 			return nil
 		}
-		if err := tx.Model(&model.InputAudit{}).Where("id = ?", audit.Id).Update("review_attempted_at", time.Now().Unix()).Error; err != nil {
+		if err := tx.Model(&model.InputAudit{}).Where("id IN ?", ids).Update("review_attempted_at", time.Now().Unix()).Error; err != nil {
 			return err
 		}
-		return tx.Create(&result).Error
+		return tx.Create(&results).Error
 	})
 }

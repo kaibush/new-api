@@ -69,6 +69,7 @@ const schema = z
     instructions: z.string().max(3000),
     interval_minutes: z.number().int().min(1).max(10080),
     batch_size: z.number().int().min(1).max(1000),
+    concurrency: z.number().int().min(1).max(5),
     chunk_chars: z.number().int().min(1000).max(16000),
     timeout_seconds: z.number().int().min(5).max(120),
     request_interval_seconds: z.number().int().min(1).max(60),
@@ -121,6 +122,7 @@ export function ModelReviewSettingsForm(props: {
     resolver: zodResolver(schema),
     defaultValues: {
       ...props.settings,
+      concurrency: props.settings.concurrency ?? 3,
       api_key: '',
       clear_api_key: false,
       system_prompt:
@@ -165,6 +167,12 @@ export function ModelReviewSettingsForm(props: {
     },
   })
   const numbers = [
+    {
+      name: 'concurrency' as const,
+      label: t('Concurrent message reviews'),
+      min: 1,
+      max: 5,
+    },
     {
       name: 'batch_size' as const,
       label: t('Messages per review job'),
@@ -391,6 +399,11 @@ export function ModelReviewSettingsForm(props: {
           <AccordionItem value='processing'>
             <AccordionTrigger>{t('Processing and limits')}</AccordionTrigger>
             <AccordionContent>
+              <p className='text-muted-foreground mb-4 text-xs'>
+                {t(
+                  'Review up to 5 messages concurrently. The request interval is shared by all workers, text chunks and retries. Rate limits and server errors pause new requests; retries use exponential backoff. Saved changes apply to new jobs.'
+                )}
+              </p>
               <p className='text-muted-foreground mb-4 text-xs'>
                 {t(
                   'Messages are deduplicated during collection. Review uses bounded jobs and overlapping text chunks. Incomplete evidence stays marked for human review.'

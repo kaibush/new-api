@@ -47,6 +47,7 @@ const settings: ModelReviewSettings = {
   default_system_prompt: 'Default review criteria',
   key_configured: true,
   batch_size: 100,
+  concurrency: 3,
   chunk_chars: 6000,
   timeout_seconds: 60,
   request_interval_seconds: 2,
@@ -65,6 +66,29 @@ beforeEach(() => {
     }
     if (url === '/api/input-audit/model/jobs') {
       return { data: { success: true, data: [] } }
+    }
+    if (url === '/api/input-audit/model/users') {
+      return {
+        data: {
+          success: true,
+          data: {
+            items: [
+              {
+                user_id: 4,
+                reviewed: 5,
+                suspected: 3,
+                insufficient: 1,
+                failed: 1,
+                categories: { fraud: 2, cyber_abuse: 1 },
+              },
+            ],
+            total: 1,
+            reviewed: 5,
+            suspected: 3,
+            affected_users: 1,
+          },
+        },
+      }
     }
     if (String(url).startsWith('/api/user/search')) {
       return {
@@ -164,6 +188,12 @@ it('settings groups hide secondary controls and preserve edits while switching g
     screen.getByRole('spinbutton', { name: 'Messages per review job' }),
     { target: { value: '25' } }
   )
+  const concurrency = screen.getByRole('spinbutton', {
+    name: 'Concurrent message reviews',
+  })
+  expect(concurrency).toHaveValue(3)
+  expect(concurrency).toHaveAttribute('max', '5')
+  fireEvent.change(concurrency, { target: { value: '5' } })
   await userEvent.click(
     screen.getByRole('button', { name: 'Automatic review schedule' })
   )
@@ -176,6 +206,7 @@ it('settings groups hide secondary controls and preserve edits while switching g
       '/api/input-audit/model/settings',
       expect.objectContaining({
         batch_size: 25,
+        concurrency: 5,
         automatic: true,
         system_prompt: settings.system_prompt,
         api_key: '',
@@ -183,6 +214,80 @@ it('settings groups hide secondary controls and preserve edits while switching g
     )
   )
 })
+
+it('user dashboard displays anomaly categories and clicking a user filters results requiring review', async () => {
+  show()
+  await userEvent.click(screen.getByRole('button', { name: 'Model review' }))
+  await userEvent.click(screen.getByRole('tab', { name: 'Results' }))
+  const dashboard = await screen.findByRole('region', {
+    name: 'User review dashboard',
+  })
+  await waitFor(() =>
+    expect(within(dashboard).getAllByText(/Fraud/).length).toBeGreaterThan(0)
+  )
+  expect(within(dashboard).getByText('Fraud · 2')).toBeVisible()
+  expect(within(dashboard).getByText('Cyber abuse · 1')).toBeVisible()
+  await userEvent.click(
+    within(dashboard).getByRole('button', { name: 'Results' })
+  )
+  await waitFor(() =>
+    expect(api.get).toHaveBeenCalledWith('/api/input-audit/model/results', {
+      params: expect.objectContaining({ user_id: 4, status: 'review', p: 1 }),
+    })
+  )
+})
+
+it.each([false, true])(
+  'user dashboard shows empty or failed statistics without implying anomalies (failed=%s)',
+  async (failed) => {
+    const previous = vi.mocked(api.get).getMockImplementation()
+    if (!previous) {
+      throw new Error('Missing API fixture')
+    }
+    vi.mocked(api.get).mockImplementation(async (url, config) => {
+      if (url === '/api/input-audit/model/users') {
+        if (failed) throw new Error('statistics unavailable')
+        return {
+          data: {
+            success: true,
+            data: {
+              items: [],
+              total: 0,
+              reviewed: 0,
+              suspected: 0,
+              affected_users: 0,
+            },
+          },
+        }
+      }
+      return previous(url, config)
+    })
+    show()
+    await userEvent.click(screen.getByRole('button', { name: 'Model review' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Results' }))
+    const dashboard = await screen.findByRole('region', {
+      name: 'User review dashboard',
+    })
+    expect(
+      await within(dashboard).findByText(
+        failed ? 'Failed to load audit records' : 'No records'
+      )
+    ).toBeVisible()
+    if (failed) {
+      expect(
+        within(dashboard).getByRole('button', { name: 'Retry' })
+      ).toBeEnabled()
+    }
+    for (const name of [
+      'Reviewed messages',
+      'Suspected anomalies',
+      'Users with suspected anomalies',
+    ]) {
+      const statistic = within(dashboard).getByRole('group', { name })
+      expect(within(statistic).getByText(failed ? '—' : '0')).toBeVisible()
+    }
+  }
+)
 
 it('mobile results use cards and show long model explanations only in a separate detail dialog', async () => {
   const original = window.matchMedia.bind(window)
@@ -270,10 +375,12 @@ it('settings accept a provider key without exposing the saved key and allow rest
 
 it('saved review keys are revealed after verification and can be shown in full', async () => {
   const get = vi.mocked(api.get).getMockImplementation()
-  if (!get) { throw new Error('Missing API fixture') }
+  if (!get) {
+    throw new Error('Missing API fixture')
+  }
   vi.mocked(api.get).mockImplementation(async (url, options) => {
-    if (url === '/api/verify/methods')
-      {return {
+    if (url === '/api/verify/methods') {
+      return {
         data: {
           success: true,
           data: {
@@ -283,25 +390,24 @@ it('saved review keys are revealed after verification and can be shown in full',
             password_encryption_enabled: false,
           },
         },
-      }}
+      }
+    }
     return get(url, options)
   })
-  const post = vi
-    .spyOn(api, 'post')
-    .mockImplementation(async (url) => ({
-      data: {
-        success: true,
-        data:
-          url === '/api/verify'
-            ? {
-                proof_token: 'single-use-proof',
-                scope: 'input_audit.credentials.read',
-                method: '2fa',
-                expires_at: Math.floor(Date.now() / 1000) + 60,
-              }
-            : { api_key: 'saved-full-key' },
-      },
-    }))
+  const post = vi.spyOn(api, 'post').mockImplementation(async (url) => ({
+    data: {
+      success: true,
+      data:
+        url === '/api/verify'
+          ? {
+              proof_token: 'single-use-proof',
+              scope: 'input_audit.credentials.read',
+              method: '2fa',
+              expires_at: Math.floor(Date.now() / 1000) + 60,
+            }
+          : { api_key: 'saved-full-key' },
+    },
+  }))
   show()
   await userEvent.click(screen.getByRole('button', { name: 'Model review' }))
   await userEvent.click(screen.getByRole('tab', { name: 'Settings' }))

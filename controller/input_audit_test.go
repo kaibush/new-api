@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -1107,6 +1108,242 @@ func TestInputAuditModelReviewDatabaseMatrix(t *testing.T) {
 			defaults, err := model.LoadInputAuditReviewSettings(db)
 			require.NoError(t, err)
 			assert.Equal(t, config, defaults)
+		})
+	}
+}
+
+func TestInputAuditConcurrentReviewAndUserDashboard(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := inputAuditTestDB(t, dialect)
+			require.NoError(t, db.Migrator().DropTable(&model.InputAuditReviewResult{}, &model.InputAuditReviewJob{}))
+			require.NoError(t, db.AutoMigrate(&model.Option{}, &model.InputAudit{}, &model.InputAuditEvidence{}, &model.InputAuditReviewJob{}, &model.InputAuditReviewResult{}))
+			require.NoError(t, model.SaveInputAuditSettings(db, model.DefaultInputAuditSettings()))
+			var calls atomic.Int32
+			arrived := make(chan struct{}, 3)
+			release := make(chan struct{})
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				arrived <- struct{}{}
+				select {
+				case <-release:
+				case <-r.Context().Done():
+					return
+				}
+				payload, err := common.Marshal(map[string]any{"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]string{"content": `{"status":"review","category":"fraud","confidence":90,"reason":"Needs review","quote":"evidence"}`}}}})
+				require.NoError(t, err)
+				_, err = w.Write(payload)
+				require.NoError(t, err)
+			}))
+			defer upstream.Close()
+			settings := model.DefaultInputAuditReviewSettings()
+			settings.Enabled, settings.Endpoint, settings.Model = true, upstream.URL, "review-model"
+			settings.KeyEnv = ""
+			settings.Concurrency, settings.BatchSize, settings.RequestIntervalSeconds, settings.Retries = 3, 3, 1, 0
+			require.NoError(t, model.SaveInputAuditReviewSettings(db, settings))
+			for i := range 4 {
+				require.NoError(t, db.Create(&model.InputAudit{UserId: 9, ContentHash: fmt.Sprint(i), Content: "evidence", CreatedAt: time.Now().Unix()}).Error)
+			}
+			job, err := model.CreateInputAuditReviewJob(db, "incremental", 0, 1, false)
+			require.NoError(t, err)
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			finished := make(chan error, 1)
+			go func() { finished <- service.ProcessInputAuditReviewStep(ctx, db, upstream.Client()) }()
+			for range 3 {
+				select {
+				case <-arrived:
+				case <-ctx.Done():
+					t.Fatal("three requests must be in flight before any response is released")
+				}
+			}
+			// A second instance must not claim the same active batch.
+			require.NoError(t, service.ProcessInputAuditReviewStep(ctx, db, upstream.Client()))
+			assert.Equal(t, int32(3), calls.Load())
+			close(release)
+			require.NoError(t, <-finished)
+			require.NoError(t, db.First(&job, job.Id).Error)
+			assert.Equal(t, "completed", job.Status)
+			assert.Equal(t, 3, job.Processed)
+			assert.Equal(t, 3, job.Flagged)
+			var remaining int64
+			require.NoError(t, db.Model(&model.InputAudit{}).Where("review_attempted_at IS NULL OR review_attempted_at = ?", 0).Count(&remaining).Error)
+			assert.Equal(t, int64(1), remaining)
+			for _, mode := range []string{"cancelled", "ownership_lost", "context_cancelled"} {
+				t.Run(mode, func(t *testing.T) {
+					ready := make(chan struct{}, 3)
+					unblock := make(chan struct{})
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						ready <- struct{}{}
+						select {
+						case <-unblock:
+						case <-r.Context().Done():
+							return
+						}
+						body, e := common.Marshal(map[string]any{"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]string{"content": `{"status":"safe","category":"other","confidence":90,"reason":"No risk","quote":""}`}}}})
+						require.NoError(t, e)
+						_, _ = w.Write(body)
+					}))
+					defer server.Close()
+					config := settings
+					config.Endpoint = server.URL
+					require.NoError(t, model.SaveInputAuditReviewSettings(db, config))
+					current, e := model.CreateInputAuditReviewJob(db, "all", 0, 1, false)
+					require.NoError(t, e)
+					runCtx, stop := context.WithTimeout(context.Background(), 15*time.Second)
+					defer stop()
+					done := make(chan error, 1)
+					go func() { done <- service.ProcessInputAuditReviewStep(runCtx, db, server.Client()) }()
+					for range 3 {
+						select {
+						case <-ready:
+						case <-runCtx.Done():
+							t.Fatal("concurrent review did not start")
+						}
+					}
+					switch mode {
+					case "cancelled":
+						require.NoError(t, db.Model(&current).Update("status", "cancelled").Error)
+					case "ownership_lost":
+						require.NoError(t, db.Model(&current).Update("lease_token", "replacement-owner").Error)
+					case "context_cancelled":
+						stop()
+					}
+					close(unblock)
+					require.NoError(t, <-done)
+					var count int64
+					require.NoError(t, db.Model(&model.InputAuditReviewResult{}).Where("job_id = ?", current.Id).Count(&count).Error)
+					assert.Zero(t, count)
+					require.NoError(t, db.First(&current, current.Id).Error)
+					assert.Zero(t, current.Processed)
+					require.NoError(t, db.Model(&current).Update("status", "cancelled").Error)
+				})
+			}
+			// Newest verdicts replace earlier ones; failure and missing evidence are
+			// separate from suspected categories, and job scoping keeps old results.
+			for _, result := range []model.InputAuditReviewResult{
+				{JobId: job.Id + 100, AuditId: 1, UserId: 9, Status: "safe", Category: "other"},
+				{JobId: job.Id + 100, AuditId: 2, UserId: 9, Status: "review", Category: "cyber_abuse"},
+				{JobId: job.Id + 100, AuditId: 4, UserId: 10, Status: "insufficient_evidence", Category: "fraud"},
+				{JobId: job.Id + 100, AuditId: 5, UserId: 10, Status: "failed"},
+			} {
+				require.NoError(t, db.Create(&result).Error)
+			}
+			previousDB := model.DB
+			model.DB = db
+			defer func() { model.DB = previousDB }()
+			router := gin.New()
+			router.GET("/users", GetInputAuditReviewUsers)
+			for _, tc := range []struct {
+				query                        string
+				suspected, total, categories int
+			}{
+				{"", 2, 2, 2},
+				{fmt.Sprintf("?job_id=%d", job.Id), 3, 1, 1},
+				{"?user_id=10", 0, 1, 0},
+			} {
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/users"+tc.query, nil))
+				require.Equal(t, 200, w.Code)
+				var response struct {
+					Data struct {
+						Suspected int `json:"suspected"`
+						Total     int `json:"total"`
+						Items     []struct {
+							Categories   map[string]int `json:"categories"`
+							Insufficient int            `json:"insufficient"`
+							Failed       int            `json:"failed"`
+						} `json:"items"`
+					} `json:"data"`
+				}
+				require.NoError(t, common.Unmarshal(w.Body.Bytes(), &response))
+				assert.Equal(t, tc.suspected, response.Data.Suspected)
+				assert.Equal(t, tc.total, response.Data.Total)
+				require.NotEmpty(t, response.Data.Items)
+				assert.Len(t, response.Data.Items[0].Categories, tc.categories)
+				if tc.query == "?user_id=10" {
+					assert.Equal(t, 1, response.Data.Items[0].Insufficient)
+					assert.Equal(t, 1, response.Data.Items[0].Failed)
+				}
+			}
+			for _, query := range []string{"?user_id=-1", "?job_id=bad", "?page_size=-1"} {
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/users"+query, nil))
+				assert.Equal(t, 400, w.Code)
+			}
+			settings.Concurrency = 6
+			assert.Error(t, settings.Validate())
+			settings.Concurrency = 0
+			assert.Error(t, settings.Validate())
+		})
+	}
+}
+
+func TestInputAuditModelReviewRateLimitCancellation(t *testing.T) {
+	for _, status := range []int{http.StatusTooManyRequests, http.StatusServiceUnavailable} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			db := inputAuditTestDB(t, "sqlite")
+			require.NoError(t, db.Migrator().DropTable(&model.InputAuditReviewResult{}, &model.InputAuditReviewJob{}))
+			require.NoError(t, db.AutoMigrate(&model.Option{}, &model.InputAudit{}, &model.InputAuditEvidence{}, &model.InputAuditReviewJob{}, &model.InputAuditReviewResult{}))
+			require.NoError(t, model.SaveInputAuditSettings(db, model.DefaultInputAuditSettings()))
+			var calls atomic.Int32
+			var recovering atomic.Bool
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				attempt := calls.Add(1)
+				if recovering.Load() && attempt > 2 {
+					body, err := common.Marshal(map[string]any{"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]string{"content": `{"status":"review","category":"fraud","confidence":90,"reason":"Needs review","quote":"evidence"}`}}}})
+					require.NoError(t, err)
+					_, _ = w.Write(body)
+					return
+				}
+				if recovering.Load() {
+					w.WriteHeader(status)
+					return
+				}
+				if status == http.StatusTooManyRequests {
+					w.Header().Set("Retry-After", "60")
+				} else {
+					w.Header().Set("Retry-After", time.Now().Add(time.Minute).UTC().Format(http.TimeFormat))
+				}
+				w.WriteHeader(status)
+			}))
+			defer server.Close()
+			settings := model.DefaultInputAuditReviewSettings()
+			settings.Enabled, settings.Endpoint, settings.Model, settings.KeyEnv = true, server.URL, "review-model", ""
+			settings.Concurrency, settings.BatchSize, settings.RequestIntervalSeconds, settings.Retries = 1, 1, 1, 1
+			require.NoError(t, model.SaveInputAuditReviewSettings(db, settings))
+			require.NoError(t, db.Create(&model.InputAudit{UserId: 1, ContentHash: "rate-limit", Content: "evidence", CreatedAt: time.Now().Unix()}).Error)
+			job, err := model.CreateInputAuditReviewJob(db, "incremental", 0, 1, false)
+			require.NoError(t, err)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			require.NoError(t, service.ProcessInputAuditReviewStep(ctx, db, server.Client()))
+			assert.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
+			assert.Equal(t, int32(1), calls.Load(), "Retry-After must prevent another request before cancellation")
+			var count int64
+			require.NoError(t, db.Model(&model.InputAuditReviewResult{}).Where("job_id = ?", job.Id).Count(&count).Error)
+			assert.Zero(t, count)
+			require.NoError(t, db.First(&job, job.Id).Error)
+			assert.Zero(t, job.Processed)
+			require.NoError(t, db.Model(&job).Update("status", "cancelled").Error)
+			// Recovering upstreams are retried within the configured budget and
+			// publish one result, rather than counting each attempt as a review.
+			calls.Store(0)
+			recovering.Store(true)
+			settings.Retries = 2
+			require.NoError(t, model.SaveInputAuditReviewSettings(db, settings))
+			retry, err := model.CreateInputAuditReviewJob(db, "incremental", 0, 1, false)
+			require.NoError(t, err)
+			retryCtx, stop := context.WithTimeout(context.Background(), 15*time.Second)
+			defer stop()
+			require.NoError(t, service.ProcessInputAuditReviewStep(retryCtx, db, server.Client()))
+			assert.Equal(t, int32(3), calls.Load())
+			var result model.InputAuditReviewResult
+			require.NoError(t, db.Where("job_id = ?", retry.Id).First(&result).Error)
+			assert.Equal(t, "review", result.Status)
+			require.NoError(t, db.First(&retry, retry.Id).Error)
+			assert.Equal(t, 1, retry.Processed)
+			assert.Zero(t, retry.Failed)
 		})
 	}
 }

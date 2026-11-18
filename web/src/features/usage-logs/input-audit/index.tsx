@@ -259,6 +259,25 @@ export function InputAuditViewer() {
           <LogsFilterToolbar
             table={table}
             filterGridClassName='sm:grid-cols-2 xl:grid-cols-6'
+            className='[&_[data-slot=input]]:h-9 [&_button]:h-9 [&_button]:rounded-md'
+            stats={
+              status.data && (
+                <nav
+                  aria-label={t('Audit management')}
+                  className='grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap [&>button]:h-9 [&>button]:w-full [&>button]:min-w-0 [&>button]:rounded-md [&>button]:px-3 [&>button]:text-sm [&>button]:whitespace-normal sm:[&>button]:w-32'
+                >
+                  <MatchesDialog />
+                  {canRead && <InputAuditCasesDialog />}
+                  <ModelReviewDialog />
+                  {canRead && (
+                    <InputAuditAllowlistDialog
+                      collectionEnabled={status.data.settings.enabled}
+                    />
+                  )}
+                  <InputAuditSettingsDialog settings={status.data.settings} />
+                </nav>
+              )
+            }
             primaryFilters={
               <>
                 <LogsFilterField wide>
@@ -321,26 +340,6 @@ export function InputAuditViewer() {
               setFilters({ p: 1, page_size: filters.page_size })
             }}
           />
-          {status.data && (
-            <nav
-              aria-label={t('Audit management')}
-              className='flex flex-col gap-2 py-1 xl:flex-row xl:items-center xl:justify-between'
-            >
-              <div className='grid grid-cols-2 gap-2 sm:flex sm:flex-wrap [&>button]:h-10 [&>button]:w-full [&>button]:min-w-0 [&>button]:rounded-lg [&>button]:px-3 [&>button]:text-sm [&>button]:whitespace-normal sm:[&>button]:w-40'>
-                <MatchesDialog />
-                {canRead && <InputAuditCasesDialog />}
-              </div>
-              <div className='grid grid-cols-2 gap-2 border-t pt-2 sm:flex sm:flex-wrap xl:border-t-0 xl:border-l xl:pt-0 xl:pl-3 [&>button]:h-10 [&>button]:w-full [&>button]:min-w-0 [&>button]:rounded-lg [&>button]:px-3 [&>button]:text-sm [&>button]:whitespace-normal sm:[&>button]:w-40'>
-                {canRead && (
-                  <InputAuditAllowlistDialog
-                    collectionEnabled={status.data.settings.enabled}
-                  />
-                )}
-                <ModelReviewDialog />
-                <InputAuditSettingsDialog settings={status.data.settings} />
-              </div>
-            </nav>
-          )}
           {invalid && (
             <Alert variant='destructive'>
               <AlertDescription>{t('Invalid audit filters')}</AlertDescription>

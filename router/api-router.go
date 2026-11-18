@@ -394,6 +394,7 @@ func SetApiRouter(router *gin.Engine) {
 		inputAuditRoute.POST("/model/jobs", controller.CreateInputAuditReviewJob)
 		inputAuditRoute.POST("/model/jobs/:job_id/cancel", controller.CancelInputAuditReviewJob)
 		inputAuditRoute.GET("/model/results", controller.GetInputAuditReviewResults)
+		inputAuditRoute.GET("/model/users", controller.GetInputAuditReviewUsers)
 		inputAuditRoute.PUT("/settings", controller.UpdateInputAuditSettings)
 		inputAuditRoute.GET("/allowlist", controller.GetInputAuditAllowlist)
 		inputAuditRoute.PUT("/allowlist", controller.UpdateInputAuditAllowlist)
