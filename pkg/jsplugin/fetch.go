@@ -74,10 +74,12 @@ type runtimeCall struct {
 	watchdog  *runtimeWatchdog
 	// holdsSlot and parked are what the call holds of the engine's
 	// semaphore and parked tokens; release returns exactly that.
-	holdsSlot bool
-	parked    bool
-	fetches   int
-	fetchTime time.Duration
+	holdsSlot    bool
+	parked       bool
+	fetches      int
+	fetchTime    time.Duration
+	policyBudget *int
+	policyPlans  map[string]*keywordPolicy
 }
 
 func (c *runtimeCall) release() {

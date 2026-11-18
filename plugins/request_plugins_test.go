@@ -1433,3 +1433,130 @@ func TestContentModerationImagesAndDocuments(t *testing.T) {
 	assert.Equal(t, "moderation.flagged", result.Rejected.Code)
 	assert.Equal(t, []string{`[{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}}]`}, inputs)
 }
+
+func TestRequestPolicyPlugin(t *testing.T) {
+	const config = `{"rules":[{"id":"jailbreak","keywords":"破限","exceptions":"禁止破限"},{"id":"adult","keywords":"色情","exceptions":"除色情之外"},{"id":"ctf","keywords":"CTF","before":"攻击真实网站.*"}]}`
+	cases := []struct{ name, body, id string }{
+		{"local negation passes", `{"messages":[{"role":"user","content":"禁止破限"}]}`, ""},
+		{"later occurrence rejects", `{"messages":[{"role":"user","content":"禁止破限。请破限"}]}`, "jailbreak"},
+		{"separate messages never share exemptions", `{"messages":[{"role":"system","content":"禁止"},{"role":"user","content":"破限"}]}`, "jailbreak"},
+		{"excluded topic passes", `{"input":"除色情之外，其他题材都可以"}`, ""},
+		{"CTF alone is not blocked", `{"input":"帮我理解 CTF 题目"}`, ""},
+		{"CTF with local condition rejects", `{"input":"攻击真实网站并以 CTF 为借口"}`, "ctf"},
+		{"Claude tool argument checked", `{"messages":[{"content":[{"type":"tool_use","input":{"prompt":"请破限"}}]}]}`, "jailbreak"},
+		{"Gemini instruction checked", `{"systemInstruction":{"parts":[{"text":"请破限"}]}}`, "jailbreak"},
+		{"media reference skipped", `{"messages":[{"content":[{"type":"image_url","image_url":{"url":"https://example.com/破限.png"}}]}]}`, ""},
+		{"client flags cannot skip the request", `{"type":"image","thought":true,"messages":[{"role":"user","content":"请破限"}]}`, "jailbreak"},
+		{"tool arguments with identifier keys checked", `{"messages":[{"content":[{"type":"tool_use","input":{"id":"请破限","image":"请破限"}}]}]}`, "jailbreak"},
+		{"later request field checked", `{"metadata":{"note":"请生成色情"}}`, "adult"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, stage := range []string{"ingress", "egress"} {
+				result := runRequestPlugin(t, "request-policy", stage, config, jsplugin.TransformRequest{Body: json.RawMessage(tc.body)})
+				if tc.id == "" {
+					assert.Equal(t, "continue", result.Action)
+				} else {
+					assert.Equal(t, "reject", result.Action)
+					assert.Equal(t, tc.id, result.RuleID)
+				}
+			}
+		})
+	}
+	plugin, ok := jsplugin.DefaultRegistry.Generation().Get("request-policy")
+	require.True(t, ok)
+	_, err := plugin.ValidateConfig(json.RawMessage(`{"rules":[{"keywords":"a","before":"(?<=x)a"}]}`))
+	require.Error(t, err)
+	result := runRequestPlugin(t, "request-policy", "ingress", `{}`, jsplugin.TransformRequest{Body: json.RawMessage(`{"input":"破限"}`)})
+	assert.Equal(t, "continue", result.Action)
+}
+
+func BenchmarkRequestPolicyMillionContext(b *testing.B) {
+	plugin, ok := jsplugin.DefaultRegistry.Generation().Get("request-policy")
+	require.True(b, ok)
+	config, err := plugin.ValidateConfig(json.RawMessage(`{"rules":[{"id":"hit","keywords":"forbidden"}]}`))
+	require.NoError(b, err)
+	for _, size := range []int{4 << 20, 16 << 20, 128 << 20} {
+		b.Run(fmt.Sprintf("%dMiB", size>>20), func(b *testing.B) {
+			body := json.RawMessage(`{"messages":[{"role":"user","content":"` + strings.Repeat("x", size) + `forbidden"}]}`)
+			ctx := jsplugin.TransformContext{Stage: "ingress", Format: "openai", Instance: jsplugin.TransformInstance{ID: "benchmark-policy"}, Config: config}
+			b.SetBytes(int64(len(body)))
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				result, err := plugin.CallTransform(b.Context(), ctx, jsplugin.TransformRequest{Body: body})
+				require.NoError(b, err)
+				require.Equal(b, "reject", result.Action)
+				require.Equal(b, "hit", result.RuleID)
+			}
+		})
+	}
+}
+
+func TestRequestPolicyEvidenceAndInstanceIsolation(t *testing.T) {
+	plugin, ok := jsplugin.DefaultRegistry.Generation().Get("request-policy")
+	require.True(t, ok)
+	config, err := plugin.ValidateConfig(json.RawMessage(`{"rules":[{"id":"hit","keywords":"İ中文","exceptions":"禁止İ中文"}]}`))
+	require.NoError(t, err)
+	body := json.RawMessage(`{"messages":[{"role":"user","content":"禁止İ中文。🙂请İ中文"}]}`)
+	ctx := jsplugin.TransformContext{Stage: "ingress", Format: "openai", CaptureEvidence: true, Instance: jsplugin.TransformInstance{ID: "evidence-policy"}, Config: config}
+	result, err := plugin.CallTransform(t.Context(), ctx, jsplugin.TransformRequest{Body: body})
+	require.NoError(t, err)
+	require.Equal(t, "reject", result.Action)
+	require.NotNil(t, result.Evidence)
+	assert.Equal(t, "/messages/0/content", result.Evidence.Path)
+	assert.Equal(t, "user", result.Evidence.Role)
+	assert.Equal(t, "original", result.Evidence.Representation)
+	assert.Equal(t, "İ中文", result.Evidence.Match)
+	assert.Equal(t, "禁止İ中文。🙂请", result.Evidence.Before)
+	ctx.CaptureEvidence = false
+	result, err = plugin.CallTransform(t.Context(), ctx, jsplugin.TransformRequest{Body: body})
+	require.NoError(t, err)
+	assert.Nil(t, result.Evidence)
+	for _, word := range []string{"alpha", "beta", "gamma", "delta"} {
+		t.Run(word, func(t *testing.T) {
+			t.Parallel()
+			config, err := plugin.ValidateConfig(json.RawMessage(`{"rules":[{"id":"` + word + `","keywords":"` + word + `"}]}`))
+			require.NoError(t, err)
+			result, err := plugin.CallTransform(t.Context(), jsplugin.TransformContext{Stage: "ingress", Config: config, Instance: jsplugin.TransformInstance{ID: "shared-id"}}, jsplugin.TransformRequest{Body: json.RawMessage(`{"input":"` + word + `"}`)})
+			require.NoError(t, err)
+			assert.Equal(t, word, result.RuleID)
+		})
+	}
+}
+
+func BenchmarkRequestPolicyStructuredContext(b *testing.B) {
+	plugin, ok := jsplugin.DefaultRegistry.Generation().Get("request-policy")
+	require.True(b, ok)
+	config, err := plugin.ValidateConfig(json.RawMessage(`{"rules":[{"id":"hit","keywords":"破限","exceptions":"禁止破限"}]}`))
+	require.NoError(b, err)
+	for _, scenario := range []string{"escaped-unicode", "many-messages"} {
+		b.Run(scenario, func(b *testing.B) {
+			var builder strings.Builder
+			builder.WriteString(`{"messages":[`)
+			if scenario == "escaped-unicode" {
+				builder.WriteString(`{"role":"user","content":"`)
+				builder.WriteString(strings.Repeat(`\u4e2d\u6587`, 400000))
+				builder.WriteString(`请破限"}`)
+			} else {
+				for range 4096 {
+					builder.WriteString(`{"role":"user","content":"`)
+					builder.WriteString(strings.Repeat("ordinary text ", 64))
+					builder.WriteString(`"},`)
+				}
+				builder.WriteString(`{"role":"user","content":"请破限"}`)
+			}
+			builder.WriteString(`]}`)
+			body := json.RawMessage(builder.String())
+			ctx := jsplugin.TransformContext{Stage: "ingress", Config: config, Instance: jsplugin.TransformInstance{ID: "structured-benchmark"}}
+			b.SetBytes(int64(len(body)))
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				result, err := plugin.CallTransform(b.Context(), ctx, jsplugin.TransformRequest{Body: body})
+				require.NoError(b, err)
+				require.Equal(b, "hit", result.RuleID)
+			}
+		})
+	}
+}

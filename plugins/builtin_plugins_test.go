@@ -22,6 +22,7 @@ var requestPluginHooks = map[string][]string{
 	"image-compress":     {"outbound"},
 	"param-override":     {"outbound"},
 	"request-filter":     {"ingress", "egress", "reply"},
+	"request-policy":     {"ingress", "egress"},
 	"request-redact":     {"ingress", "egress", "reply"},
 }
 

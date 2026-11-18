@@ -1,5 +1,5 @@
 export type JSONValue = null | boolean | number | string | readonly JSONValue[] | {readonly [key: string]: JSONValue};
-export type HostCapability = "json-clone@1" | "submit-sse-delta@1" | "json-order@1";
+export type HostCapability = "json-clone@1" | "submit-sse-delta@1" | "json-order@1" | "keyword-policy@1";
 /** Kinds of upstream a driver can address: the vendor API itself, or another New API gateway with the same plugin installed. */
 export type UpstreamKind = "vendor" | "new_api";
 /** Host-injected on every driver hook context. With "new_api" the driver uses its own native-route prefix and the host already set Bearer credentials. */
@@ -34,7 +34,13 @@ export interface HostUtils {
   mediaText(ref: string, options?: {maxChars?: number}): {text: string; truncated: boolean} | {unchecked: MediaTextUnchecked} | null;
   /** Stage hooks, reply and report: the distinct keywords of the instance config property field (format "keywords") that text contains, as the list spells them, in the order they end in text, at most 32. Letter case is ignored unless caseSensitive is true. */
   keywords(field: string, text: string, options?: {caseSensitive?: boolean}): string[];
+  /** Validates a rule array using the native policy compiler; available during validateConfig. */
+  validateKeywordPolicy(rules: readonly KeywordPolicyRule[]): void;
+  /** Request-processing hooks only. Uses the instance config field, scans text once and returns its first decisive occurrence. Offsets are original UTF-8 bytes, not JS string indices. */
+  keywordPolicy(field: string, text: string): {ruleId: string; start: number; end: number; evidence?: TransformMatchEvidence} | null;
 }
+/** Keyword strings and exception phrases use one literal per line. All nonempty RE2 conditions must match. Exceptions only exempt the occurrences their literal span contains. */
+export interface KeywordPolicyRule {id?: string; keywords: string; exceptions?: string; before?: string; after?: string; context?: string; window?: number; caseSensitive?: boolean}
 /** A file of the request. ref ("[media:N]") names inline media and form files, size is then its decoded size in bytes; a file the request names by file id, file URL or remote URL has none, and url holds its URL when the body gives one. path is its JSON Pointer in req.body, or the field name of a form file. rewritable marks a text file of the JSON body that media.text can rewrite. mime is "" when the request does not say. */
 export interface Attachment {ref?: string; kind: AttachmentKind; mime: string; size?: number; filename?: string; url?: string; path: string; rewritable?: true}
 export type AttachmentKind = "image" | "document" | "audio" | "video" | "other";

@@ -107,6 +107,16 @@ func injectGlobals(runtime *moejs.Runtime, identity func() string, now func() ti
 			}
 			return call.keywords(r, moejs.Arg(args, 0), moejs.Arg(args, 1), moejs.Arg(args, 2))
 		}),
+		"keywordPolicy": runtime.Function("keywordPolicy", 2, func(r *moejs.Realm, _ moejs.Value, args []moejs.Value) (moejs.Value, error) {
+			call := currentCall()
+			if call == nil {
+				return moejs.Undefined(), fmt.Errorf("utils.keywordPolicy is not available outside hooks")
+			}
+			return call.keywordPolicy(r, moejs.Arg(args, 0), moejs.Arg(args, 1))
+		}),
+		"validateKeywordPolicy": runtime.Function("validateKeywordPolicy", 1, func(r *moejs.Realm, _ moejs.Value, args []moejs.Value) (moejs.Value, error) {
+			return validateKeywordPolicy(r, moejs.Arg(args, 0))
+		}),
 		"hasCapability": runtime.Function("hasCapability", 1, func(r *moejs.Realm, _ moejs.Value, args []moejs.Value) (moejs.Value, error) {
 			name, err := stringValue(r, moejs.Arg(args, 0))
 			if err != nil {
