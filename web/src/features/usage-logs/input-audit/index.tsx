@@ -258,6 +258,7 @@ export function InputAuditViewer() {
           </Accordion>
           <LogsFilterToolbar
             table={table}
+            filterGridClassName='sm:grid-cols-2 xl:grid-cols-6'
             primaryFilters={
               <>
                 <LogsFilterField wide>
@@ -323,17 +324,21 @@ export function InputAuditViewer() {
           {status.data && (
             <nav
               aria-label={t('Audit management')}
-              className='bg-card/50 grid grid-cols-2 gap-2 rounded-lg border p-3 sm:flex sm:flex-wrap [&>button]:w-full [&>button]:min-w-0 [&>button]:whitespace-normal sm:[&>button]:w-auto'
+              className='flex flex-col gap-2 py-1 xl:flex-row xl:items-center xl:justify-between'
             >
-              {canRead && <InputAuditCasesDialog />}
-              {canRead && (
-                <InputAuditAllowlistDialog
-                  collectionEnabled={status.data.settings.enabled}
-                />
-              )}
-              <MatchesDialog />
-              <ModelReviewDialog />
-              <InputAuditSettingsDialog settings={status.data.settings} />
+              <div className='grid grid-cols-2 gap-2 sm:flex sm:flex-wrap [&>button]:h-10 [&>button]:w-full [&>button]:min-w-0 [&>button]:rounded-lg [&>button]:px-3 [&>button]:text-sm [&>button]:whitespace-normal sm:[&>button]:w-40'>
+                <MatchesDialog />
+                {canRead && <InputAuditCasesDialog />}
+              </div>
+              <div className='grid grid-cols-2 gap-2 border-t pt-2 sm:flex sm:flex-wrap xl:border-t-0 xl:border-l xl:pt-0 xl:pl-3 [&>button]:h-10 [&>button]:w-full [&>button]:min-w-0 [&>button]:rounded-lg [&>button]:px-3 [&>button]:text-sm [&>button]:whitespace-normal sm:[&>button]:w-40'>
+                {canRead && (
+                  <InputAuditAllowlistDialog
+                    collectionEnabled={status.data.settings.enabled}
+                  />
+                )}
+                <ModelReviewDialog />
+                <InputAuditSettingsDialog settings={status.data.settings} />
+              </div>
             </nav>
           )}
           {invalid && (

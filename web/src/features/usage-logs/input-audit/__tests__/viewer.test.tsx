@@ -204,6 +204,43 @@ it('selecting a user by name sends its ID and reset clears the selection', async
   expect(picker).toHaveValue('')
 })
 
+it('audit actions share equal dimensions and wrap into two columns on narrow screens', async () => {
+  render(
+    <QueryClientProvider client={client}>
+      <InputAuditViewer />
+    </QueryClientProvider>
+  )
+  const navigation = await screen.findByRole('navigation', {
+    name: 'Audit management',
+  })
+  const actions = within(navigation).getAllByRole('button')
+  expect(actions).toHaveLength(5)
+  for (const action of actions) {
+    expect(action.parentElement).toHaveClass(
+      'grid-cols-2',
+      '[&>button]:h-10',
+      '[&>button]:w-full',
+      'sm:[&>button]:w-40',
+      '[&>button]:whitespace-normal'
+    )
+  }
+  expect(actions.map((action) => action.textContent)).toEqual([
+    'Interception evidence',
+    'Review cases',
+    'User allowlist',
+    'Model review',
+    'Settings',
+  ])
+  expect(
+    screen.getByRole('textbox', { name: 'Message keyword' }).parentElement
+      ?.parentElement
+  ).toHaveClass('sm:grid-cols-2', 'xl:grid-cols-6')
+  await userEvent.click(actions[0])
+  expect(
+    await screen.findByRole('dialog', { name: 'Interception evidence' })
+  ).toBeVisible()
+})
+
 it('mobile message lists fill the available height and scroll inside the page', async () => {
   const matchMedia = window.matchMedia.bind(window)
   vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({

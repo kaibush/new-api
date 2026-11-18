@@ -57,6 +57,7 @@ interface LogsFilterToolbarProps<TData> {
   onReset: () => void
   onSearch: () => void
   className?: string
+  filterGridClassName?: string
 }
 
 interface LogsFilterFieldProps {
@@ -248,7 +249,12 @@ export function LogsFilterToolbar<TData>(props: LogsFilterToolbarProps<TData>) {
       )}
     >
       <div className='flex flex-wrap items-start gap-2'>
-        <div className='grid min-w-0 flex-1 grid-cols-1 gap-2 sm:grid-cols-[repeat(auto-fit,minmax(10rem,1fr))]'>
+        <div
+          className={cn(
+            'grid min-w-0 flex-1 grid-cols-1 gap-2 sm:grid-cols-[repeat(auto-fit,minmax(10rem,1fr))]',
+            props.filterGridClassName
+          )}
+        >
           {props.primaryFilters}
         </div>
         {advancedToggle && (
