@@ -21,7 +21,6 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '@/components/copy-button'
-import { Dialog } from '@/components/dialog'
 import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
 import {
@@ -45,6 +44,7 @@ import {
 import { getInputAuditEvidence, type InputAudit } from './api'
 import { InputAuditCasePanel } from './case-panel'
 import { InputAuditEvidenceView } from './evidence-view'
+import { AuditFeatureSurface } from './feature-surface'
 
 export function InputAuditDetailsDialog(props: { entry: InputAudit }) {
   const { t, i18n } = useTranslation()
@@ -58,7 +58,7 @@ export function InputAuditDetailsDialog(props: { entry: InputAudit }) {
   })
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   return (
-    <Dialog
+    <AuditFeatureSurface
       open={open}
       onOpenChange={setOpen}
       title={t('Input Audits')}
@@ -161,6 +161,6 @@ export function InputAuditDetailsDialog(props: { entry: InputAudit }) {
           </>
         )}
       </Tabs>
-    </Dialog>
+    </AuditFeatureSurface>
   )
 }

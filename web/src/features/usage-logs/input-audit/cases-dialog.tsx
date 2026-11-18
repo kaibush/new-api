@@ -22,7 +22,6 @@ import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DataTablePage, useDataTable } from '@/components/data-table'
-import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { UserIdentity } from '@/components/user-identity'
@@ -38,9 +37,12 @@ import {
 } from './api'
 import { useInputAuditCaseLabels } from './case-labels'
 import { InputAuditCasePanel } from './case-panel'
+import { AuditFeatureSurface } from './feature-surface'
 
 const EMPTY: InputAuditCase[] = []
-export function InputAuditCasesDialog() {
+export function InputAuditCasesDialog(
+  props: { embedded?: boolean; active?: boolean } = {}
+) {
   const { t } = useTranslation()
   const user = useAuthStore((state) => state.auth.user)
   const labels = useInputAuditCaseLabels()
@@ -55,7 +57,10 @@ export function InputAuditCasesDialog() {
   const query = useQuery({
     queryKey: ['input-audit-cases', user?.id, filters],
     queryFn: () => getInputAuditCases(filters),
-    enabled: open && user?.role === ROLE.SUPER_ADMIN,
+    enabled:
+      (props.embedded || open) &&
+      props.active !== false &&
+      user?.role === ROLE.SUPER_ADMIN,
     retry: false,
   })
   const download = useMutation({
@@ -152,7 +157,8 @@ export function InputAuditCasesDialog() {
   if (user?.role !== ROLE.SUPER_ADMIN) return null
   return (
     <>
-      <Dialog
+      <AuditFeatureSurface
+        embedded={props.embedded}
         open={open}
         onOpenChange={setOpen}
         title={t('Review cases')}
@@ -212,9 +218,9 @@ export function InputAuditCasesDialog() {
             </div>
           }
         />
-      </Dialog>
+      </AuditFeatureSurface>
       {selected !== undefined && (
-        <Dialog
+        <AuditFeatureSurface
           open
           title={t('Review case')}
           onOpenChange={(value) => {
@@ -222,7 +228,7 @@ export function InputAuditCasesDialog() {
           }}
         >
           <InputAuditCasePanel caseID={selected} />
-        </Dialog>
+        </AuditFeatureSurface>
       )}
     </>
   )

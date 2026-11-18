@@ -4,7 +4,6 @@ import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DataTablePage, useDataTable } from '@/components/data-table'
-import { Dialog } from '@/components/dialog'
 import {
   Accordion,
   AccordionContent,
@@ -21,16 +20,22 @@ import dayjs from '@/lib/dayjs'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { useInputAuditCaseLabels } from './case-labels'
+import { AuditFeatureSurface } from './feature-surface'
 import { getMatches, type MatchFilters, type MatchRecord } from './match-api'
 import { MatchDetail } from './match-detail'
 
 const EMPTY: MatchRecord[] = []
 
-export function MatchesDialog(props: { requestID?: string }) {
+export function MatchesDialog(props: {
+  requestID?: string
+  embedded?: boolean
+  active?: boolean
+}) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   return (
-    <Dialog
+    <AuditFeatureSurface
+      embedded={props.embedded}
       open={open}
       onOpenChange={setOpen}
       title={t('Interception evidence')}
@@ -41,14 +46,18 @@ export function MatchesDialog(props: { requestID?: string }) {
         </Button>
       }
     >
-      {open && (
-        <MatchList key={props.requestID ?? ''} requestID={props.requestID} />
+      {(props.embedded || open) && (
+        <MatchList
+          key={props.requestID ?? ''}
+          requestID={props.requestID}
+          active={props.active}
+        />
       )}
-    </Dialog>
+    </AuditFeatureSurface>
   )
 }
 
-function MatchList(props: { requestID?: string }) {
+function MatchList(props: { requestID?: string; active?: boolean }) {
   const { t } = useTranslation()
   const userID = useAuthStore((state) => state.auth.user?.id)
   const labels = useInputAuditCaseLabels().statuses
@@ -64,6 +73,7 @@ function MatchList(props: { requestID?: string }) {
   const query = useQuery({
     queryKey: ['input-audit-matches', userID, filters],
     queryFn: () => getMatches(filters),
+    enabled: props.active !== false,
     retry: false,
   })
   const columns = useMemo<ColumnDef<MatchRecord>[]>(

@@ -204,45 +204,38 @@ it('selecting a user by name sends its ID and reset clears the selection', async
   expect(picker).toHaveValue('')
 })
 
-it('audit actions share equal dimensions and wrap into two columns on narrow screens', async () => {
+it('audit tabs have equal touch heights and scroll horizontally without sharing message filters', async () => {
   render(
     <QueryClientProvider client={client}>
       <InputAuditViewer />
     </QueryClientProvider>
   )
-  const navigation = await screen.findByRole('navigation', {
-    name: 'Audit management',
-  })
-  const actions = within(navigation).getAllByRole('button')
-  expect(actions).toHaveLength(5)
-  expect(navigation.parentElement?.parentElement).toContainElement(
+  const navigation = screen.getByRole('tablist', { name: 'Audit management' })
+  const tabs = within(navigation).getAllByRole('tab')
+  expect(tabs).toHaveLength(6)
+  expect(navigation).toHaveClass(
+    'overflow-x-auto',
+    'shrink-0',
+    '[&>button]:h-10'
+  )
+  expect(navigation).not.toContainElement(
     screen.getByRole('textbox', { name: 'Message keyword' })
   )
-  expect(navigation).not.toHaveClass('xl:justify-between')
-  for (const action of actions) {
-    expect(action.parentElement).toHaveClass(
-      'grid-cols-2',
-      '[&>button]:h-9',
-      '[&>button]:w-full',
-      'sm:[&>button]:w-32',
-      '[&>button]:whitespace-normal'
-    )
-  }
-  expect(actions.map((action) => action.textContent)).toEqual([
-    'Interception evidence',
-    'Review cases',
-    'Model review',
-    'User allowlist',
-    'Settings',
-  ])
+  expect(tabs[0]).toHaveAttribute('aria-selected', 'true')
+  await userEvent.click(
+    within(navigation).getByRole('tab', { name: 'Interception evidence' })
+  )
   expect(
-    screen.getByRole('textbox', { name: 'Message keyword' }).parentElement
-      ?.parentElement
-  ).toHaveClass('sm:grid-cols-2', 'xl:grid-cols-6')
-  await userEvent.click(actions[0])
-  expect(
-    await screen.findByRole('dialog', { name: 'Interception evidence' })
+    await screen.findByRole('region', { name: 'Interception evidence' })
   ).toBeVisible()
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('textbox', { name: 'Message keyword' })
+  ).not.toBeInTheDocument()
+  await userEvent.click(
+    within(navigation).getByRole('tab', { name: 'User message' })
+  )
+  expect(screen.getByRole('textbox', { name: 'Message keyword' })).toBeVisible()
 })
 
 it('mobile message lists fill the available height and scroll inside the page', async () => {
@@ -405,7 +398,7 @@ it('message keyword drafts only apply on search, trim outer spaces, combine with
   )
 })
 
-it('settings remain open after a rejected save and close after a successful retry', async () => {
+it('inline settings preserve edits after a rejected save and successful retry', async () => {
   const put = vi
     .spyOn(api, 'put')
     .mockResolvedValueOnce({
@@ -417,8 +410,10 @@ it('settings remain open after a rejected save and close after a successful retr
       <InputAuditViewer />
     </QueryClientProvider>
   )
-  await userEvent.click(await screen.findByRole('button', { name: 'Settings' }))
-  const dialog = screen.getByRole('dialog', { name: 'Input audit settings' })
+  await userEvent.click(await screen.findByRole('tab', { name: 'Settings' }))
+  const dialog = await screen.findByRole('region', {
+    name: 'Input audit settings',
+  })
   fireEvent.change(
     within(dialog).getByRole('spinbutton', { name: 'Stored characters' }),
     { target: { value: '4096' } }
@@ -433,6 +428,8 @@ it('settings remain open after a rejected save and close after a successful retr
   await waitFor(() =>
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   )
+  await waitFor(() => expect(put).toHaveBeenCalledTimes(2))
+  expect(dialog).toBeVisible()
   expect(put).toHaveBeenLastCalledWith(
     '/api/input-audit/settings',
     expect.objectContaining({
@@ -449,8 +446,10 @@ it('out-of-range storage settings show validation without sending an update', as
       <InputAuditViewer />
     </QueryClientProvider>
   )
-  await userEvent.click(await screen.findByRole('button', { name: 'Settings' }))
-  const dialog = screen.getByRole('dialog', { name: 'Input audit settings' })
+  await userEvent.click(await screen.findByRole('tab', { name: 'Settings' }))
+  const dialog = await screen.findByRole('region', {
+    name: 'Input audit settings',
+  })
   fireEvent.change(
     within(dialog).getByRole('spinbutton', { name: 'Stored characters' }),
     { target: { value: '1' } }
@@ -512,9 +511,9 @@ it('allowlisting a user keeps audit collection and only selects content filterin
     </QueryClientProvider>
   )
   await userEvent.click(
-    await screen.findByRole('button', { name: 'User allowlist' })
+    await screen.findByRole('tab', { name: 'User allowlist' })
   )
-  const dialog = screen.getByRole('dialog', { name: 'User allowlist' })
+  const dialog = await screen.findByRole('region', { name: 'User allowlist' })
   await userEvent.click(
     within(dialog).getByRole('button', { name: 'Add to allowlist' })
   )
@@ -803,9 +802,9 @@ it('retained review cases remain reachable from their own paginated and filtered
     </QueryClientProvider>
   )
   await userEvent.click(
-    await screen.findByRole('button', { name: 'Review cases' })
+    await screen.findByRole('tab', { name: 'Review cases' })
   )
-  const dialog = screen.getByRole('dialog', { name: 'Review cases' })
+  const dialog = await screen.findByRole('region', { name: 'Review cases' })
   await within(dialog).findByRole('button', { name: 'Review' })
   await userEvent.selectOptions(
     within(dialog).getByRole('combobox', { name: 'Decision' }),
@@ -844,11 +843,11 @@ it('audit management entries are grouped separately from search actions', async 
       <InputAuditViewer />
     </QueryClientProvider>
   )
-  const management = await screen.findByRole('navigation', {
+  const management = await screen.findByRole('tablist', {
     name: 'Audit management',
   })
   expect(
-    within(management).getByRole('button', { name: 'Model review' })
+    within(management).getByRole('tab', { name: 'Model review' })
   ).toBeInTheDocument()
   expect(
     within(management).queryByRole('button', { name: 'Search' })
@@ -892,3 +891,68 @@ it.each(['Delete', 'Delete selected', 'Clear filtered messages'])(
     )
   }
 )
+
+it('switching feature tabs preserves drafts and does not fetch unopened management screens', async () => {
+  render(
+    <QueryClientProvider client={client}>
+      <InputAuditViewer />
+    </QueryClientProvider>
+  )
+  await screen.findByText('alice (#4)')
+  expect(api.get).not.toHaveBeenCalledWith('/api/input-audit/model/jobs')
+  expect(api.get).not.toHaveBeenCalledWith('/api/input-audit/allowlist')
+  const keyword = screen.getByRole('textbox', { name: 'Message keyword' })
+  await userEvent.type(keyword, 'draft query')
+  const navigation = screen.getByRole('tablist', { name: 'Audit management' })
+  await userEvent.click(
+    within(navigation).getByRole('tab', { name: 'Settings' })
+  )
+  const settingsPage = await screen.findByRole('region', {
+    name: 'Input audit settings',
+  })
+  fireEvent.change(
+    within(settingsPage).getByRole('spinbutton', { name: 'Stored characters' }),
+    { target: { value: '4096' } }
+  )
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  await userEvent.click(
+    within(navigation).getByRole('tab', { name: 'User message' })
+  )
+  expect(screen.getByRole('textbox', { name: 'Message keyword' })).toHaveValue(
+    'draft query'
+  )
+  await userEvent.click(
+    within(navigation).getByRole('tab', { name: 'Settings' })
+  )
+  expect(
+    within(settingsPage).getByRole('spinbutton', { name: 'Stored characters' })
+  ).toHaveValue(4096)
+})
+
+it('mobile message details use viewport height and close with Escape returning focus to the trigger', async () => {
+  const original = window.matchMedia.bind(window)
+  vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+    ...original(query),
+    matches: query === '(max-width: 640px)',
+  }))
+  render(
+    <QueryClientProvider client={client}>
+      <InputAuditViewer />
+    </QueryClientProvider>
+  )
+  const trigger = await screen.findByRole('button', { name: 'Details' })
+  await userEvent.click(trigger)
+  const detail = screen.getByRole('dialog', { name: 'Input Audits' })
+  expect(detail).toHaveClass(
+    'max-sm:h-dvh',
+    'max-sm:max-h-[var(--dialog-available-height,100dvh)]',
+    'max-sm:rounded-none',
+    'sm:max-w-6xl'
+  )
+  expect(within(detail).getByText(entry.content)).toBeVisible()
+  await userEvent.keyboard('{Escape}')
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  expect(trigger).toHaveFocus()
+})

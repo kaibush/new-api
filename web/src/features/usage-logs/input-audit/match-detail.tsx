@@ -1,11 +1,10 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
+import { z } from 'zod'
 
 import { CopyButton } from '@/components/copy-button'
-import { Dialog } from '@/components/dialog'
 import {
   Accordion,
   AccordionContent,
@@ -23,6 +22,7 @@ import dayjs from '@/lib/dayjs'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { useInputAuditCaseLabels } from './case-labels'
+import { AuditFeatureSurface } from './feature-surface'
 import { decideMatch, getMatch, type MatchRecord } from './match-api'
 
 export function MatchDetail(props: { id: number; onClose: () => void }) {
@@ -37,7 +37,7 @@ export function MatchDetail(props: { id: number; onClose: () => void }) {
   const data = query.data
   const evidence = data?.evidence
   return (
-    <Dialog
+    <AuditFeatureSurface
       open
       onOpenChange={(open) => {
         if (!open) props.onClose()
@@ -180,11 +180,19 @@ export function MatchDetail(props: { id: number; onClose: () => void }) {
           </Tabs>
         </>
       )}
-    </Dialog>
+    </AuditFeatureSurface>
   )
 }
 
-const decisionSchema = z.object({ status: z.enum(['pending', 'dismissed', 'confirmed', 'insufficient_evidence']), reason: z.string().trim().min(1).max(1000) })
+const decisionSchema = z.object({
+  status: z.enum([
+    'pending',
+    'dismissed',
+    'confirmed',
+    'insufficient_evidence',
+  ]),
+  reason: z.string().trim().min(1).max(1000),
+})
 
 function MatchDecision(props: { record: MatchRecord }) {
   const { t } = useTranslation()

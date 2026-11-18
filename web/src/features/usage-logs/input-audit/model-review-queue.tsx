@@ -27,7 +27,6 @@ import {
   DataTableBulkActions,
   useDataTable,
 } from '@/components/data-table'
-import { Dialog } from '@/components/dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -40,6 +39,7 @@ import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
 
 import { useModelReviewLabels } from './case-labels'
+import { AuditFeatureSurface } from './feature-surface'
 import {
   cancelModelReview,
   clearModelReviewQueue,
@@ -394,7 +394,7 @@ export function ModelReviewQueue(props: {
         confirmText={t('Confirm')}
       />
       {editing && (
-        <Dialog
+        <AuditFeatureSurface
           open
           onOpenChange={(open) => {
             if (!open && !edit.isPending) setEditing(undefined)
@@ -471,7 +471,7 @@ export function ModelReviewQueue(props: {
               {t('Save')}
             </Button>
           </form>
-        </Dialog>
+        </AuditFeatureSurface>
       )}
     </section>
   )

@@ -24,7 +24,6 @@ import { useTranslation } from 'react-i18next'
 import { z } from 'zod'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
-import { Dialog } from '@/components/dialog'
 import { MultiSelect } from '@/components/multi-select'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -50,6 +49,7 @@ import {
   updateInputAuditAllowlist,
   type InputAuditAllowlistEntry,
 } from './api'
+import { AuditFeatureSurface } from './feature-surface'
 
 const schema = z.object({
   user_id: z.number().int().positive().safe(),
@@ -68,6 +68,8 @@ const schema = z.object({
 type Values = z.infer<typeof schema>
 
 export function InputAuditAllowlistDialog(props: {
+  embedded?: boolean
+  active?: boolean
   collectionEnabled: boolean
 }) {
   const { t } = useTranslation()
@@ -80,19 +82,19 @@ export function InputAuditAllowlistDialog(props: {
   const policy = useQuery({
     queryKey: key,
     queryFn: getInputAuditAllowlist,
-    enabled: open,
+    enabled: (props.embedded || open) && props.active !== false,
     retry: false,
   })
   const history = useQuery({
     queryKey: ['input-audit-allowlist-history', userID],
     queryFn: getInputAuditAllowlistHistory,
-    enabled: open,
+    enabled: (props.embedded || open) && props.active !== false,
     retry: false,
   })
   const instances = useQuery({
     queryKey: ['input-audit-filter-instances', userID],
     queryFn: listRequestPluginInstances,
-    enabled: open,
+    enabled: (props.embedded || open) && props.active !== false,
     retry: false,
   })
   const form = useForm<Values>({
@@ -130,7 +132,8 @@ export function InputAuditAllowlistDialog(props: {
     .map((instance) => ({ value: instance.id, label: instance.name }))
   return (
     <>
-      <Dialog
+      <AuditFeatureSurface
+        embedded={props.embedded}
         open={open}
         onOpenChange={(value) => {
           if (!mutation.isPending) setOpen(value)
@@ -414,7 +417,7 @@ export function InputAuditAllowlistDialog(props: {
             </section>
           </TabsContent>
         </Tabs>
-      </Dialog>
+      </AuditFeatureSurface>
       <ConfirmDialog
         open={!!revoke}
         onOpenChange={(value) => {

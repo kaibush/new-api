@@ -24,7 +24,6 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { z } from 'zod'
 
-import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
 import {
   Field,
@@ -37,6 +36,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { SettingsSwitchField } from '@/features/system-settings/components/settings-form-layout'
 
 import { updateInputAuditSettings, type InputAuditSettings } from './api'
+import { AuditFeatureSurface } from './feature-surface'
 
 const schema = z.object({
   enabled: z.boolean(),
@@ -55,6 +55,7 @@ const schema = z.object({
 })
 
 export function InputAuditSettingsDialog(props: {
+  embedded?: boolean
   settings: InputAuditSettings
 }) {
   const { t } = useTranslation()
@@ -124,7 +125,8 @@ export function InputAuditSettingsDialog(props: {
     },
   ]
   return (
-    <Dialog
+    <AuditFeatureSurface
+      embedded={props.embedded}
       open={open}
       onOpenChange={(value) => {
         if (mutation.isPending) return
@@ -243,6 +245,6 @@ export function InputAuditSettingsDialog(props: {
           {t('Save')}
         </Button>
       </form>
-    </Dialog>
+    </AuditFeatureSurface>
   )
 }

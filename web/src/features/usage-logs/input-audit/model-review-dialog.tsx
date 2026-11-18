@@ -20,7 +20,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { Dialog } from '@/components/dialog'
 import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
 import { Badge } from '@/components/ui/badge'
@@ -35,6 +34,7 @@ import { formatNumber } from '@/lib/format'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { useModelReviewLabels } from './case-labels'
+import { AuditFeatureSurface } from './feature-surface'
 import {
   getModelReviewJobs,
   getModelReviewSummary,
@@ -46,12 +46,15 @@ import { ModelReviewQueue } from './model-review-queue'
 import { ModelReviewResults } from './model-review-results'
 import { ModelReviewSettingsForm } from './model-review-settings'
 
-export function ModelReviewDialog() {
+export function ModelReviewDialog(
+  props: { embedded?: boolean; active?: boolean } = {}
+) {
   const { t, i18n } = useTranslation()
   const userID = useAuthStore((state) => state.auth.user?.id)
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const labels = useModelReviewLabels()
   const [open, setOpen] = useState(false)
+  const visible = (props.embedded || open) && props.active !== false
   const [tab, setTab] = useState('overview')
   const [mode, setMode] = useState('incremental')
   const [scope, setScope] = useState<number>()
@@ -61,21 +64,21 @@ export function ModelReviewDialog() {
   const settings = useQuery({
     queryKey: ['model-review-settings', userID],
     queryFn: getModelReviewSettings,
-    enabled: open,
+    enabled: visible,
     retry: false,
   })
   const jobs = useQuery({
     queryKey: ['model-review-jobs', userID],
     queryFn: getModelReviewJobs,
-    enabled: open,
-    refetchInterval: open ? 5000 : false,
+    enabled: visible,
+    refetchInterval: visible ? 5000 : false,
     retry: false,
   })
   const summary = useQuery({
     queryKey: ['model-review-summary', userID],
     queryFn: getModelReviewSummary,
-    enabled: open,
-    refetchInterval: open ? 10000 : false,
+    enabled: visible,
+    refetchInterval: visible ? 10000 : false,
     retry: false,
   })
   const start = useMutation({
@@ -87,7 +90,8 @@ export function ModelReviewDialog() {
   const active = jobs.data?.find((job) => job.status === 'running')
   const latest = jobs.data?.[0]
   return (
-    <Dialog
+    <AuditFeatureSurface
+      embedded={props.embedded}
       open={open}
       onOpenChange={setOpen}
       title={t('Model review')}
@@ -100,7 +104,10 @@ export function ModelReviewDialog() {
         onValueChange={(value) => setTab(String(value))}
         className='min-w-0'
       >
-        <TabsList className='bg-background sticky top-0 z-10 grid w-full grid-cols-2 border sm:grid-cols-4'>
+        <TabsList
+          className='bg-background w-full justify-start overflow-x-auto border-b group-data-horizontal/tabs:h-11 [&>button]:h-10 [&>button]:min-w-28 [&>button]:shrink-0'
+          variant='line'
+        >
           <TabsTrigger value='overview'>{t('Review task queue')}</TabsTrigger>
           <TabsTrigger value='dashboard'>
             {t('User review dashboard')}
@@ -233,6 +240,7 @@ export function ModelReviewDialog() {
         <TabsContent value='dashboard' className='pt-3'>
           {tab === 'dashboard' && (
             <ModelReviewDashboard
+              active={visible}
               onSelectUser={(id) => {
                 setSelectedUser(id)
                 setSelectedJob(undefined)
@@ -259,6 +267,7 @@ export function ModelReviewDialog() {
           )}
           {tab === 'results' && (
             <ModelReviewResults
+              active={visible}
               key={`${selectedJob ?? 'all'}-${selectedUser ?? 'all'}`}
               jobID={selectedJob}
               userID={selectedUser}
@@ -276,6 +285,6 @@ export function ModelReviewDialog() {
           )}
         </TabsContent>
       </Tabs>
-    </Dialog>
+    </AuditFeatureSurface>
   )
 }

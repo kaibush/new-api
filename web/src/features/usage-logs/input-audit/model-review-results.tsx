@@ -27,7 +27,6 @@ import {
   DataTableBulkActions,
   useDataTable,
 } from '@/components/data-table'
-import { Dialog } from '@/components/dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -42,6 +41,7 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { useInputAuditCaseLabels, useModelReviewLabels } from './case-labels'
 import { InputAuditCasePanel } from './case-panel'
+import { AuditFeatureSurface } from './feature-surface'
 import {
   getModelReviewResults,
   deleteModelReviewResults,
@@ -52,6 +52,7 @@ import {
 const EMPTY: ModelReviewResult[] = []
 
 export function ModelReviewResults(props: {
+  active?: boolean
   jobID?: number
   userID?: number
   status?: string
@@ -93,7 +94,8 @@ export function ModelReviewResults(props: {
   const query = useQuery({
     queryKey: ['model-review-results', userID, filters],
     queryFn: () => getModelReviewResults(filters),
-    refetchInterval: 10000,
+    enabled: props.active !== false,
+    refetchInterval: props.active !== false ? 10000 : false,
     retry: false,
   })
   const columns = useMemo<ColumnDef<ModelReviewResult>[]>(
@@ -326,7 +328,7 @@ export function ModelReviewResults(props: {
       />
 
       {selected && (
-        <Dialog
+        <AuditFeatureSurface
           open
           onOpenChange={(value) => {
             if (!value) setSelected(undefined)
@@ -377,7 +379,7 @@ export function ModelReviewResults(props: {
               <InputAuditCasePanel auditID={selected.audit_id} />
             </TabsContent>
           </Tabs>
-        </Dialog>
+        </AuditFeatureSurface>
       )}
     </>
   )

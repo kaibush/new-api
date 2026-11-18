@@ -41,6 +41,7 @@ import {
 const EMPTY: ModelReviewUser[] = []
 
 export function ModelReviewDashboard(props: {
+  active?: boolean
   jobID?: number
   userID?: number
   onSelectUser: (id: number) => void
@@ -78,7 +79,8 @@ export function ModelReviewDashboard(props: {
         job_id: props.jobID,
         user_id: props.userID,
       }),
-    refetchInterval: 10000,
+    enabled: props.active !== false,
+    refetchInterval: props.active !== false ? 10000 : false,
     retry: false,
   })
   const columns = useMemo<ColumnDef<ModelReviewUser>[]>(

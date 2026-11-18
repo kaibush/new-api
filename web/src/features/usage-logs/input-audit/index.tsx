@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { lazy, Suspense, useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
@@ -26,6 +26,8 @@ import {
   DataTableBulkActions,
   useDataTable,
 } from '@/components/data-table'
+import { ErrorState } from '@/components/error-state'
+import { LoadingState } from '@/components/loading-state'
 import {
   Accordion,
   AccordionItem,
@@ -34,6 +36,7 @@ import {
 } from '@/components/ui/accordion'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { UserSelector } from '@/components/user-selector'
 import { useMediaQuery } from '@/hooks'
 import { toIntlLocale } from '@/i18n/languages'
@@ -47,28 +50,49 @@ import {
   LogsFilterInput,
   LogsFilterToolbar,
 } from '../components/logs-filter-toolbar'
-import { InputAuditAllowlistDialog } from './allowlist-dialog'
 import {
   getInputAudits,
   deleteInputAudits,
   getInputAuditStatus,
   type InputAudit,
   type InputAuditFilters,
+  type InputAuditStatus,
 } from './api'
-import { InputAuditCasesDialog } from './cases-dialog'
 import { useInputAuditColumns } from './columns'
-import { MatchesDialog } from './matches-dialog'
-import { ModelReviewDialog } from './model-review-dialog'
-import { InputAuditSettingsDialog } from './settings-dialog'
+
+const InputAuditAllowlistDialog = lazy(() =>
+  import('./allowlist-dialog').then((feature) => ({
+    default: feature.InputAuditAllowlistDialog,
+  }))
+)
+const InputAuditCasesDialog = lazy(() =>
+  import('./cases-dialog').then((feature) => ({
+    default: feature.InputAuditCasesDialog,
+  }))
+)
+const MatchesDialog = lazy(() =>
+  import('./matches-dialog').then((feature) => ({
+    default: feature.MatchesDialog,
+  }))
+)
+const ModelReviewDialog = lazy(() =>
+  import('./model-review-dialog').then((feature) => ({
+    default: feature.ModelReviewDialog,
+  }))
+)
+const InputAuditSettingsDialog = lazy(() =>
+  import('./settings-dialog').then((feature) => ({
+    default: feature.InputAuditSettingsDialog,
+  }))
+)
 
 const EMPTY_ROWS: InputAudit[] = []
 
-export function InputAuditViewer() {
-  const { t, i18n } = useTranslation()
+function InputAuditMessages(props: { active?: boolean }) {
+  const { t } = useTranslation()
   const isMobile = useMediaQuery('(max-width: 640px)')
   const user = useAuthStore((state) => state.auth.user)
   const queryClient = useQueryClient()
-  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const [filters, setFilters] = useState<InputAuditFilters>({
     p: 1,
     page_size: 20,
@@ -83,13 +107,13 @@ export function InputAuditViewer() {
   const query = useQuery({
     queryKey: ['input-audits', user?.id, filters],
     queryFn: () => getInputAudits(filters),
-    enabled: canRead,
+    enabled: canRead && props.active !== false,
     retry: false,
   })
   const status = useQuery({
     queryKey: ['input-audit-status', user?.id],
     queryFn: getInputAuditStatus,
-    enabled: canRead,
+    enabled: canRead && props.active !== false,
     retry: false,
   })
   const [deletion, setDeletion] = useState<
@@ -108,9 +132,8 @@ export function InputAuditViewer() {
       void queryClient.invalidateQueries({ queryKey: ['model-review-summary'] })
     },
   })
-  const columns = useInputAuditColumns(
-    canRead ? (id) => setDeletion({ ids: [id] }) : undefined
-  )
+  const onDelete = useCallback((id: number) => setDeletion({ ids: [id] }), [])
+  const columns = useInputAuditColumns(canRead ? onDelete : undefined)
   const { table } = useDataTable({
     columns,
     data:
@@ -208,103 +231,6 @@ export function InputAuditViewer() {
         compactPagination={isMobile}
         toolbar={
           <div className='flex flex-col gap-2'>
-            <Accordion>
-              <AccordionItem value='collection'>
-                <AccordionTrigger className='py-2'>
-                  {t('Input audit settings')}
-                </AccordionTrigger>
-                <AccordionContent className='space-y-2'>
-                  <p className='text-muted-foreground text-xs'>
-                    {t(
-                      'Short messages are stored in full. Long messages retain the beginning and end. Time is when the gateway received the first matching input.'
-                    )}
-                  </p>
-                  <p className='text-muted-foreground text-xs'>
-                    {t(
-                      'Keyword search matches stored message text. Omitted text cannot be searched.'
-                    )}
-                  </p>
-                  {status.data && (
-                    <p role='status' className='text-muted-foreground text-xs'>
-                      {t(
-                        'Retention: {{days}} days · {{records}} records · {{chars}} characters · text up to {{size}} MiB · dropped on this instance: {{dropped}}',
-                        {
-                          days: formatNumber(
-                            status.data.settings.retention_days,
-                            locale
-                          ),
-                          records: formatNumber(
-                            status.data.settings.max_records,
-                            locale
-                          ),
-                          chars: formatNumber(
-                            status.data.settings.max_chars,
-                            locale
-                          ),
-                          size: formatNumber(
-                            Math.ceil(
-                              (status.data.settings.max_records *
-                                status.data.settings.max_chars *
-                                4) /
-                                1024 /
-                                1024
-                            ),
-                            locale
-                          ),
-                          dropped: formatNumber(status.data.dropped, locale),
-                        }
-                      )}{' '}
-                      ·{' '}
-                      {status.data.settings.enabled
-                        ? t('Enabled')
-                        : t('Disabled')}
-                    </p>
-                  )}
-                  {status.data && (
-                    <p className='text-muted-foreground text-xs'>
-                      {t(
-                        'Evidence on this instance: {{pending}} queued · {{dropped}} dropped · {{failures}} write failures',
-                        {
-                          pending: formatNumber(
-                            status.data.evidence_pending ?? 0,
-                            locale
-                          ),
-                          dropped: formatNumber(
-                            status.data.evidence_dropped ?? 0,
-                            locale
-                          ),
-                          failures: formatNumber(
-                            status.data.evidence_write_failures ?? 0,
-                            locale
-                          ),
-                        }
-                      )}
-                    </p>
-                  )}
-                  {status.data && (
-                    <p className='text-muted-foreground text-xs'>
-                      {t(
-                        'Match evidence: {{pending}} queued · {{dropped}} dropped · {{failures}} write failures',
-                        {
-                          pending: formatNumber(
-                            status.data.match_pending ?? 0,
-                            locale
-                          ),
-                          dropped: formatNumber(
-                            status.data.match_dropped ?? 0,
-                            locale
-                          ),
-                          failures: formatNumber(
-                            status.data.match_write_failures ?? 0,
-                            locale
-                          ),
-                        }
-                      )}
-                    </p>
-                  )}
-                </AccordionContent>
-              </AccordionItem>
-            </Accordion>
             <LogsFilterToolbar
               table={table}
               actionStart={
@@ -322,24 +248,6 @@ export function InputAuditViewer() {
               }
               filterGridClassName='sm:grid-cols-2 xl:grid-cols-6'
               className='[&_[data-slot=input]]:h-9 [&_button]:h-9 [&_button]:rounded-md'
-              stats={
-                status.data && (
-                  <nav
-                    aria-label={t('Audit management')}
-                    className='grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap [&>button]:h-9 [&>button]:w-full [&>button]:min-w-0 [&>button]:rounded-md [&>button]:px-3 [&>button]:text-sm [&>button]:whitespace-normal sm:[&>button]:w-32'
-                  >
-                    <MatchesDialog />
-                    {canRead && <InputAuditCasesDialog />}
-                    <ModelReviewDialog />
-                    {canRead && (
-                      <InputAuditAllowlistDialog
-                        collectionEnabled={status.data.settings.enabled}
-                      />
-                    )}
-                    <InputAuditSettingsDialog settings={status.data.settings} />
-                  </nav>
-                )
-              }
               primaryFilters={
                 <>
                   <LogsFilterField wide>
@@ -446,5 +354,197 @@ export function InputAuditViewer() {
         confirmText={t('Delete')}
       />
     </>
+  )
+}
+
+function InputAuditCollectionStatus(props: { status: InputAuditStatus }) {
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  return (
+    <Accordion>
+      <AccordionItem value='collection'>
+        <AccordionTrigger className='py-2'>{t('Details')}</AccordionTrigger>
+        <AccordionContent className='space-y-2'>
+          <p className='text-muted-foreground text-xs'>
+            {t(
+              'Short messages are stored in full. Long messages retain the beginning and end. Time is when the gateway received the first matching input.'
+            )}
+          </p>
+          <p className='text-muted-foreground text-xs'>
+            {t(
+              'Keyword search matches stored message text. Omitted text cannot be searched.'
+            )}
+          </p>
+          {props.status && (
+            <p role='status' className='text-muted-foreground text-xs'>
+              {t(
+                'Retention: {{days}} days · {{records}} records · {{chars}} characters · text up to {{size}} MiB · dropped on this instance: {{dropped}}',
+                {
+                  days: formatNumber(
+                    props.status.settings.retention_days,
+                    locale
+                  ),
+                  records: formatNumber(
+                    props.status.settings.max_records,
+                    locale
+                  ),
+                  chars: formatNumber(props.status.settings.max_chars, locale),
+                  size: formatNumber(
+                    Math.ceil(
+                      (props.status.settings.max_records *
+                        props.status.settings.max_chars *
+                        4) /
+                        1024 /
+                        1024
+                    ),
+                    locale
+                  ),
+                  dropped: formatNumber(props.status.dropped, locale),
+                }
+              )}{' '}
+              · {props.status.settings.enabled ? t('Enabled') : t('Disabled')}
+            </p>
+          )}
+          {props.status && (
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Evidence on this instance: {{pending}} queued · {{dropped}} dropped · {{failures}} write failures',
+                {
+                  pending: formatNumber(
+                    props.status.evidence_pending ?? 0,
+                    locale
+                  ),
+                  dropped: formatNumber(
+                    props.status.evidence_dropped ?? 0,
+                    locale
+                  ),
+                  failures: formatNumber(
+                    props.status.evidence_write_failures ?? 0,
+                    locale
+                  ),
+                }
+              )}
+            </p>
+          )}
+          {props.status && (
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Match evidence: {{pending}} queued · {{dropped}} dropped · {{failures}} write failures',
+                {
+                  pending: formatNumber(
+                    props.status.match_pending ?? 0,
+                    locale
+                  ),
+                  dropped: formatNumber(
+                    props.status.match_dropped ?? 0,
+                    locale
+                  ),
+                  failures: formatNumber(
+                    props.status.match_write_failures ?? 0,
+                    locale
+                  ),
+                }
+              )}
+            </p>
+          )}
+        </AccordionContent>
+      </AccordionItem>
+    </Accordion>
+  )
+}
+
+export function InputAuditViewer() {
+  const { t } = useTranslation()
+  const user = useAuthStore((state) => state.auth.user)
+  const [tab, setTab] = useState('messages')
+  const [visited, setVisited] = useState(['messages'])
+  const canRead = user?.role === ROLE.SUPER_ADMIN
+  const status = useQuery({
+    queryKey: ['input-audit-status', user?.id],
+    queryFn: getInputAuditStatus,
+    enabled: canRead,
+    retry: false,
+  })
+  if (!canRead) return <InputAuditMessages />
+  const items = [
+    { value: 'messages', label: t('User message') },
+    { value: 'matches', label: t('Interception evidence') },
+    { value: 'cases', label: t('Review cases') },
+    { value: 'model', label: t('Model review') },
+    { value: 'allowlist', label: t('User allowlist') },
+    { value: 'settings', label: t('Settings') },
+  ]
+  return (
+    <Tabs
+      value={tab}
+      onValueChange={(value) => {
+        setTab(String(value))
+        setVisited((previous) =>
+          previous.includes(String(value))
+            ? previous
+            : [...previous, String(value)]
+        )
+      }}
+      className='h-full min-h-0 min-w-0 gap-3'
+    >
+      <TabsList
+        aria-label={t('Audit management')}
+        variant='line'
+        className='w-full shrink-0 justify-start overflow-x-auto border-b group-data-horizontal/tabs:h-11 [&>button]:h-10 [&>button]:min-w-28 [&>button]:shrink-0 [&>button]:px-3'
+      >
+        {items.map((item) => (
+          <TabsTrigger key={item.value} value={item.value}>
+            {item.label}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+      {items.map((item) => (
+        <TabsContent
+          key={item.value}
+          value={item.value}
+          keepMounted
+          className='min-h-0 min-w-0 overflow-y-auto overscroll-contain data-[hidden]:hidden'
+        >
+          {visited.includes(item.value) && (
+            <Suspense fallback={<LoadingState />}>
+              {item.value === 'messages' && (
+                <InputAuditMessages active={tab === 'messages'} />
+              )}
+              {item.value === 'matches' && (
+                <MatchesDialog embedded active={tab === 'matches'} />
+              )}
+              {item.value === 'cases' && (
+                <InputAuditCasesDialog embedded active={tab === 'cases'} />
+              )}
+              {item.value === 'model' && (
+                <ModelReviewDialog embedded active={tab === 'model'} />
+              )}
+              {(item.value === 'allowlist' || item.value === 'settings') &&
+                status.isPending && <LoadingState />}
+              {(item.value === 'allowlist' || item.value === 'settings') &&
+                status.isError && (
+                  <ErrorState onRetry={() => void status.refetch()} />
+                )}
+              {item.value === 'allowlist' && status.data && (
+                <InputAuditAllowlistDialog
+                  embedded
+                  active={tab === 'allowlist'}
+                  collectionEnabled={status.data.settings.enabled}
+                />
+              )}
+              {item.value === 'settings' && status.data && (
+                <>
+                  <InputAuditCollectionStatus status={status.data} />
+                  <InputAuditSettingsDialog
+                    embedded
+                    settings={status.data.settings}
+                  />
+                </>
+              )}
+            </Suspense>
+          )}
+        </TabsContent>
+      ))}
+    </Tabs>
   )
 }
