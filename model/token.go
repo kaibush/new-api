@@ -30,6 +30,8 @@ type Token struct {
 	CrossGroupRetry    bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
 	AutoGroups         string         `json:"-" gorm:"type:text"`
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
+	CacheExpiresAt     int64          `json:"-" gorm:"-"`
+	CacheMAC           string         `json:"-" gorm:"-"`
 }
 
 func (token *Token) GetAutoGroups() ([]string, error) {
