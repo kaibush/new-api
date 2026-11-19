@@ -1572,3 +1572,29 @@ export function validateConfig() {}`, "export validateConfig belongs to the requ
 		})
 	}
 }
+
+func TestUserAllowlistCapabilityContract(t *testing.T) {
+	for _, tc := range []struct {
+		name, key, capabilities, hooks string
+		valid, eligible                bool
+	}{
+		{"custom filter", "custom-filter", `["user-allowlist@1"]`, `export function ingress(){return {action:"pass"}}`, true, true},
+		{"reply filter", "custom-reply", `["user-allowlist@1"]`, `export function reply(){return {action:"pass"}}`, true, true},
+		{"old name without declaration", "request-filter", `[]`, `export function ingress(){return {action:"pass"}}`, true, false},
+		{"report only", "reporter", `["user-allowlist@1"]`, `export function report(){}`, false, false},
+		{"unknown version", "filter", `["user-allowlist@2"]`, `export function ingress(){return {action:"pass"}}`, false, false},
+		{"duplicate", "filter", `["user-allowlist@1","user-allowlist@1"]`, `export function ingress(){return {action:"pass"}}`, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plugin, err := CompilePlugin(fmt.Sprintf(`export const meta={apiVersion:1,key:%q,name:"Filter",version:"1.0.0",author:{name:"Test"},requiredCapabilities:%s}; %s`, tc.key, tc.capabilities, tc.hooks), Options{})
+			if !tc.valid {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.eligible, plugin.SupportsUserAllowlist())
+		})
+	}
+	var missing *LoadedPlugin
+	assert.False(t, missing.SupportsUserAllowlist())
+}

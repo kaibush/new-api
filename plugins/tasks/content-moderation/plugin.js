@@ -17,13 +17,14 @@ const CATEGORIES = [
 
 export const meta = {
   apiVersion: 1,
+  requiredCapabilities: ["user-allowlist@1"],
   key: "content-moderation",
   name: { en: "Content moderation", zh: "内容审核" },
   description: {
     en: "Checks user text with an OpenAI-compatible moderation API and rejects flagged requests",
     zh: "使用 OpenAI 兼容的审核接口检查用户文本，拒绝被标记的请求",
   },
-  version: "1.0.0",
+  version: "1.0.1",
   author: { name: "QuantumNous" },
   configSchema: {
     type: "object",

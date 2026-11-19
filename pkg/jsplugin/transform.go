@@ -50,6 +50,12 @@ func (m Meta) HasTransformPart() bool {
 	return len(m.transformHooks) > 0
 }
 
+// SupportsUserAllowlist reports the loaded plugin's explicit consent to bypass
+// its filtering hooks. Missing plugins never qualify; report still runs.
+func (p *LoadedPlugin) SupportsUserAllowlist() bool {
+	return p != nil && p.Meta.HasTransformPart() && slices.Contains(p.Meta.RequiredCapabilities, CapabilityUserAllowlist)
+}
+
 // TransformHooks returns the stage hooks the plugin exports, in
 // TransformStages order, then ReplyHook and ReportHook when it exports them;
 // nil when it has no request processing part.

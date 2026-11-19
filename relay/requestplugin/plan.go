@@ -322,7 +322,7 @@ func (p *Plan) Run(ctx context.Context, call Call) Outcome {
 			}
 		}
 		plugin := p.plugins[instance.Plugin]
-		if exemption := p.allowlist.Match(p.userID, instance.ID, instance.Plugin, time.Now().Unix()); exemption != nil {
+		if exemption := p.allowlist.Match(p.userID, instance.ID, plugin.SupportsUserAllowlist(), time.Now().Unix()); exemption != nil {
 			version := ""
 			if plugin != nil {
 				version = plugin.Meta.Version

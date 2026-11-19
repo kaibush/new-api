@@ -39,7 +39,10 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { UserIdentity } from '@/components/user-identity'
 import { UserSelector } from '@/components/user-selector'
-import { listRequestPluginInstances } from '@/features/task-plugins/api'
+import {
+  listRequestPluginInstances,
+  listRequestPluginOptions,
+} from '@/features/task-plugins/api'
 import dayjs from '@/lib/dayjs'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -93,7 +96,20 @@ export function InputAuditAllowlistDialog(props: {
   })
   const instances = useQuery({
     queryKey: ['input-audit-filter-instances', userID],
-    queryFn: listRequestPluginInstances,
+    queryFn: async () => {
+      const [instances, plugins] = await Promise.all([
+        listRequestPluginInstances(),
+        listRequestPluginOptions(),
+      ])
+      const eligiblePlugins = new Set(
+        plugins
+          .filter((plugin) => plugin.supportsUserAllowlist === true)
+          .map((plugin) => plugin.key)
+      )
+      return instances.filter((instance) =>
+        eligiblePlugins.has(instance.plugin)
+      )
+    },
     enabled: (props.embedded || open) && props.active !== false,
     retry: false,
   })
@@ -123,14 +139,10 @@ export function InputAuditAllowlistDialog(props: {
       })
     },
   })
-  const options = (instances.data ?? [])
-    .filter(
-      (instance) =>
-        instance.plugin === 'request-filter' ||
-        instance.plugin === 'content-moderation' ||
-        instance.plugin === 'request-policy'
-    )
-    .map((instance) => ({ value: instance.id, label: instance.name }))
+  const options = (instances.data ?? []).map((instance) => ({
+    value: instance.id,
+    label: instance.name,
+  }))
   return (
     <>
       <AuditFeatureSurface

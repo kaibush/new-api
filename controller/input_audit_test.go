@@ -501,6 +501,14 @@ func TestInputAuditAllowlistDatabaseMatrix(t *testing.T) {
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
 		t.Run(dialect, func(t *testing.T) {
 			db := inputAuditTestDB(t, dialect)
+			versionQuery := "SELECT version()"
+			if dialect == "sqlite" {
+				versionQuery = "SELECT sqlite_version()"
+			}
+			var databaseVersion string
+			require.NoError(t, db.Raw(versionQuery).Scan(&databaseVersion).Error)
+			t.Logf("%s version: %s", dialect, databaseVersion)
+
 			require.NoError(t, db.AutoMigrate(&model.Option{}, &model.InputAudit{}, &model.InputAuditEvidence{}, &model.InputAuditMatch{}, &model.InputAuditCase{}, &model.InputAuditDecision{}, &model.InputAuditPolicyRevision{}))
 			oldDB := model.DB
 			model.DB = db
@@ -512,13 +520,13 @@ func TestInputAuditAllowlistDatabaseMatrix(t *testing.T) {
 			t.Cleanup(func() {
 				require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: string(previousInstances), request_plugin_setting.AllowlistOption: string(previousAllowlist)}))
 			})
-			filter, err := jsplugin.DefaultRegistry.Register(`export const meta = {apiVersion:1,key:"request-filter",name:"Filter test",version:"1.0.0",author:{name:"Test"}}; export function ingress(){return {action:"reject",code:"test.filter"}}; export function reply(){return {action:"stop",code:"test.reply"}}`, jsplugin.Options{})
+			filter, err := jsplugin.DefaultRegistry.Register(`export const meta = {apiVersion:1,key:"custom-filter",name:"Filter test",requiredCapabilities:["user-allowlist@1"],version:"1.0.0",author:{name:"Test"}}; export function ingress(){return {action:"reject",code:"test.filter"}}; export function reply(){return {action:"stop",code:"test.reply"}}`, jsplugin.Options{})
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, jsplugin.DefaultRegistry.Unregister(filter.Meta.Key)) })
 			other, err := jsplugin.DefaultRegistry.Register(`export const meta = {apiVersion:1,key:"audit-other",name:"Other guard",version:"1.0.0",author:{name:"Test"}}; export function ingress(){return {action:"reject",code:"test.other"}}`, jsplugin.Options{})
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, jsplugin.DefaultRegistry.Unregister(other.Meta.Key)) })
-			require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: `[{"id":"filter","name":"Filter","plugin":"request-filter","enabled":true,"global":true},{"id":"other","name":"Other","plugin":"audit-other","enabled":true,"global":true}]`}))
+			require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: `[{"id":"filter","name":"Filter","plugin":"custom-filter","enabled":true,"global":true},{"id":"other","name":"Other","plugin":"audit-other","enabled":true,"global":true}]`}))
 			require.NoError(t, service.StartInputAuditRecorder())
 			recorder := service.CurrentInputAuditRecorder()
 			t.Cleanup(func() { service.StopInputAuditRecorder(context.Background()) })
@@ -557,8 +565,8 @@ func TestInputAuditAllowlistDatabaseMatrix(t *testing.T) {
 			assert.EqualValues(t, 1, total)
 			require.Len(t, rows, 1)
 			assert.Equal(t, "original audited text", rows[0].Content)
-			assert.Nil(t, policy.Match(7, "filter", "request-filter", policy.Entries[0].ExpiresAt))
-			require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: `[{"id":"filter","name":"Filter","plugin":"request-filter","enabled":true,"global":true}]`}))
+			assert.Nil(t, policy.Match(7, "filter", true, policy.Entries[0].ExpiresAt))
+			require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: `[{"id":"filter","name":"Filter","plugin":"custom-filter","enabled":true,"global":true}]`}))
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
 			c.Request = httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"test","messages":[{"role":"user","content":"input"}]}`))
 			c.Request.Header.Set("Content-Type", "application/json")
@@ -576,9 +584,37 @@ func TestInputAuditAllowlistDatabaseMatrix(t *testing.T) {
 			require.NotNil(t, dry.Rejected)
 			assert.Equal(t, "test.filter", dry.Rejected.Code)
 
+			// A replacement without consent must run, despite an existing exemption.
+			_, err = jsplugin.DefaultRegistry.Register(`export const meta={apiVersion:1,key:"custom-filter",name:"Filter",version:"2.0.0",author:{name:"Test"}}; export function ingress(){return {action:"reject",code:"test.filter"}}`, jsplugin.Options{})
+			require.NoError(t, err)
+			c, _ = gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"test","messages":[]}`))
+			c.Request.Header.Set("Content-Type", "application/json")
+			common.SetContextKey(c, constant.ContextKeyUserId, 7)
+			_, _, apiErr = requestplugin.Ingress(c, types.RelayFormatOpenAI)
+			require.NotNil(t, apiErr)
+			assert.Contains(t, apiErr.Error(), "test.filter")
+
+			// A listed exemption cannot hide a plugin that failed to load.
+			require.NoError(t, jsplugin.DefaultRegistry.Unregister("custom-filter"))
+			requestplugin.SetUnloadedPlugins(map[string]string{"custom-filter": "compile failed"})
+			t.Cleanup(func() { requestplugin.SetUnloadedPlugins(nil) })
+			c, _ = gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"test","messages":[]}`))
+			c.Request.Header.Set("Content-Type", "application/json")
+			common.SetContextKey(c, constant.ContextKeyUserId, 7)
+			_, _, apiErr = requestplugin.Ingress(c, types.RelayFormatOpenAI)
+			require.NotNil(t, apiErr)
+			assert.Equal(t, types.ErrorCodeRequestPluginFailed, apiErr.GetErrorCode())
+			requestplugin.SetUnloadedPlugins(nil)
+
+			// Restore consent so the following revocation check exercises the policy.
+			_, err = jsplugin.DefaultRegistry.Register(`export const meta={apiVersion:1,key:"custom-filter",name:"Filter",version:"3.0.0",author:{name:"Test"},requiredCapabilities:["user-allowlist@1"]}; export function ingress(){return {action:"reject",code:"test.filter"}}`, jsplugin.Options{})
+			require.NoError(t, err)
+
 			policy.Version, policy.Entries = 2, []request_plugin_setting.AllowlistEntry{}
 			require.NoError(t, model.SaveInputAuditAllowlist(db, policy))
-			assert.Nil(t, request_plugin_setting.GetAllowlist().Match(7, "filter", "request-filter", time.Now().Unix()))
+			assert.Nil(t, request_plugin_setting.GetAllowlist().Match(7, "filter", true, time.Now().Unix()))
 			c, _ = gin.CreateTestContext(httptest.NewRecorder())
 			c.Request = httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"test","messages":[{"role":"user","content":"input"}]}`))
 			common.SetContextKey(c, constant.ContextKeyUserId, 7)
@@ -817,7 +853,32 @@ func TestInputAuditAllowlistAPIValidationAndRevocation(t *testing.T) {
 		common.OptionMapRWMutex.Unlock()
 		require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: string(oldInstances), request_plugin_setting.AllowlistOption: string(oldPolicy)}))
 	})
-	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: `[{"id":"filter","plugin":"request-filter"},{"id":"policy","plugin":"request-policy"},{"id":"other","plugin":"request-redact"}]`}))
+	for _, key := range []string{"request-filter", "custom-policy"} {
+		plugin, err := jsplugin.DefaultRegistry.Register(fmt.Sprintf(`export const meta={apiVersion:1,key:%q,name:"Filter",version:"1.0.0",author:{name:"Test"},requiredCapabilities:["user-allowlist@1"]}; export function ingress(){return {action:"pass"}}`, key), jsplugin.Options{})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, jsplugin.DefaultRegistry.Unregister(plugin.Meta.Key)) })
+	}
+	optionsRecorder := httptest.NewRecorder()
+	optionsContext, _ := gin.CreateTestContext(optionsRecorder)
+	GetTaskPluginOptions(optionsContext)
+	var optionsResponse struct {
+		Success bool `json:"success"`
+		Data    []struct {
+			Key                   string `json:"key"`
+			SupportsUserAllowlist bool   `json:"supportsUserAllowlist"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(optionsRecorder.Body.Bytes(), &optionsResponse))
+	require.True(t, optionsResponse.Success)
+	eligible := map[string]bool{}
+	for _, option := range optionsResponse.Data {
+		eligible[option.Key] = option.SupportsUserAllowlist
+	}
+	assert.True(t, eligible["custom-policy"])
+	assert.True(t, eligible["request-filter"])
+	assert.False(t, eligible["request-redact"])
+
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: `[{"id":"filter","plugin":"request-filter"},{"id":"policy","plugin":"custom-policy"},{"id":"other","plugin":"request-redact"}]`}))
 	require.NoError(t, service.StartInputAuditRecorder())
 	t.Cleanup(func() { service.StopInputAuditRecorder(context.Background()) })
 	recorder := service.CurrentInputAuditRecorder()
@@ -832,6 +893,7 @@ func TestInputAuditAllowlistAPIValidationAndRevocation(t *testing.T) {
 		change func(*request_plugin_setting.AllowlistEntry)
 	}{
 		{"other plugin", func(e *request_plugin_setting.AllowlistEntry) { e.Instances = []string{"other"} }},
+		{"missing instance", func(e *request_plugin_setting.AllowlistEntry) { e.Instances = []string{"missing"} }},
 		{"unknown user", func(e *request_plugin_setting.AllowlistEntry) { e.UserID = 999999 }},
 		{"expired", func(e *request_plugin_setting.AllowlistEntry) { e.ExpiresAt = time.Now().Unix() }},
 		{"empty reason", func(e *request_plugin_setting.AllowlistEntry) { e.Reason = " " }},
@@ -868,10 +930,10 @@ func TestInputAuditAllowlistAPIValidationAndRevocation(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, saved.Entries, 1)
 		assert.Equal(t, []string{"filter", "policy"}, saved.Entries[0].Instances)
-		assert.NotNil(t, saved.Match(user.Id, "policy", "request-policy", time.Now().Unix()))
-		assert.Nil(t, saved.Match(user.Id+1, "policy", "request-policy", time.Now().Unix()))
-		assert.Nil(t, saved.Match(user.Id, "unselected", "request-policy", time.Now().Unix()))
-		assert.Nil(t, saved.Match(user.Id, "policy", "request-policy", saved.Entries[0].ExpiresAt))
+		assert.NotNil(t, saved.Match(user.Id, "policy", true, time.Now().Unix()))
+		assert.Nil(t, saved.Match(user.Id+1, "policy", true, time.Now().Unix()))
+		assert.Nil(t, saved.Match(user.Id, "unselected", true, time.Now().Unix()))
+		assert.Nil(t, saved.Match(user.Id, "policy", true, saved.Entries[0].ExpiresAt))
 		assert.Equal(t, user.Id, saved.Entries[0].CreatedBy)
 		assert.NotEqualValues(t, 1, saved.Entries[0].CreatedAt)
 		assert.EqualValues(t, version+1, saved.Version)
@@ -1406,6 +1468,36 @@ func TestInputAuditModelReviewEvidenceAndResponseContracts(t *testing.T) {
 	assert.True(t, result.Complete)
 	assert.Equal(t, "safe", result.Status)
 	assert.Equal(t, 2, result.Chunks)
+	for _, tc := range []struct {
+		name, preview, verdict, status, reason, quote string
+		messages                                      []model.InputAuditEvidenceMessage
+		chunks                                        int
+	}{
+		{"empty extraction uses preview", "retained preview", `{"status":"safe","category":"other","confidence":99,"reason":"No risk","quote":""}`, "insufficient_evidence", "No risk", "", nil, 1},
+		{"preview supports evidence quotes", "retained preview", `{"status":"review","category":"other","confidence":90,"reason":"Check preview","quote":"retained"}`, "review", "Check preview", "retained", nil, 1},
+		{"blank extracted messages use preview", "retained preview", `{"status":"safe","category":"other","confidence":99,"reason":"No risk","quote":""}`, "insufficient_evidence", "No risk", "", []model.InputAuditEvidenceMessage{{Role: "user", Text: " \n\t"}}, 1},
+		{"no retained text does not call upstream", "", "invalid response if called", "insufficient_evidence", "evidence_empty", "", nil, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			emptyDocument := model.InputAuditEvidenceDocument{Source: "client_request", Scope: "submitted_text_messages", ContextMissing: true, Omitted: []string{"request_extraction_limit"}, Messages: tc.messages}
+			body, err := common.Marshal(emptyDocument)
+			require.NoError(t, err)
+			require.NoError(t, db.Model(&model.InputAuditEvidence{}).Where("user_id = ? AND request_id = ?", audit.UserId, audit.RequestId).Update("body", string(body)).Error)
+			candidate := audit
+			candidate.Content = tc.preview
+			response = tc.verdict
+			result := service.ReviewInputAudit(t.Context(), db, upstream.Client(), settings, candidate)
+			assert.Equal(t, tc.status, result.Status)
+			assert.Equal(t, tc.reason, result.Reason)
+			assert.Equal(t, tc.quote, result.Quote)
+			assert.Equal(t, tc.chunks, result.Chunks)
+			assert.False(t, result.Complete)
+			if tc.chunks == 0 {
+				assert.Zero(t, result.Confidence)
+			}
+		})
+	}
+
 	for _, endpoint := range []string{"http://example.com/v1/chat/completions", "https://user:pass@example.com", "https://example.com/?key=secret"} {
 		settings = model.DefaultInputAuditReviewSettings()
 		settings.Endpoint = endpoint

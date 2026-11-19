@@ -90,6 +90,8 @@ export type TaskPluginOption = {
   refresh?: boolean
   /** The plugin processes requests; a plugin with only this part has no channel. */
   transform?: boolean
+  /** The loaded plugin explicitly supports user allowlist exemptions. */
+  supportsUserAllowlist?: boolean
   /** A failure of the plugin is skipped instead of refusing the request. */
   optional?: boolean
   /** The request processing stages the plugin runs at. */

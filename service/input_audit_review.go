@@ -112,20 +112,29 @@ func ReviewInputAudit(ctx context.Context, db *gorm.DB, client *http.Client, set
 	}
 	err = db.Where("user_id = ? AND request_id = ? AND content_hash = ? AND created_at >= ?", audit.UserId, audit.RequestId, audit.ContentHash, time.Now().Unix()-int64(collection.RetentionDays)*86400).First(&evidence).Error
 	if err == nil {
-		if common.UnmarshalJsonStr(evidence.Body, &document) != nil {
+		var retained model.InputAuditEvidenceDocument
+		if common.UnmarshalJsonStr(evidence.Body, &retained) != nil {
 			result.Reason = "invalid_evidence"
 			return result
+		}
+		// Extraction can retain an empty document (for example, a Responses
+		// request above the extraction limit). Keep reviewing the audit preview
+		// in that case, without presenting it as complete request evidence.
+		if slices.ContainsFunc(retained.Messages, func(message model.InputAuditEvidenceMessage) bool {
+			return strings.TrimSpace(message.Text) != ""
+		}) {
+			document = retained
 		}
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		result.Reason = "evidence_read_failed"
 		return result
 	}
 	result.Complete = document.Complete()
-	result.Status = "safe"
-	result.Confidence = 100
-	result.Category = "other"
 	var text strings.Builder
 	for _, message := range document.Messages {
+		if strings.TrimSpace(message.Text) == "" {
+			continue
+		}
 		// Keep role boundaries explicit; submitted assistant/system content is still
 		// untrusted and cannot replace the reviewer's actual system instructions.
 		text.WriteString("\n[role: " + message.Role + "]\n")
@@ -134,9 +143,16 @@ func ReviewInputAudit(ctx context.Context, db *gorm.DB, client *http.Client, set
 	runes := []rune(text.String())
 	if len(runes) == 0 || len(runes) > 300000 {
 		result.Status = "insufficient_evidence"
+		result.Complete = false
 		result.Reason = "evidence_size_invalid"
+		if len(runes) == 0 {
+			result.Reason = "evidence_empty"
+		}
 		return result
 	}
+	result.Status = "safe"
+	result.Confidence = 100
+	result.Category = "other"
 	for start := 0; start < len(runes); {
 		end := min(start+settings.ChunkChars, len(runes))
 		chunk := string(runes[start:end])

@@ -12,6 +12,7 @@ import (
 )
 
 const (
+	CapabilityUserAllowlist  = "user-allowlist@1"
 	CapabilityJSONClone      = "json-clone@1"
 	CapabilitySubmitSSEDelta = "submit-sse-delta@1"
 	CapabilityJSONOrder      = "json-order@1"
@@ -24,7 +25,7 @@ const (
 
 // HasCapability describes host APIs independently of a plugin's mutable globals.
 func HasCapability(name string) bool {
-	return name == CapabilityKeywordPolicy || name == CapabilityJSONClone || name == CapabilitySubmitSSEDelta || name == CapabilityJSONOrder || name == CapabilityDurationAuto
+	return name == CapabilityUserAllowlist || name == CapabilityKeywordPolicy || name == CapabilityJSONClone || name == CapabilitySubmitSSEDelta || name == CapabilityJSONOrder || name == CapabilityDurationAuto
 }
 
 // ValidateJSONPath checks a path into a JSON document by the rules of a JSON

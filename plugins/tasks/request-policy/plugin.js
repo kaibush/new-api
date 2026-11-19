@@ -2,8 +2,8 @@ export const meta = {
   apiVersion: 1,
   key: "request-policy",
   name: { en: "Contextual request policy", zh: "上下文请求规则" },
-  version: "1.0.0",
-  requiredCapabilities: ["keyword-policy@1"],
+  version: "1.0.1",
+  requiredCapabilities: ["keyword-policy@1", "user-allowlist@1"],
   author: { name: "QuantumNous" },
   description: { en: "Keyword screening with local exceptions and chained context checks", zh: "关键词初筛、局部白名单与上下文链式校验" },
   configSchema: {

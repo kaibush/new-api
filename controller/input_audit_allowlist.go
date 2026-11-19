@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/request_plugin_setting"
 	"github.com/gin-gonic/gin"
@@ -54,9 +55,10 @@ func UpdateInputAuditAllowlist(c *gin.Context) {
 	for _, entry := range previous.Entries {
 		old[entry.ID] = entry
 	}
-	instances := make(map[string]string)
+	instances := make(map[string]bool)
 	for _, instance := range request_plugin_setting.GetInstances() {
-		instances[instance.ID] = instance.Plugin
+		plugin, _ := jsplugin.DefaultRegistry.GetIgnoringMasterSwitch(instance.Plugin)
+		instances[instance.ID] = plugin.SupportsUserAllowlist()
 	}
 	seen := make(map[int]bool)
 	ids := make([]int, 0, len(policy.Entries))
@@ -73,7 +75,7 @@ func UpdateInputAuditAllowlist(c *gin.Context) {
 		slices.Sort(entry.Instances)
 		entry.Instances = slices.Compact(entry.Instances)
 		for _, id := range entry.Instances {
-			if !request_plugin_setting.IsContentFilteringPlugin(instances[id]) {
+			if !instances[id] {
 				c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Allowlist entries must select content filtering instances"})
 				return
 			}

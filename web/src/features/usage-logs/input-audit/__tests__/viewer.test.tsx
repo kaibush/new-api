@@ -84,6 +84,26 @@ beforeEach(() => {
     if (url === '/api/input-audit/allowlist') {
       return { data: { success: true, data: { version: 0, entries: [] } } }
     }
+    if (url === '/api/task_plugin_options') {
+      return {
+        data: {
+          success: true,
+          data: [
+            {
+              key: 'request-filter',
+              transform: true,
+              supportsUserAllowlist: true,
+            },
+            {
+              key: 'custom-policy',
+              transform: true,
+              supportsUserAllowlist: true,
+            },
+            { key: 'request-redact', transform: true },
+          ],
+        },
+      }
+    }
     if (url === '/api/request_plugin/instances') {
       return {
         data: {
@@ -99,7 +119,7 @@ beforeEach(() => {
               {
                 id: 'policy-one',
                 name: 'Context policy',
-                plugin: 'request-policy',
+                plugin: 'custom-policy',
                 enabled: true,
               },
               {
@@ -544,7 +564,9 @@ it('allowlisting a user keeps audit collection and only selects content filterin
     })
   )
   await userEvent.click(await screen.findByRole('option', { name: 'Policy A' }))
-  await userEvent.click(await screen.findByRole('option', { name: 'Context policy' }))
+  await userEvent.click(
+    await screen.findByRole('option', { name: 'Context policy' })
+  )
   expect(
     screen.queryByRole('option', { name: 'Redaction' })
   ).not.toBeInTheDocument()
@@ -1020,4 +1042,39 @@ it('switching away from messages removes its pagination from the shared page foo
   expect(footer).toBeEmptyDOMElement()
   view.unmount()
   footer.remove()
+})
+
+it('allowlist capability discovery failure prevents adding exemptions', async () => {
+  settings.enabled = true
+  const get = vi.mocked(api.get).getMockImplementation()
+  if (!get) {
+    throw new Error('API fixture is not initialized')
+  }
+  vi.mocked(api.get).mockImplementation((url, config) => {
+    if (url === '/api/task_plugin_options') {
+      return Promise.reject(new Error('offline'))
+    }
+    return get(url, config)
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <InputAuditViewer />
+    </QueryClientProvider>
+  )
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'User allowlist' })
+  )
+  const dialog = await screen.findByRole('region', { name: 'User allowlist' })
+  await within(dialog).findByText('Failed to load audit records')
+  await userEvent.click(
+    within(dialog).getByRole('button', { name: 'Add to allowlist' })
+  )
+  expect(
+    within(dialog).getByRole('combobox', {
+      name: 'Content filtering instances',
+    })
+  ).toBeDisabled()
+  expect(
+    within(dialog).getByRole('button', { name: 'Add to allowlist' })
+  ).toBeDisabled()
 })

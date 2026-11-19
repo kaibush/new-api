@@ -215,7 +215,8 @@
           "json-clone@1",
           "submit-sse-delta@1",
           "json-order@1",
-          "keyword-policy@1"
+          "keyword-policy@1",
+          "user-allowlist@1"
         ]
       }
     },

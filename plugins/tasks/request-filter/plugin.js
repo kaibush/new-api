@@ -1,12 +1,13 @@
 export const meta = {
   apiVersion: 1,
+  requiredCapabilities: ["user-allowlist@1"],
   key: "request-filter",
   name: { en: "Request filter", zh: "请求过滤" },
   description: {
     en: "Rejects requests whose text matches a keyword or regular expression",
     zh: "拒绝文本命中关键词或正则表达式的请求",
   },
-  version: "1.1.0",
+  version: "1.1.1",
   author: { name: "QuantumNous" },
   configSchema: {
     type: "object",

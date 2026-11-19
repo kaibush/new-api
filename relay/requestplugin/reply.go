@@ -373,7 +373,7 @@ func (r *replyCheck) releaseAll() {
 // callTarget calls one instance's reply hook and keeps what it did for the
 // steps and the record.
 func (r *replyCheck) callTarget(target *replyTarget, outputs []jsplugin.ReplyOutput) (jsplugin.ReplyResult, error) {
-	if exemption := r.plan.allowlist.Match(r.plan.userID, target.instance.ID, target.instance.Plugin, time.Now().Unix()); exemption != nil {
+	if exemption := r.plan.allowlist.Match(r.plan.userID, target.instance.ID, target.plugin.SupportsUserAllowlist(), time.Now().Unix()); exemption != nil {
 		target.action = "bypass"
 		target.exemptionID, target.exemptionVersion = exemption.ID, r.plan.allowlist.Version
 		target.notice = map[string]string{"en": "Content filtering bypassed by allowlist", "zh": "白名单已豁免内容过滤"}

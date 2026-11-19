@@ -533,6 +533,9 @@ func CompilePlugin(source string, options Options) (*LoadedPlugin, error) {
 		}
 		meta.transformHooks = append(meta.transformHooks, stage)
 	}
+	if slices.Contains(meta.RequiredCapabilities, CapabilityUserAllowlist) && !slices.ContainsFunc(meta.transformHooks, func(hook string) bool { return hook != ReportHook }) {
+		return nil, fmt.Errorf("%s requires a request filtering or reply hook", CapabilityUserAllowlist)
+	}
 	if configSchema != nil {
 		if !meta.HasTransformPart() {
 			return nil, fmt.Errorf("plugin %s meta configSchema belongs to the request processing part; export ingress, request, outbound, egress, reply or report, or remove it", meta.Key)
