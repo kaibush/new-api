@@ -127,7 +127,8 @@ export function InputAuditAllowlistDialog(props: {
     .filter(
       (instance) =>
         instance.plugin === 'request-filter' ||
-        instance.plugin === 'content-moderation'
+        instance.plugin === 'content-moderation' ||
+        instance.plugin === 'request-policy'
     )
     .map((instance) => ({ value: instance.id, label: instance.name }))
   return (

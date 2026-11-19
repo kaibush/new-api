@@ -73,7 +73,7 @@ func UpdateInputAuditAllowlist(c *gin.Context) {
 		slices.Sort(entry.Instances)
 		entry.Instances = slices.Compact(entry.Instances)
 		for _, id := range entry.Instances {
-			if plugin := instances[id]; plugin != "request-filter" && plugin != "content-moderation" {
+			if !request_plugin_setting.IsContentFilteringPlugin(instances[id]) {
 				c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Allowlist entries must select content filtering instances"})
 				return
 			}

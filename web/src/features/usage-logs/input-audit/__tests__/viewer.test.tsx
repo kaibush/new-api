@@ -97,6 +97,12 @@ beforeEach(() => {
                 enabled: true,
               },
               {
+                id: 'policy-one',
+                name: 'Context policy',
+                plugin: 'request-policy',
+                enabled: true,
+              },
+              {
                 id: 'redact',
                 name: 'Redaction',
                 plugin: 'request-redact',
@@ -538,6 +544,7 @@ it('allowlisting a user keeps audit collection and only selects content filterin
     })
   )
   await userEvent.click(await screen.findByRole('option', { name: 'Policy A' }))
+  await userEvent.click(await screen.findByRole('option', { name: 'Context policy' }))
   expect(
     screen.queryByRole('option', { name: 'Redaction' })
   ).not.toBeInTheDocument()
@@ -551,7 +558,7 @@ it('allowlisting a user keeps audit collection and only selects content filterin
       entries: [
         expect.objectContaining({
           user_id: 4,
-          instances: ['filter-one'],
+          instances: ['filter-one', 'policy-one'],
           reason: 'Approved test account',
         }),
       ],

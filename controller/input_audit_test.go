@@ -817,7 +817,7 @@ func TestInputAuditAllowlistAPIValidationAndRevocation(t *testing.T) {
 		common.OptionMapRWMutex.Unlock()
 		require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: string(oldInstances), request_plugin_setting.AllowlistOption: string(oldPolicy)}))
 	})
-	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: `[{"id":"filter","plugin":"request-filter"},{"id":"other","plugin":"request-redact"}]`}))
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: `[{"id":"filter","plugin":"request-filter"},{"id":"policy","plugin":"request-policy"},{"id":"other","plugin":"request-redact"}]`}))
 	require.NoError(t, service.StartInputAuditRecorder())
 	t.Cleanup(func() { service.StopInputAuditRecorder(context.Background()) })
 	recorder := service.CurrentInputAuditRecorder()
@@ -826,7 +826,7 @@ func TestInputAuditAllowlistAPIValidationAndRevocation(t *testing.T) {
 	require.NoError(t, recorder.UpdateSettings(context.Background(), settings))
 	router := gin.New()
 	router.PUT("/api/input-audit/allowlist", middleware.RootAuth(), UpdateInputAuditAllowlist)
-	valid := request_plugin_setting.AllowlistEntry{UserID: user.Id, Instances: []string{"filter"}, Reason: "Approved account", ExpiresAt: time.Now().Unix() + 3600, CreatedBy: 999, CreatedAt: 1}
+	valid := request_plugin_setting.AllowlistEntry{UserID: user.Id, Instances: []string{"filter", "policy"}, Reason: "Approved account", ExpiresAt: time.Now().Unix() + 3600, CreatedBy: 999, CreatedAt: 1}
 	for _, tc := range []struct {
 		name   string
 		change func(*request_plugin_setting.AllowlistEntry)
@@ -867,6 +867,11 @@ func TestInputAuditAllowlistAPIValidationAndRevocation(t *testing.T) {
 		saved, err := model.LoadInputAuditAllowlist(model.DB)
 		require.NoError(t, err)
 		require.Len(t, saved.Entries, 1)
+		assert.Equal(t, []string{"filter", "policy"}, saved.Entries[0].Instances)
+		assert.NotNil(t, saved.Match(user.Id, "policy", "request-policy", time.Now().Unix()))
+		assert.Nil(t, saved.Match(user.Id+1, "policy", "request-policy", time.Now().Unix()))
+		assert.Nil(t, saved.Match(user.Id, "unselected", "request-policy", time.Now().Unix()))
+		assert.Nil(t, saved.Match(user.Id, "policy", "request-policy", saved.Entries[0].ExpiresAt))
 		assert.Equal(t, user.Id, saved.Entries[0].CreatedBy)
 		assert.NotEqualValues(t, 1, saved.Entries[0].CreatedAt)
 		assert.EqualValues(t, version+1, saved.Version)

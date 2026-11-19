@@ -50,8 +50,12 @@ func GetAllowlist() Allowlist {
 	return requestPluginSetting.Allowlist
 }
 
+func IsContentFilteringPlugin(plugin string) bool {
+	return plugin == "request-filter" || plugin == "content-moderation" || plugin == "request-policy"
+}
+
 func (policy Allowlist) Match(userID int, instanceID, plugin string, now int64) *AllowlistEntry {
-	if userID < 1 || (plugin != "request-filter" && plugin != "content-moderation") {
+	if userID < 1 || !IsContentFilteringPlugin(plugin) {
 		return nil
 	}
 	for i := range policy.Entries {
