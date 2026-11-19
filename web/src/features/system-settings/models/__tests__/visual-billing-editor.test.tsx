@@ -174,13 +174,14 @@ test('retains all pricing inputs and switches inside an expanded rule', async ()
   await user.click(
     tier.getByRole('button', { name: 'Edit pricing rule short' })
   )
+  await user.click(tier.getByRole('button', { name: 'Custom' }))
   await user.click(tier.getByRole('button', { name: 'Media pricing' }))
   for (const label of [
     'Input price',
     'Output price',
     'Cache read price',
-    'Cache create price',
-    'Cache create (1h) price',
+    'Standard cache write price',
+    'Claude cache write (1h) price',
     'Image input price',
     'Image cache input price',
     'Image output price',
@@ -193,10 +194,12 @@ test('retains all pricing inputs and switches inside an expanded rule', async ()
     ).toBeVisible()
   }
   await user.click(
-    tier.getByRole('checkbox', { name: 'Include Cache create (1h) price' })
+    tier.getByRole('checkbox', {
+      name: 'Include Claude cache write (1h) price',
+    })
   )
   fireEvent.change(
-    tier.getByRole('textbox', { name: 'Cache create (1h) price' }),
+    tier.getByRole('textbox', { name: 'Claude cache write (1h) price' }),
     { target: { value: '0.3' } }
   )
   await user.click(
@@ -215,7 +218,7 @@ test('retains all pricing inputs and switches inside an expanded rule', async ()
   await user.click(tier.getByRole('combobox', { name: 'Tier billing mode' }))
   await user.click(screen.getByRole('option', { name: 'Per token' }))
   expect(
-    tier.getByRole('textbox', { name: 'Cache create (1h) price' })
+    tier.getByRole('textbox', { name: 'Claude cache write (1h) price' })
   ).toHaveValue('0.3')
   expect(
     tier.getByRole('checkbox', { name: 'Include Image cache input price' })
@@ -979,4 +982,89 @@ test('preserves legacy numeric drafts when editing an independent time multiplie
   expect(onRequestRuleExprChange.mock.lastCall?.[0]).toContain('>= 0')
   fireEvent.blur(start)
   expect(start).toHaveValue(0)
+})
+
+test('keeps Gemini cache reading separate from storage charges', () => {
+  const onBillingExprChange = vi.fn()
+  render(
+    <TieredPricingEditor
+      modelName='gemini-3-pro'
+      billingExpr='tier("base", p * 4 + c * 20 + cr * 0)'
+      requestRuleExpr=''
+      onBillingExprChange={onBillingExprChange}
+      onRequestRuleExprChange={vi.fn()}
+    />
+  )
+  expect(
+    screen.getByRole('button', { name: 'Generic / Gemini' })
+  ).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByRole('textbox', { name: 'Cache read price' })).toHaveValue(
+    '0'
+  )
+  expect(
+    screen.queryByRole('textbox', { name: /Cache create/ })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getByText(
+      'Gemini explicit cache storage is charged by cached tokens and retention time and must be accounted for separately.'
+    )
+  ).toBeVisible()
+  expect(onBillingExprChange).not.toHaveBeenCalled()
+})
+
+test('selects cache categories with the keyboard without adding prices until enabled', async () => {
+  const onBillingExprChange = vi.fn()
+  render(
+    <TieredPricingEditor
+      billingExpr='tier("base", p * 4 + c * 20)'
+      requestRuleExpr=''
+      onBillingExprChange={onBillingExprChange}
+      onRequestRuleExprChange={vi.fn()}
+    />
+  )
+  const user = userEvent.setup()
+  screen.getByRole('button', { name: 'Claude' }).focus()
+  await user.keyboard('{Enter}')
+  expect(screen.getByRole('button', { name: 'Claude' })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  expect(
+    screen.getByRole('textbox', { name: 'Cache create (5m) price' })
+  ).toBeDisabled()
+  expect(onBillingExprChange).not.toHaveBeenCalled()
+})
+
+test('changing cache method preserves zero prices until removal is confirmed', async () => {
+  const onBillingExprChange = vi.fn()
+  render(
+    <TieredPricingEditor
+      modelName='claude-model'
+      billingExpr='tier("base", p * 4 + c * 20 + cr * 0.4 + cc * 0 + cc1h * 8)'
+      requestRuleExpr=''
+      onBillingExprChange={onBillingExprChange}
+      onRequestRuleExprChange={vi.fn()}
+    />
+  )
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: 'Generic / Gemini' }))
+  let confirmation = await screen.findByRole('alertdialog', {
+    name: 'Switch cache billing method?',
+  })
+  expect(confirmation).toHaveTextContent('Cache create (5m) price')
+  await user.click(within(confirmation).getByRole('button', { name: 'Cancel' }))
+  expect(onBillingExprChange).not.toHaveBeenCalled()
+  expect(
+    screen.getByRole('textbox', { name: 'Cache create (5m) price' })
+  ).toHaveValue('0')
+  await user.click(screen.getByRole('button', { name: 'Generic / Gemini' }))
+  confirmation = await screen.findByRole('alertdialog', {
+    name: 'Switch cache billing method?',
+  })
+  await user.click(
+    within(confirmation).getByRole('button', { name: 'Switch method' })
+  )
+  expect(onBillingExprChange).toHaveBeenLastCalledWith(
+    'tier("base", p * 4 + c * 20 + cr * 0.4)'
+  )
 })

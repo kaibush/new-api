@@ -37,6 +37,7 @@ import {
   User,
   Users,
   Wallet,
+  Workflow,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -200,11 +201,11 @@ export function useSidebarData(): SidebarData {
           {
             title: t('Request processing'),
             url: '/request-processing',
-            icon: PlugZap,
+            icon: Workflow,
             requiredRole: ROLE.SUPER_ADMIN,
           },
           {
-            title: t('Task Plugins'),
+            title: t('Plugins'),
             url: '/task-plugins',
             icon: PlugZap,
             requiredRole: ROLE.SUPER_ADMIN,

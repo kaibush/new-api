@@ -40,6 +40,8 @@ import {
   isDefaultMarketplaceSource,
   parseMarketplaceIndex,
 } from '../lib/marketplace'
+import type { PluginKind } from '../lib/plugin-kinds'
+import { resolvePluginParts } from '../lib/plugin-parts'
 import type { MarketplaceIndex, MarketplaceSource } from '../types'
 import {
   MarketplaceInstallDialog,
@@ -48,7 +50,7 @@ import {
 import { MarketplacePluginCard } from './marketplace-plugin-card'
 import { MarketplaceSourcesDialog } from './marketplace-sources-dialog'
 
-export function MarketplacePanel() {
+export function MarketplacePanel(props: { kind?: PluginKind } = {}) {
   const { t } = useTranslation()
   const [sourcesOpen, setSourcesOpen] = useState(false)
   const [selectedSourceUrl, setSelectedSourceUrl] = useState('')
@@ -168,7 +170,19 @@ export function MarketplacePanel() {
           <MarketplaceSourceSection
             key={`${selectedSource.index_url}|${selectedSource.name}`}
             source={selectedSource}
-            index={indexQuery.data}
+            index={
+              indexQuery.data && {
+                ...indexQuery.data,
+                plugins: indexQuery.data.plugins.filter(
+                  (item) =>
+                    !props.kind ||
+                    resolvePluginParts({
+                      ...item,
+                      meta: { relay: item.relay },
+                    })[props.kind]
+                ),
+              }
+            }
             isLoading={indexQuery.isLoading}
             error={indexQuery.error}
             installed={installedQuery.data ?? []}

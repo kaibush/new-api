@@ -33,6 +33,7 @@ import {
 } from '@/components/ui/popover'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { handleServerError } from '@/lib/handle-server-error'
 
 import {
@@ -44,12 +45,18 @@ import { MarketplacePanel } from './components/marketplace-panel'
 import { PluginDetailSheet } from './components/plugin-detail-sheet'
 import { PluginsTable } from './components/plugins-table'
 import { UploadDialog } from './components/upload-dialog'
+import {
+  PLUGIN_KINDS,
+  PLUGIN_KIND_LABELS,
+  type PluginKind,
+} from './lib/plugin-kinds'
 import type { TaskPluginListItem } from './types'
 
 export function TaskPlugins() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [detail, setDetail] = useState<TaskPluginListItem | null>(null)
+  const [kind, setKind] = useState<PluginKind | 'all'>('all')
   const [tab, setTab] = useState('installed')
   const [uploadKey, setUploadKey] = useState<string | null>(null)
   const [uploadOpen, setUploadOpen] = useState(false)
@@ -77,7 +84,7 @@ export function TaskPlugins() {
   return (
     <>
       <SectionPageLayout fixedContent>
-        <SectionPageLayout.Title>{t('Task Plugins')}</SectionPageLayout.Title>
+        <SectionPageLayout.Title>{t('Plugins')}</SectionPageLayout.Title>
         <SectionPageLayout.Actions>
           <div className='flex items-center gap-2'>
             <Switch
@@ -144,14 +151,37 @@ export function TaskPlugins() {
               <TabsTrigger value='installed'>{t('Installed')}</TabsTrigger>
               <TabsTrigger value='marketplace'>{t('Marketplace')}</TabsTrigger>
             </TabsList>
+            <ToggleGroup
+              value={[kind]}
+              onValueChange={(values) => {
+                const next = values.find((value) => value !== kind)
+                if (
+                  next === 'all' ||
+                  PLUGIN_KINDS.includes(next as PluginKind)
+                ) {
+                  setKind(next as PluginKind | 'all')
+                }
+              }}
+              aria-label={t('Plugin type')}
+              variant='outline'
+              className='max-w-full flex-wrap justify-start'
+            >
+              <ToggleGroupItem value='all'>{t('All')}</ToggleGroupItem>
+              {PLUGIN_KINDS.map((item) => (
+                <ToggleGroupItem key={item} value={item}>
+                  {t(PLUGIN_KIND_LABELS[item])}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
             <TabsContent value='installed' className='min-h-0 flex-1'>
               <PluginsTable
+                kind={kind === 'all' ? undefined : kind}
                 onDetails={setDetail}
                 onUpload={(key) => openUpload(key)}
               />
             </TabsContent>
             <TabsContent value='marketplace' className='min-h-0 flex-1'>
-              <MarketplacePanel />
+              <MarketplacePanel kind={kind === 'all' ? undefined : kind} />
             </TabsContent>
           </Tabs>
         </SectionPageLayout.Content>

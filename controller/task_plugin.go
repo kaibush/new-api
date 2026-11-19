@@ -731,6 +731,7 @@ func GetTaskPluginOptions(c *gin.Context) {
 				"transform_hooks":       parts.TransformHooks,
 				"supportsUserAllowlist": loaded.SupportsUserAllowlist(),
 				"samples":               append([]jsplugin.Sample{}, meta.Samples...),
+				"scope":                 meta.Scope,
 				"optional":              meta.Optional,
 				"login":                 parts.Login,
 				"refresh":               parts.Refresh,

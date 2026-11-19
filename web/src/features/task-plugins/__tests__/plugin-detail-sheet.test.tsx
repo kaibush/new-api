@@ -55,12 +55,16 @@ function makeItem(): TaskPluginListItem {
   }
 }
 
-function renderSheet(metaOverrides: Partial<TaskPluginMeta>) {
+function renderSheet(
+  metaOverrides: Partial<TaskPluginMeta>,
+  parts: Partial<TaskPluginDetail> = {}
+) {
   const item = makeItem()
   const detail: TaskPluginDetail = {
     meta: { ...item.meta, ...metaOverrides },
     source: '',
     layer: 'factory',
+    ...parts,
   }
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -622,4 +626,28 @@ test('keeps the billing parameter table for plugins without usage profiles', asy
   expect(
     screen.queryByText('No billing parameters declared')
   ).not.toBeInTheDocument()
+})
+
+test('shows the declared user allowlist capability in plugin metadata', async () => {
+  renderSheet({ requiredCapabilities: ['user-allowlist@1'] })
+  expect(await screen.findByText('User allowlist')).toBeVisible()
+  expect(screen.getByText('Supported')).toBeVisible()
+})
+
+test('a filter plugin shows execution stages and settings instead of task metadata', async () => {
+  renderSheet(
+    {
+      configSchema: {
+        type: 'object',
+        properties: {
+          enabled: { type: 'boolean', title: 'Filter enabled', default: true },
+        },
+      },
+    },
+    { task: false, transform: true, transform_hooks: ['ingress'] }
+  )
+  expect(await screen.findByText('When it runs')).toBeVisible()
+  expect(screen.getByText('Filter enabled')).toBeVisible()
+  expect(screen.queryByText('Fetch mode')).not.toBeInTheDocument()
+  expect(screen.queryByText('Default base URL')).not.toBeInTheDocument()
 })

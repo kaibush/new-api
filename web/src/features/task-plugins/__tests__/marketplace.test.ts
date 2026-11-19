@@ -696,3 +696,20 @@ describe('marketplace display metadata', () => {
     assert.equal(index.plugins[0].website, undefined)
   })
 })
+
+test('preserves task and request processing declarations for marketplace category filters', () => {
+  const result = parseMarketplaceIndex({
+    indexVersion: 1,
+    plugins: [
+      {
+        key: 'filter',
+        task: false,
+        transform: true,
+        latest: '1.0.0',
+        versions: [{ version: '1.0.0', path: 'filter.js', kind: 'task' }],
+      },
+    ],
+  })
+  assert.equal(result.plugins[0].task, false)
+  assert.equal(result.plugins[0].transform, true)
+})

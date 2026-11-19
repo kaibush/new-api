@@ -1412,3 +1412,34 @@ func TestRequestPluginInstanceValidationAndConfigDisclosure(t *testing.T) {
 	}
 	assert.JSONEq(t, string(normalized[0].Config), string(request_plugin_setting.GetInstances()[0].Config))
 }
+
+func TestRequestPluginScopeRequiresDeclaredOrPriorApproval(t *testing.T) {
+	plugin, err := jsplugin.DefaultRegistry.Register(`export const meta={apiVersion:1,key:"scope-approval",name:"Scope",version:"1.0.0",author:{name:"Test"},scope:{models:["gpt-4o","claude"]}}; export function ingress(){return {action:"continue"}}`, jsplugin.Options{})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, jsplugin.DefaultRegistry.Unregister(plugin.Meta.Key)) })
+	previous, err := common.Marshal(request_plugin_setting.GetInstances())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: string(previous)}))
+	})
+	instance := request_plugin_setting.Instance{ID: "scoped", Name: "Scoped", Plugin: plugin.Meta.Key, Enabled: true, Global: true, Config: []byte(`{}`), PluginScope: &request_plugin_setting.Scope{Models: []string{"gpt-4o", "claude"}}}
+	normalized, err := normalizeRequestPluginInstances([]request_plugin_setting.Instance{instance})
+	require.NoError(t, err)
+	require.Len(t, normalized, 1)
+	assert.False(t, normalized[0].Global)
+	assert.Empty(t, normalized[0].Models)
+	instance.PluginScope = &request_plugin_setting.Scope{Models: []string{"gpt-4o", "gpt-4o"}}
+	_, err = normalizeRequestPluginInstances([]request_plugin_setting.Instance{instance})
+	require.Error(t, err, "duplicate entries cannot masquerade as the declared scope")
+	instance.PluginScope = &request_plugin_setting.Scope{Models: []string{"gpt-4o", "unapproved"}}
+	_, err = normalizeRequestPluginInstances([]request_plugin_setting.Instance{instance})
+	require.Error(t, err)
+	saved, err := common.Marshal([]request_plugin_setting.Instance{instance})
+	require.NoError(t, err)
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: string(saved)}))
+	_, err = normalizeRequestPluginInstances([]request_plugin_setting.Instance{instance})
+	require.NoError(t, err, "previous approval stays saveable after a plugin narrows its scope")
+	instance.ID = "different-instance"
+	_, err = normalizeRequestPluginInstances([]request_plugin_setting.Instance{instance})
+	require.Error(t, err, "another instance cannot inherit the prior approval")
+}

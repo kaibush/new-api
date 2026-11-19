@@ -279,6 +279,10 @@ export function buildPreviewRows(
       currency
     )
   }
+  let createCacheLabel = t('Standard cache write price')
+  if (cacheWriteMode === 'claude_ttl') {
+    createCacheLabel = t('Cache create (5m) price')
+  }
   const rows: PreviewRow[] = [
     {
       key: 'inputPrice',
@@ -305,10 +309,7 @@ export function buildPreviewRows(
     },
     {
       key: 'createCache',
-      label:
-        cacheWriteMode === 'claude_ttl'
-          ? t('Cache Creation (5m)')
-          : t('Cache write price'),
+      label: createCacheLabel,
       value:
         laneEnabled.createCache && lanePrices.createCache
           ? formatPricingAmount(lanePrices.createCache, currency)

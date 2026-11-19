@@ -21,6 +21,7 @@ import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { resolveLocalizedText } from '@/lib/localized-text'
 
 import type { TaskPluginListItem } from '../types'
@@ -46,7 +47,13 @@ const MAX_VISIBLE_MODELS = 4
  * sheet: rendering it here made every card a different height and buried the
  * plugin's own description under its parameter descriptions.
  */
-function PluginCardComponent({ row }: { row: Row<TaskPluginListItem> }) {
+function PluginCardComponent({
+  row,
+  onDetails,
+}: {
+  row: Row<TaskPluginListItem>
+  onDetails?: (plugin: TaskPluginListItem) => void
+}) {
   const { t, i18n } = useTranslation()
   const cells = row.getAllCells()
   const description = resolveLocalizedText(
@@ -78,9 +85,19 @@ function PluginCardComponent({ row }: { row: Row<TaskPluginListItem> }) {
             />
           </span>
           <div className='min-w-0'>
-            <div className='truncate text-sm font-medium'>
-              {row.original.meta.name}
-            </div>
+            {onDetails ? (
+              <Button
+                variant='link'
+                className='h-auto max-w-full justify-start p-0 text-sm'
+                onClick={() => onDetails(row.original)}
+              >
+                {row.original.meta.name}
+              </Button>
+            ) : (
+              <div className='truncate text-sm font-medium'>
+                {row.original.meta.name}
+              </div>
+            )}
             <div className='text-muted-foreground truncate font-mono text-xs'>
               {row.original.meta.key}
             </div>

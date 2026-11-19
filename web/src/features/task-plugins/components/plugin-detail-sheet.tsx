@@ -232,7 +232,15 @@ function PluginDetailContent(props: { plugin: TaskPluginListItem }) {
           </TabsList>
         </div>
         <TabsContent value='overview' className={panelClassName}>
-          {detailState ?? (detail && <PluginMetadataCard meta={detail.meta} />)}
+          {detailState ??
+            (detail && (
+              <PluginMetadataCard
+                meta={detail.meta}
+                task={detail.task ?? props.plugin.task}
+                transform={detail.transform ?? props.plugin.transform}
+                hooks={detail.transform_hooks ?? props.plugin.transform_hooks}
+              />
+            ))}
         </TabsContent>
         <TabsContent value='billing' className={panelClassName}>
           {detailState ?? (

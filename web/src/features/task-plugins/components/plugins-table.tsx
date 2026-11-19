@@ -45,6 +45,8 @@ import {
   TaskPluginUsageError,
 } from '../api'
 import { isStaleFactoryOverride } from '../lib/marketplace'
+import type { PluginKind } from '../lib/plugin-kinds'
+import { resolvePluginParts } from '../lib/plugin-parts'
 import type { TaskPluginListItem, TaskPluginUsage } from '../types'
 import { PluginCard } from './plugin-card'
 import { PluginIcon } from './plugin-icon'
@@ -53,6 +55,7 @@ import { PluginWebsiteLink } from './plugin-website-link'
 const VIEW_MODE_STORAGE_KEY = 'task-plugins-view-mode'
 
 type PluginsTableProps = {
+  kind?: PluginKind
   onDetails: (plugin: TaskPluginListItem) => void
   onUpload: (key: string) => void
 }
@@ -155,9 +158,13 @@ export function PluginsTable(props: PluginsTableProps) {
                 />
               </span>
               <div className='min-w-0'>
-                <div className='truncate text-sm font-medium'>
+                <Button
+                  variant='link'
+                  className='h-auto max-w-full justify-start p-0 text-sm'
+                  onClick={() => props.onDetails(row.original)}
+                >
                   {row.original.meta.name}
-                </div>
+                </Button>
                 <div className='text-muted-foreground truncate font-mono text-xs'>
                   {row.original.meta.key}
                 </div>
@@ -322,10 +329,17 @@ export function PluginsTable(props: PluginsTableProps) {
   )
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
   const [globalFilter, setGlobalFilter] = useState('')
+  const filteredPlugins = useMemo(
+    () =>
+      (pluginsQuery.data ?? []).filter(
+        (item) => !props.kind || resolvePluginParts(item)[props.kind]
+      ),
+    [pluginsQuery.data, props.kind]
+  )
   const { table } = useDataTable({
-    data: pluginsQuery.data ?? [],
+    data: filteredPlugins,
     columns,
-    totalCount: pluginsQuery.data?.length ?? 0,
+    totalCount: filteredPlugins.length,
     columnFilters,
     onColumnFiltersChange: setColumnFilters,
     globalFilter,
@@ -372,7 +386,9 @@ export function PluginsTable(props: PluginsTableProps) {
         applyHeaderSize
         enableCardView
         viewModeStorageKey={VIEW_MODE_STORAGE_KEY}
-        renderCard={(row) => <PluginCard row={row} />}
+        renderCard={(row) => (
+          <PluginCard row={row} onDetails={props.onDetails} />
+        )}
         cardGridClassName='grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-3'
         toolbarProps={{ searchPlaceholder: t('Filter plugins...') }}
       />

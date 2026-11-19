@@ -283,3 +283,51 @@ test.each(['factory', 'override_over_factory'] as const)(
     }
   }
 )
+
+test('filtering by request processing retains mixed plugins and opens details from the name', async () => {
+  const user = userEvent.setup()
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+  })
+  clients.push(client)
+  const items = ['task', 'filter', 'mixed'].map(
+    (key): TaskPluginListItem => ({
+      meta: {
+        apiVersion: 1,
+        key,
+        name: key,
+        version: '1.0.0',
+        author: { name: 'Test' },
+        models: [],
+        fetchMode: '',
+      },
+      task: key !== 'filter',
+      transform: key !== 'task',
+      source: 'factory',
+      enabled: true,
+      active: true,
+      source_hash: '',
+      remark: '',
+      runtime_status: 'registered',
+      channel_count: 0,
+      in_flight_count: 0,
+    })
+  )
+  client.setQueryData(['task-plugins'], items)
+  const onDetails = vi.fn()
+  render(
+    <QueryClientProvider client={client}>
+      <PluginsTable
+        kind='transform'
+        onDetails={onDetails}
+        onUpload={() => undefined}
+      />
+    </QueryClientProvider>
+  )
+  expect(screen.queryByRole('button', { name: 'task' })).not.toBeInTheDocument()
+  expect(
+    screen.getAllByRole('button', { name: 'mixed' }).length
+  ).toBeGreaterThan(0)
+  await user.click(screen.getAllByRole('button', { name: 'filter' })[0])
+  expect(onDetails).toHaveBeenCalledWith(items[1])
+})

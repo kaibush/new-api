@@ -26,25 +26,41 @@ import { getPluginWebsite } from '../lib/plugin-website'
 import type { TaskPluginMeta } from '../types'
 import { PluginEndpoints } from './plugin-endpoints'
 import { PluginModelList } from './plugin-model-list'
+import { PluginTransformSection } from './plugin-transform-section'
 import { PluginWebsiteLink } from './plugin-website-link'
 
-type PluginMetadataCardProps = { meta: TaskPluginMeta }
+type PluginMetadataCardProps = {
+  meta: TaskPluginMeta
+  task?: boolean
+  transform?: boolean
+  hooks?: string[] | null
+}
 
 export function PluginMetadataCard(props: PluginMetadataCardProps) {
   const { t } = useTranslation()
   const models = props.meta.models ?? []
   const fields = [
-    { label: t('Sort priority'), value: String(props.meta.sortPriority ?? 0) },
-    { label: t('Fetch mode'), value: props.meta.fetchMode },
     {
-      label: t('Channel types'),
-      value: props.meta.channelTypes?.length
-        ? props.meta.channelTypes
-            .map((type) => `${t(getChannelTypeLabel(type))} (#${type})`)
-            .join(', ')
-        : t('Task Plugin'),
+      label: t('User allowlist'),
+      value: props.meta.requiredCapabilities?.includes('user-allowlist@1')
+        ? t('Supported')
+        : t('Not declared'),
     },
+    { label: t('Sort priority'), value: String(props.meta.sortPriority ?? 0) },
   ]
+  if (props.task !== false) {
+    fields.push(
+      { label: t('Fetch mode'), value: props.meta.fetchMode },
+      {
+        label: t('Channel types'),
+        value: props.meta.channelTypes?.length
+          ? props.meta.channelTypes
+              .map((type) => `${t(getChannelTypeLabel(type))} (#${type})`)
+              .join(', ')
+          : t('Task Plugin'),
+      }
+    )
+  }
   let canCopyBaseUrl = false
   try {
     const url = new URL(props.meta.baseUrl ?? '')
@@ -81,51 +97,69 @@ export function PluginMetadataCard(props: PluginMetadataCardProps) {
               )}
             </dd>
           </div>
-          <div className='min-w-0 space-y-1 sm:col-span-2'>
-            <dt className='text-muted-foreground text-xs'>
-              {t('Default base URL')}
-            </dt>
-            <dd className='flex items-start gap-2'>
-              <span className='min-w-0 flex-1 pt-1 font-mono text-xs break-all'>
-                {props.meta.baseUrl || t('Not declared')}
-              </span>
-              {canCopyBaseUrl && (
-                <CopyButton
-                  value={props.meta.baseUrl ?? ''}
-                  className='size-7'
-                  iconClassName='size-3.5'
-                  aria-label={t('Copy base URL')}
-                />
-              )}
-            </dd>
-          </div>
+          {props.task !== false && (
+            <div className='min-w-0 space-y-1 sm:col-span-2'>
+              <dt className='text-muted-foreground text-xs'>
+                {t('Default base URL')}
+              </dt>
+              <dd className='flex items-start gap-2'>
+                <span className='min-w-0 flex-1 pt-1 font-mono text-xs break-all'>
+                  {props.meta.baseUrl || t('Not declared')}
+                </span>
+                {canCopyBaseUrl && (
+                  <CopyButton
+                    value={props.meta.baseUrl ?? ''}
+                    className='size-7'
+                    iconClassName='size-3.5'
+                    aria-label={t('Copy base URL')}
+                  />
+                )}
+              </dd>
+            </div>
+          )}
         </dl>
       </section>
-      <section className='rounded-lg border p-4' aria-label={t('Models')}>
-        <div className='mb-3 flex items-center gap-2'>
-          <h3 className='text-sm font-semibold'>{t('Models')}</h3>
-          <Badge variant='secondary'>{models.length}</Badge>
-          {models.length > 0 && (
-            <CopyButton
-              value={models.join('\n')}
-              className='ml-auto size-7'
-              iconClassName='size-3.5'
-              aria-label={t('Copy all models')}
-            />
-          )}
-        </div>
-        {models.length ? (
-          <PluginModelList models={models} maxVisible={models.length} />
-        ) : (
-          <p className='text-muted-foreground text-sm'>{t('Not declared')}</p>
-        )}
-      </section>
-      <section className='rounded-lg border p-4' aria-label={t('Endpoints')}>
-        <PluginEndpoints
-          protocols={props.meta.protocols}
-          routes={props.meta.routes}
+      {props.transform && (
+        <PluginTransformSection
+          hooks={props.hooks ?? []}
+          schema={props.meta.configSchema}
+          scope={props.meta.scope}
         />
-      </section>
+      )}
+      {props.task !== false && (
+        <>
+          <section className='rounded-lg border p-4' aria-label={t('Models')}>
+            <div className='mb-3 flex items-center gap-2'>
+              <h3 className='text-sm font-semibold'>{t('Models')}</h3>
+              <Badge variant='secondary'>{models.length}</Badge>
+              {models.length > 0 && (
+                <CopyButton
+                  value={models.join('\n')}
+                  className='ml-auto size-7'
+                  iconClassName='size-3.5'
+                  aria-label={t('Copy all models')}
+                />
+              )}
+            </div>
+            {models.length ? (
+              <PluginModelList models={models} maxVisible={models.length} />
+            ) : (
+              <p className='text-muted-foreground text-sm'>
+                {t('Not declared')}
+              </p>
+            )}
+          </section>
+          <section
+            className='rounded-lg border p-4'
+            aria-label={t('Endpoints')}
+          >
+            <PluginEndpoints
+              protocols={props.meta.protocols}
+              routes={props.meta.routes}
+            />
+          </section>
+        </>
+      )}
     </div>
   )
 }

@@ -28,7 +28,7 @@ import { getPluginWebsite } from './plugin-website'
 
 export const SUPPORTED_INDEX_VERSION = 1
 
-/** The gateway only runs task plugins today; other kinds are filtered out. */
+/** Index kind names the runtime; task/transform flags describe plugin parts. */
 export const SUPPORTED_PLUGIN_KIND = 'task'
 
 /**
@@ -181,6 +181,8 @@ function parseMarketplacePlugin(entry: unknown): MarketplacePlugin | null {
 
   return {
     key,
+    task: typeof raw.task === 'boolean' ? raw.task : undefined,
+    transform: typeof raw.transform === 'boolean' ? raw.transform : undefined,
     sortPriority:
       typeof raw.sortPriority === 'number' &&
       Number.isInteger(raw.sortPriority) &&
