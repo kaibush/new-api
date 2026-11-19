@@ -51,6 +51,7 @@ import {
   USD_PRICING_CURRENCY,
 } from './currency'
 import { modelPricingDisplay, pricingFromDraft, pricingRow } from './pricing'
+import { PricingTransferDialog } from './pricing-transfer-dialog'
 
 export function ModelPricingPanel(props: {
   modelName: string
@@ -66,6 +67,7 @@ export function ModelPricingPanel(props: {
   const save = useSaveModelPricing()
   const [entry, setEntry] = useState<ModelPricingEntry | null>(null)
   const [resetOpen, setResetOpen] = useState(false)
+  const [transfer, setTransfer] = useState<'import' | 'export' | null>(null)
   const editor = useRef<ModelPricingEditorPanelHandle>(null)
   const editData = useMemo(() => {
     if (!entry) return null
@@ -182,6 +184,22 @@ export function ModelPricingPanel(props: {
               <Button
                 variant='outline'
                 size='sm'
+                disabled={save.isPending}
+                onClick={() => setTransfer('export')}
+              >
+                {t('Export model pricing')}
+              </Button>
+              <Button
+                variant='outline'
+                size='sm'
+                disabled={save.isPending}
+                onClick={() => setTransfer('import')}
+              >
+                {t('Import model pricing')}
+              </Button>
+              <Button
+                variant='outline'
+                size='sm'
                 onClick={() => setResetOpen(true)}
                 disabled={save.isPending}
               >
@@ -252,6 +270,22 @@ export function ModelPricingPanel(props: {
           </>
         }
       />
+      {transfer && (
+        <PricingTransferDialog
+          key={`${entry.model_name}:${transfer}`}
+          entry={entry}
+          mode={transfer}
+          onClose={() => setTransfer(null)}
+          onSaved={async () => {
+            const refreshed = await query.refetch()
+            setEntry(
+              refreshed.data?.entries.find(
+                (item) => item.model_name === props.modelName
+              ) ?? null
+            )
+          }}
+        />
+      )}
       <ConfirmDialog
         open={resetOpen}
         onOpenChange={setResetOpen}

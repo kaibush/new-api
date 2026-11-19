@@ -99,14 +99,21 @@ test('a new row focuses its request field and both fields offer searchable model
   await user.click(screen.getByRole('button', { name: 'Add Mapping' }))
   const source = screen.getByRole('combobox', { name: 'Request Model Name' })
   expect(source).toHaveFocus()
-  expect(source).toHaveAttribute('aria-expanded', 'true')
+  expect(source.closest('.grid')).toHaveClass(
+    'grid-cols-[minmax(0,1fr)_auto]',
+    'sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]'
+  )
+  expect(source).toHaveClass('h-11', 'sm:h-8')
+  expect(source).toHaveAttribute('autocapitalize', 'none')
+  expect(source).toHaveAttribute('autocorrect', 'off')
+  expect(source).toHaveAttribute('spellcheck', 'false')
+  expect(source).toHaveAttribute('aria-expanded', 'false')
+  await user.click(screen.getByRole('button', { name: 'Request Model Name' }))
   await user.click(screen.getByRole('option', { name: 'alpha-model' }))
   expect(source).toHaveValue('alpha-model')
   expect(onChange).toHaveBeenLastCalledWith('{\n  "alpha-model": ""\n}')
 
-  await user.click(
-    screen.getByRole('combobox', { name: 'Upstream Model Name' })
-  )
+  await user.click(screen.getByRole('button', { name: 'Upstream Model Name' }))
   await user.click(screen.getByRole('option', { name: 'upstream-a' }))
   expect(onChange).toHaveBeenLastCalledWith(
     '{\n  "alpha-model": "upstream-a"\n}'
@@ -261,4 +268,110 @@ test('commit fires once an edit settles on Enter or when focus leaves, not per k
   expect(onCommit).toHaveBeenCalledTimes(1)
   await user.click(screen.getByRole('button', { name: 'outside' }))
   expect(onCommit).toHaveBeenCalledTimes(2)
+})
+
+test('typing custom models keeps suggestions closed and preserves values on blur', async () => {
+  const user = userEvent.setup()
+  const onChange = vi.fn()
+  render(
+    <ModelMappingEditor
+      value=''
+      onChange={onChange}
+      sourceModelOptions={['alpha']}
+      targetModelOptions={['beta']}
+    />
+  )
+  await user.click(screen.getByRole('button', { name: 'Add Mapping' }))
+  const source = screen.getByRole('combobox', { name: 'Request Model Name' })
+  const target = screen.getByRole('combobox', { name: 'Upstream Model Name' })
+  await user.type(source, 'custom/request')
+  await user.type(target, 'custom/upstream')
+  expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+  await user.tab()
+  expect(onChange).toHaveBeenLastCalledWith(
+    '{\n  "custom/request": "custom/upstream"\n}'
+  )
+  await user.click(source)
+  await user.keyboard('{ArrowDown}')
+  const list = screen.getByRole('listbox')
+  expect(list.parentElement).not.toHaveStyle({ position: 'fixed' })
+  await user.keyboard('{Escape}')
+  expect(source).toHaveValue('custom/request')
+  expect(source).toHaveAttribute('aria-expanded', 'false')
+})
+
+test('explicit suggestions can be filtered and selected with the keyboard', async () => {
+  const user = userEvent.setup()
+  render(
+    <ModelMappingEditor
+      value='{"alias":"upstream"}'
+      onChange={vi.fn()}
+      sourceModelOptions={['alpha', 'beta']}
+    />
+  )
+  const source = screen.getByRole('combobox', { name: 'Request Model Name' })
+  const trigger = screen.getByRole('button', { name: 'Request Model Name' })
+  await user.click(trigger)
+  await user.click(trigger)
+  expect(source).toHaveAttribute('aria-expanded', 'false')
+  await user.keyboard('{ArrowDown}')
+  await user.clear(source)
+  await user.type(source, 'bet')
+  expect(
+    screen.queryByRole('option', { name: 'alpha' })
+  ).not.toBeInTheDocument()
+  await user.keyboard('{ArrowDown}{Enter}')
+  expect(source).toHaveValue('beta')
+  expect(source).toHaveAttribute('aria-expanded', 'false')
+})
+
+test.each([true, false])(
+  'empty suggestions preserve custom input and respect disabled=%s',
+  async (disabled) => {
+    const user = userEvent.setup()
+    render(
+      <ModelMappingEditor
+        value='{"alias":"upstream"}'
+        onChange={vi.fn()}
+        disabled={disabled}
+      />
+    )
+    const source = screen.getByRole('combobox', { name: 'Request Model Name' })
+    expect(
+      screen.getByRole('button', { name: 'Request Model Name' })
+    ).toBeDisabled()
+    if (disabled) {
+      expect(source).toBeDisabled()
+    } else {
+      await user.clear(source)
+      await user.type(source, 'custom')
+      await user.tab()
+      expect(source).toHaveValue('custom')
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    }
+  }
+)
+
+test('touch users can open suggestions and choose a model without covering the input', async () => {
+  const user = userEvent.setup()
+  render(
+    <ModelMappingEditor
+      value='{"alias":"upstream"}'
+      onChange={vi.fn()}
+      sourceModelOptions={['channel-model']}
+    />
+  )
+  const input = screen.getByRole('combobox', { name: 'Request Model Name' })
+  const trigger = screen.getByRole('button', { name: 'Request Model Name' })
+  await user.pointer([
+    { keys: '[TouchA>]', target: trigger },
+    { keys: '[/TouchA]' },
+  ])
+  const option = screen.getByRole('option', { name: 'channel-model' })
+  await user.pointer([
+    { keys: '[TouchA>]', target: option },
+    { keys: '[/TouchA]' },
+  ])
+  expect(input).toHaveValue('channel-model')
+  expect(input).toHaveAttribute('aria-expanded', 'false')
 })

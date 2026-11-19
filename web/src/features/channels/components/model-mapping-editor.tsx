@@ -32,6 +32,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { ComboboxInput } from '@/components/ui/combobox-input'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 type MappingField = 'from' | 'to'
@@ -459,49 +460,58 @@ export function ModelMappingEditor(props: ModelMappingEditorProps) {
                   )}
                 </div>
               )}
-              <div className='grid grid-cols-[1fr_1fr_auto] gap-2 text-sm font-medium'>
-                <div>{t('Request Model Name')}</div>
-                <div>{t('Upstream Model Name')}</div>
-                <div className='w-10' />
-              </div>
               {visibleRows.map((row) => (
                 <div
                   key={row.id}
-                  className='grid grid-cols-[1fr_1fr_auto] gap-2'
+                  className='grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]'
                 >
-                  <ComboboxInput
-                    id={rowInputId(row.id, 'from')}
-                    options={sourceOptions}
-                    value={row.from}
-                    onValueChange={(value) =>
-                      handleRowChange(row.id, 'from', value)
-                    }
-                    placeholder='gpt-3.5-turbo'
-                    emptyText='No matching items'
-                    allowCustomValue
-                    disabled={props.disabled}
-                    aria-label={t('Request Model Name')}
-                  />
-                  <ComboboxInput
-                    id={rowInputId(row.id, 'to')}
-                    options={targetOptions}
-                    value={row.to}
-                    onValueChange={(value) =>
-                      handleRowChange(row.id, 'to', value)
-                    }
-                    placeholder='gpt-3.5-turbo-0125'
-                    emptyText='No matching items'
-                    allowCustomValue
-                    disabled={props.disabled}
-                    aria-label={t('Upstream Model Name')}
-                  />
+                  <div className='col-start-1 flex min-w-0 flex-col gap-1 sm:col-start-auto'>
+                    <Label htmlFor={rowInputId(row.id, 'from')}>
+                      {t('Request Model Name')}
+                    </Label>
+                    <ComboboxInput
+                      inlineSuggestions
+                      className='h-11 sm:h-8'
+                      id={rowInputId(row.id, 'from')}
+                      options={sourceOptions}
+                      value={row.from}
+                      onValueChange={(value) =>
+                        handleRowChange(row.id, 'from', value)
+                      }
+                      placeholder='gpt-3.5-turbo'
+                      emptyText='No matching items'
+                      allowCustomValue
+                      disabled={props.disabled}
+                      aria-label={t('Request Model Name')}
+                    />
+                  </div>
+                  <div className='col-start-1 flex min-w-0 flex-col gap-1 sm:col-start-auto'>
+                    <Label htmlFor={rowInputId(row.id, 'to')}>
+                      {t('Upstream Model Name')}
+                    </Label>
+                    <ComboboxInput
+                      inlineSuggestions
+                      className='h-11 sm:h-8'
+                      id={rowInputId(row.id, 'to')}
+                      options={targetOptions}
+                      value={row.to}
+                      onValueChange={(value) =>
+                        handleRowChange(row.id, 'to', value)
+                      }
+                      placeholder='gpt-3.5-turbo-0125'
+                      emptyText='No matching items'
+                      allowCustomValue
+                      disabled={props.disabled}
+                      aria-label={t('Upstream Model Name')}
+                    />
+                  </div>
                   <Button
                     type='button'
                     variant='ghost'
                     size='icon'
                     onClick={() => handleDeleteRow(row.id)}
                     disabled={props.disabled}
-                    className='h-10 w-10'
+                    className='col-start-2 row-start-1 mt-5 size-11 sm:col-start-3 sm:size-8'
                     aria-label={t('Delete mapping')}
                   >
                     <Trash2 className='h-4 w-4' aria-hidden='true' />
