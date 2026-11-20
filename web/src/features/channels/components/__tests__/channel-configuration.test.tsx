@@ -56,6 +56,7 @@ const originalAuth = useAuthStore.getState().auth
 let client: QueryClient
 let editingChannel: Channel
 let pluginOptions: TaskPluginOption[]
+let upstreamModels: string[]
 const plugins: TaskPluginOption[] = [
   {
     key: 'video-a',
@@ -132,6 +133,7 @@ function ConfigurationHarness(props: {
 
 beforeEach(() => {
   pluginOptions = plugins
+  upstreamModels = ['upstream-model']
   editingChannel = channelSchema.parse({
     id: 42,
     name: 'Existing channel',
@@ -160,7 +162,7 @@ beforeEach(() => {
       return { data: { success: true, data: editingChannel } }
     }
     if (url === '/api/channel/fetch_models/42') {
-      return { data: { success: true, data: ['upstream-model'] } }
+      return { data: { success: true, data: upstreamModels } }
     }
     if (url === '/api/task_plugin_options') {
       return { data: { success: true, data: pluginOptions } }
@@ -2273,6 +2275,101 @@ test('mapping guardrail alerts link to the tab that holds the fix', async () => 
   await user.click(screen.getByRole('button', { name: 'View models' }))
   expect(connectionTab).toHaveAttribute('aria-selected', 'true')
 })
+
+test.each(['inline', 'floating'] as const)(
+  '%s upstream suggestions use discovered IDs and preserve request aliases',
+  async (location) => {
+    if (location === 'floating') useWideScreen()
+    editingChannel.models = 'gpt-6-luna,gpt-6.1-terra'
+    editingChannel.model_mapping = JSON.stringify({
+      'gpt-6-luna': 'morpheus/GPT-6 Luna',
+      'gpt-6.1-terra': 'morpheus/GPT-6.1 Terra',
+    })
+    upstreamModels = [
+      'oh-my-cpa/gpt-6-luna',
+      'oh-my-cpa/gpt-5.6-terra',
+      'oh-my-cpa/gpt-5.6-luna',
+      'morpheus/GPT-6 Luna',
+      'morpheus/GPT-6.1 Terra',
+    ]
+    const user = userEvent.setup()
+    render(<ConfigurationHarness currentRow={editingChannel} />)
+    await screen.findByDisplayValue('Existing channel')
+    await user.click(
+      screen.getByRole('button', { name: 'Fetch from Upstream' })
+    )
+    await screen.findByRole('checkbox', { name: 'oh-my-cpa/gpt-6-luna' })
+    let editorElement: HTMLElement = document.body
+    if (location === 'floating') {
+      await user.click(screen.getByRole('button', { name: 'Redirect panel' }))
+      editorElement = await screen.findByRole('complementary', {
+        name: 'Model redirects',
+      })
+    } else {
+      await user.click(screen.getByRole('tab', { name: /Routing & Mapping/ }))
+    }
+    const editor = within(editorElement)
+
+    await user.click(
+      editor.getAllByRole('button', { name: 'Request Model Name' })[0]
+    )
+    expect(
+      editor.getAllByRole('option').map((option) => option.textContent)
+    ).toEqual(['gpt-6-luna', 'gpt-6.1-terra'])
+    await user.keyboard('{Escape}')
+    await user.click(
+      editor.getAllByRole('button', { name: 'Upstream Model Name' })[0]
+    )
+    expect(
+      editor.getAllByRole('option').map((option) => option.textContent)
+    ).toEqual(upstreamModels)
+    await user.click(
+      editor.getByRole('option', { name: 'oh-my-cpa/gpt-6-luna' })
+    )
+    expect(
+      editor.getAllByRole('combobox', { name: 'Request Model Name' })[0]
+    ).toHaveValue('gpt-6-luna')
+    await user.click(editor.getByRole('tab', { name: 'JSON' }))
+    expect(editor.getByRole('textbox', { name: 'Model Mapping' })).toHaveValue(
+      JSON.stringify(
+        {
+          'gpt-6-luna': 'oh-my-cpa/gpt-6-luna',
+          'gpt-6.1-terra': 'morpheus/GPT-6.1 Terra',
+        },
+        null,
+        2
+      )
+    )
+  }
+)
+
+test.each(['not fetched', 'empty result'] as const)(
+  '%s upstream suggestions preserve manually entered mapping targets',
+  async (discoveryState) => {
+    editingChannel.models = 'gpt-6-luna'
+    editingChannel.model_mapping = '{"gpt-6-luna":"private/GPT-6 Luna"}'
+    upstreamModels = []
+    const user = userEvent.setup()
+    render(<ConfigurationHarness currentRow={editingChannel} />)
+    await screen.findByDisplayValue('Existing channel')
+    if (discoveryState === 'empty result') {
+      await user.click(
+        screen.getByRole('button', { name: 'Fetch from Upstream' })
+      )
+      await screen.findByText('No models returned by the upstream')
+    }
+    await user.click(screen.getByRole('tab', { name: /Routing & Mapping/ }))
+    expect(
+      screen.getByRole('button', { name: 'Upstream Model Name' })
+    ).toBeDisabled()
+    const target = screen.getByRole('combobox', { name: 'Upstream Model Name' })
+    expect(target).toHaveValue('private/GPT-6 Luna')
+    await user.clear(target)
+    await user.type(target, 'private/GPT-6.1 Terra')
+    await user.tab()
+    expect(target).toHaveValue('private/GPT-6.1 Terra')
+  }
+)
 
 test('redirecting a model from the model picker publishes it, adds a mapping row, and focuses its upstream field', async () => {
   const user = userEvent.setup()

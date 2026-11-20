@@ -2506,7 +2506,7 @@ export function ChannelMutateDrawer({
                 onChange={field.onChange}
                 disabled={isSubmitting}
                 sourceModelOptions={currentModelsArray}
-                targetModelOptions={currentModelsArray}
+                targetModelOptions={upstreamModelList}
                 onBatchAdd={
                   canBatchMap
                     ? () =>
@@ -5043,7 +5043,7 @@ export function ChannelMutateDrawer({
               syncModels={redirectSyncModels}
               onSyncModelsChange={setRedirectSyncModels}
               sourceModelOptions={currentModelsArray}
-              targetModelOptions={currentModelsArray}
+              targetModelOptions={upstreamModelList}
               draftRequest={mappingDraftRequest}
               onDraftRequestHandled={() => setMappingDraftRequest(null)}
               disabled={isSubmitting}
