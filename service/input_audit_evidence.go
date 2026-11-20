@@ -180,6 +180,7 @@ func ExtractInputAuditEvidence(request any, maxChars int) model.InputAuditEviden
 
 type inputAuditEvidenceBuilder struct {
 	document model.InputAuditEvidenceDocument
+	fullText bool
 }
 
 func (builder *inputAuditEvidenceBuilder) omit(reason string) {
@@ -206,6 +207,14 @@ func (builder *inputAuditEvidenceBuilder) add(role, kind, path, callID, name, te
 				break
 			}
 		}
+		if builder.fullText {
+			for i, message := range builder.document.Messages {
+				if message.Kind != "message" || message.Role == "tool" || message.Role == "assistant" {
+					drop = i
+					break
+				}
+			}
+		}
 		builder.document.Messages = slices.Delete(builder.document.Messages, drop, drop+1)
 		builder.omit("message_limit")
 		builder.document.Truncated = true
@@ -216,7 +225,12 @@ func (builder *inputAuditEvidenceBuilder) add(role, kind, path, callID, name, te
 	if redacted {
 		builder.omit("media_not_retained")
 	}
-	excerpt := inputAuditExcerpt(safe, 4096)
+	excerpt := safe
+	// Full-text references exist only during rejection capture. Its final
+	// allocation and compression discard the unretained request text.
+	if !builder.fullText {
+		excerpt = inputAuditExcerpt(safe, 4096)
+	}
 	truncated := excerpt != safe || redacted
 	builder.document.Truncated = builder.document.Truncated || truncated
 	builder.document.Messages = append(builder.document.Messages, model.InputAuditEvidenceMessage{Index: len(builder.document.Messages), Role: role, Kind: kind, Path: boundedAuditText(path, 256), CallID: boundedAuditText(callID, 128), Name: boundedAuditText(name, 128), Text: excerpt, OriginalChars: chars, OriginalHash: hex.EncodeToString(digest[:]), Truncated: truncated})

@@ -526,7 +526,7 @@ func (p *Plan) runInstance(ctx context.Context, call Call, instance *request_plu
 		if recorder := service.CurrentInputAuditRecorder(); recorder != nil && p.requestID != "" && p.userID > 0 {
 			recorder.CaptureMatch(model.InputAuditMatch{RequestId: p.requestID, UserId: p.userID,
 				Instance: instance.ID, Name: instance.Name, Plugin: instance.Plugin, PluginVersion: plugin.Meta.Version,
-				Stage: call.Stage, Rule: result.RuleID, Model: call.Model}, result.Evidence)
+				Stage: call.Stage, Rule: result.RuleID, Model: call.Model}, result.Evidence, body)
 		}
 		next.reject = &result
 		return next, "", nil

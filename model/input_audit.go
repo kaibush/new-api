@@ -45,10 +45,13 @@ type InputAuditSettings struct {
 	EvidenceMaxRecords int   `json:"evidence_max_records"`
 	EvidenceMaxBytes   int64 `json:"evidence_max_bytes"`
 	CaseRetentionDays  int   `json:"case_retention_days"`
+	MatchMaxChars      int   `json:"match_max_chars"`
+	MatchMaxRecords    int   `json:"match_max_records"`
+	MatchMaxBytes      int64 `json:"match_max_bytes"`
 }
 
 func DefaultInputAuditSettings() InputAuditSettings {
-	return InputAuditSettings{RetentionDays: 7, MaxRecords: 20000, MaxChars: 2048, EvidenceEnabled: true, EvidenceMaxChars: 32768, EvidenceMaxRecords: 20000, EvidenceMaxBytes: 64 << 20, CaseRetentionDays: 30}
+	return InputAuditSettings{RetentionDays: 7, MaxRecords: 20000, MaxChars: 2048, EvidenceEnabled: true, EvidenceMaxChars: 32768, EvidenceMaxRecords: 20000, EvidenceMaxBytes: 64 << 20, CaseRetentionDays: 30, MatchMaxChars: 131072, MatchMaxRecords: 2000, MatchMaxBytes: 64 << 20}
 }
 
 func (s InputAuditSettings) Validate() error {
@@ -57,6 +60,9 @@ func (s InputAuditSettings) Validate() error {
 	}
 	if s.EvidenceMaxChars < 1024 || s.EvidenceMaxChars > 262144 || s.EvidenceMaxRecords < 100 || s.EvidenceMaxRecords > 1000000 || s.EvidenceMaxBytes < 8<<20 || s.EvidenceMaxBytes > 512<<20 || s.CaseRetentionDays < 1 || s.CaseRetentionDays > 90 {
 		return errors.New("invalid evidence retention limits")
+	}
+	if s.MatchMaxChars < 1024 || s.MatchMaxChars > 1048576 || s.MatchMaxRecords < 100 || s.MatchMaxRecords > 1000000 || s.MatchMaxBytes < 8<<20 || s.MatchMaxBytes > 512<<20 {
+		return errors.New("invalid interception retention limits")
 	}
 	return nil
 }

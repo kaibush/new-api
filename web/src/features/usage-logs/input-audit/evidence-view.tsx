@@ -110,6 +110,12 @@ export function InputAuditEvidenceView(props: {
         {table.getRowModel().rows.map((row) => {
           const message = row.original
           const index = message.index ?? row.index
+          let retentionLabel = t('Complete submitted text')
+          if (!message.text) {
+            retentionLabel = t('Text omitted by request budget')
+          } else if (message.truncated) {
+            retentionLabel = t('Excerpt retained')
+          }
           return (
             <AccordionItem
               key={message.index ?? index}
@@ -127,9 +133,7 @@ export function InputAuditEvidenceView(props: {
                   <p className='text-muted-foreground text-xs'>
                     {t('Original length')}:{' '}
                     {formatNumber(message.original_chars, locale)} ·{' '}
-                    {message.truncated
-                      ? t('Excerpt retained')
-                      : t('Complete submitted text')}
+                    {retentionLabel}
                   </p>
                 )}
                 {message.original_hash && (

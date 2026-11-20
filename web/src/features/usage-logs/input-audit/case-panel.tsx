@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { z } from 'zod'
@@ -79,6 +79,7 @@ export function InputAuditCasePanel(props: {
   caseID?: number
 }) {
   const { t } = useTranslation()
+  const formId = useId()
   const user = useAuthStore((state) => state.auth.user)
   const queryClient = useQueryClient()
   const existing = useQuery({
@@ -133,11 +134,11 @@ export function InputAuditCasePanel(props: {
     >
       <FieldGroup>
         <Field>
-          <FieldLabel htmlFor='audit-case-create-reason'>
+          <FieldLabel htmlFor={`${formId}-create-reason`}>
             {t('Review reason')}
           </FieldLabel>
           <Textarea
-            id='audit-case-create-reason'
+            id={`${formId}-create-reason`}
             maxLength={500}
             disabled={create.isPending}
             {...creation.register('reason')}
@@ -156,6 +157,7 @@ export function InputAuditCasePanel(props: {
 
 function InputAuditCaseReview(props: { caseID: number }) {
   const { t } = useTranslation()
+  const formId = useId()
   const labels = useInputAuditCaseLabels()
   const userID = useAuthStore((state) => state.auth.user?.id)
   const queryClient = useQueryClient()
@@ -266,11 +268,11 @@ function InputAuditCaseReview(props: { caseID: number }) {
           >
             <FieldGroup className='grid gap-4 sm:grid-cols-2'>
               <Field>
-                <FieldLabel htmlFor='audit-case-status'>
+                <FieldLabel htmlFor={`${formId}-status`}>
                   {t('Decision')}
                 </FieldLabel>
                 <NativeSelect
-                  id='audit-case-status'
+                  id={`${formId}-status`}
                   disabled={mutation.isPending}
                   {...form.register('status')}
                 >
@@ -289,11 +291,11 @@ function InputAuditCaseReview(props: { caseID: number }) {
                 </NativeSelect>
               </Field>
               <Field>
-                <FieldLabel htmlFor='audit-case-category'>
+                <FieldLabel htmlFor={`${formId}-category`}>
                   {t('Category')}
                 </FieldLabel>
                 <NativeSelect
-                  id='audit-case-category'
+                  id={`${formId}-category`}
                   disabled={mutation.isPending}
                   {...form.register('category')}
                 >
@@ -305,11 +307,11 @@ function InputAuditCaseReview(props: { caseID: number }) {
                 </NativeSelect>
               </Field>
               <Field className='sm:col-span-2'>
-                <FieldLabel htmlFor='audit-case-reason'>
+                <FieldLabel htmlFor={`${formId}-reason`}>
                   {t('Review reason')}
                 </FieldLabel>
                 <Textarea
-                  id='audit-case-reason'
+                  id={`${formId}-reason`}
                   maxLength={2000}
                   disabled={mutation.isPending}
                   {...form.register('reason')}
@@ -319,11 +321,11 @@ function InputAuditCaseReview(props: { caseID: number }) {
                 )}
               </Field>
               <Field>
-                <FieldLabel htmlFor='audit-case-message'>
+                <FieldLabel htmlFor={`${formId}-message`}>
                   {t('Evidence message')}
                 </FieldLabel>
                 <NativeSelect
-                  id='audit-case-message'
+                  id={`${formId}-message`}
                   disabled={mutation.isPending}
                   {...form.register('message_index', { valueAsNumber: true })}
                 >
@@ -338,11 +340,11 @@ function InputAuditCaseReview(props: { caseID: number }) {
                 </NativeSelect>
               </Field>
               <Field className='sm:col-span-2'>
-                <FieldLabel htmlFor='audit-case-quote'>
+                <FieldLabel htmlFor={`${formId}-quote`}>
                   {t('Exact evidence quote')}
                 </FieldLabel>
                 <Textarea
-                  id='audit-case-quote'
+                  id={`${formId}-quote`}
                   maxLength={4096}
                   disabled={mutation.isPending}
                   {...form.register('quote')}

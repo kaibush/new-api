@@ -58,7 +58,7 @@ func GetInputAuditMatches(c *gin.Context) {
 		return
 	}
 	rows := []model.InputAuditMatch{}
-	if err := q.Omit("evidence", "search_text").Order("id DESC").Offset(page.GetStartIdx()).Limit(page.PageSize).Find(&rows).Error; err != nil {
+	if err := q.Omit("evidence", "search_text", "request_body").Order("id DESC").Offset(page.GetStartIdx()).Limit(page.PageSize).Find(&rows).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -90,7 +90,16 @@ func GetInputAuditMatch(c *gin.Context) {
 		}
 	}
 	recordManageAudit(c, "input_audit.match_view", map[string]any{"match_id": id, "user_id": row.UserId})
-	c.JSON(200, gin.H{"success": true, "data": gin.H{"record": row, "evidence": evidence}})
+	document, decodeErr := model.DecodeInputAuditMatchRequest(row.RequestBody)
+	state := row.RequestState
+	if state == "" {
+		state = "not_captured"
+	}
+	if decodeErr != nil {
+		state = "capture_failed"
+	}
+	complete := document != nil && !document.Truncated && !document.ContextMissing && len(document.Omitted) == 0
+	c.JSON(200, gin.H{"success": true, "data": gin.H{"record": row, "evidence": evidence, "request_context": gin.H{"available": document != nil, "complete": complete, "reason": state, "document": document}}})
 }
 
 func DecideInputAuditMatch(c *gin.Context) {

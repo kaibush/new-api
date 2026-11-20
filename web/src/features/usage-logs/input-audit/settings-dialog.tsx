@@ -52,6 +52,13 @@ const schema = z.object({
     .min(8 * 1024 * 1024)
     .max(512 * 1024 * 1024),
   case_retention_days: z.number().int().min(1).max(90),
+  match_max_chars: z.number().int().min(1024).max(1048576),
+  match_max_records: z.number().int().min(100).max(1000000),
+  match_max_bytes: z
+    .number()
+    .int()
+    .min(8 * 1024 * 1024)
+    .max(512 * 1024 * 1024),
 })
 
 export function InputAuditSettingsDialog(props: {
@@ -69,6 +76,9 @@ export function InputAuditSettingsDialog(props: {
       evidence_max_records: 20000,
       evidence_max_bytes: 64 * 1024 * 1024,
       case_retention_days: 30,
+      match_max_chars: 131072,
+      match_max_records: 2000,
+      match_max_bytes: 64 * 1024 * 1024,
       ...props.settings,
     },
   })
@@ -86,6 +96,24 @@ export function InputAuditSettingsDialog(props: {
       label: t('Days to Retain'),
       min: 1,
       max: 90,
+    },
+    {
+      name: 'match_max_chars' as const,
+      label: t('Interception characters per request'),
+      min: 1024,
+      max: 1048576,
+    },
+    {
+      name: 'match_max_records' as const,
+      label: t('Maximum interception records'),
+      min: 100,
+      max: 1000000,
+    },
+    {
+      name: 'match_max_bytes' as const,
+      label: t('Interception storage limit (bytes)'),
+      min: 8 * 1024 * 1024,
+      max: 512 * 1024 * 1024,
     },
     {
       name: 'max_records' as const,
@@ -137,6 +165,9 @@ export function InputAuditSettingsDialog(props: {
             evidence_max_records: 20000,
             evidence_max_bytes: 64 * 1024 * 1024,
             case_retention_days: 30,
+            match_max_chars: 131072,
+            match_max_records: 2000,
+            match_max_bytes: 64 * 1024 * 1024,
             ...props.settings,
           })
         }
@@ -151,90 +182,115 @@ export function InputAuditSettingsDialog(props: {
         onSubmit={form.handleSubmit((values) => mutation.mutate(values))}
       >
         <Tabs defaultValue='collection'>
-          <TabsList className='mb-4 grid w-full grid-cols-2'>
+          <TabsList className='mb-4 grid w-full grid-cols-3'>
             <TabsTrigger value='collection'>
               {t('Collect user messages')}
             </TabsTrigger>
             <TabsTrigger value='evidence'>
               {t('Evidence and review')}
             </TabsTrigger>
+            <TabsTrigger value='interception'>
+              {t('Interception evidence')}
+            </TabsTrigger>
           </TabsList>
-          {(['collection', 'evidence'] as const).map((group) => (
-            <TabsContent key={group} value={group}>
-              {group === 'collection' ? (
-                <>
-                  {' '}
-                  <SettingsSwitchField
-                    controlId='input-audit-enabled'
-                    checked={form.watch('enabled')}
-                    onCheckedChange={(value) => form.setValue('enabled', value)}
-                    label={t('Collect user messages')}
-                    disabled={mutation.isPending}
-                  />
-                </>
-              ) : (
-                <>
-                  {' '}
-                  <SettingsSwitchField
-                    controlId='input-audit-evidence-enabled'
-                    checked={form.watch('evidence_enabled')}
-                    onCheckedChange={(value) =>
-                      form.setValue('evidence_enabled', value)
-                    }
-                    label={t('Retain submitted text evidence')}
-                    disabled={mutation.isPending}
-                  />
-                  <p className='text-muted-foreground text-xs'>
-                    {t(
-                      'Also captures the decisive filter match: up to 300 characters on each side and 256 matched characters. Interception records use the same retention period and a separate budget capped by the evidence limits.'
-                    )}
-                  </p>
-                  <p className='text-muted-foreground text-xs'>
-                    {t(
-                      'Cases keep immutable evidence for their retention period, up to 1000 cases and 256 MiB including decision history.'
-                    )}
-                  </p>
-                </>
-              )}
-              <FieldGroup className='mt-4 grid gap-4 sm:grid-cols-2'>
-                {fields
-                  .filter((_, index) =>
-                    group === 'collection' ? index < 3 : index >= 3
-                  )
-                  .map((field) => (
-                    <Field
-                      key={field.name}
-                      data-invalid={!!form.formState.errors[field.name]}
-                    >
-                      <FieldLabel htmlFor={`input-audit-${field.name}`}>
-                        {field.label}
-                      </FieldLabel>
-                      <Input
-                        id={`input-audit-${field.name}`}
-                        type='number'
-                        min={field.min}
-                        max={field.max}
-                        step={1}
-                        disabled={mutation.isPending}
-                        aria-invalid={!!form.formState.errors[field.name]}
-                        {...form.register(field.name, { valueAsNumber: true })}
-                      />
-                      {form.formState.errors[field.name] && (
-                        <FieldError>
-                          {t(
-                            'Please enter an integer between {{min}} and {{max}}',
-                            {
-                              min: field.min,
-                              max: field.max,
-                            }
-                          )}
-                        </FieldError>
+          {(['collection', 'evidence', 'interception'] as const).map(
+            (group) => (
+              <TabsContent key={group} value={group}>
+                {group === 'collection' && (
+                  <>
+                    {' '}
+                    <SettingsSwitchField
+                      controlId='input-audit-enabled'
+                      checked={form.watch('enabled')}
+                      onCheckedChange={(value) =>
+                        form.setValue('enabled', value)
+                      }
+                      label={t('Collect user messages')}
+                      disabled={mutation.isPending}
+                    />
+                  </>
+                )}
+                {group === 'evidence' && (
+                  <>
+                    {' '}
+                    <SettingsSwitchField
+                      controlId='input-audit-evidence-enabled'
+                      checked={form.watch('evidence_enabled')}
+                      onCheckedChange={(value) =>
+                        form.setValue('evidence_enabled', value)
+                      }
+                      label={t('Retain submitted text evidence')}
+                      disabled={mutation.isPending}
+                    />
+                    <p className='text-muted-foreground text-xs'>
+                      {t(
+                        'Cases keep immutable evidence for their retention period, up to 1000 cases and 256 MiB including decision history.'
                       )}
-                    </Field>
-                  ))}
-              </FieldGroup>
-            </TabsContent>
-          ))}
+                    </p>
+                  </>
+                )}
+                {group === 'interception' && (
+                  <p className='text-muted-foreground text-sm'>
+                    {t(
+                      'Interception capture requires message and evidence collection to be enabled. The character limit applies to each rejected request. Record and storage limits are shared by all users, independently of ordinary evidence. The same retention days apply. Storage counts compressed context plus a 24 KiB reserve per record; database files and indexes use additional space.'
+                    )}
+                  </p>
+                )}
+                <FieldGroup className='mt-4 grid gap-4 sm:grid-cols-2'>
+                  {fields
+                    .filter((field) => {
+                      if (group === 'interception') {
+                        return field.name.startsWith('match_')
+                      }
+                      if (group === 'evidence') {
+                        return (
+                          field.name.startsWith('evidence_') ||
+                          field.name === 'case_retention_days'
+                        )
+                      }
+                      return (
+                        !field.name.startsWith('match_') &&
+                        !field.name.startsWith('evidence_') &&
+                        field.name !== 'case_retention_days'
+                      )
+                    })
+                    .map((field) => (
+                      <Field
+                        key={field.name}
+                        data-invalid={!!form.formState.errors[field.name]}
+                      >
+                        <FieldLabel htmlFor={`input-audit-${field.name}`}>
+                          {field.label}
+                        </FieldLabel>
+                        <Input
+                          id={`input-audit-${field.name}`}
+                          type='number'
+                          min={field.min}
+                          max={field.max}
+                          step={1}
+                          disabled={mutation.isPending}
+                          aria-invalid={!!form.formState.errors[field.name]}
+                          {...form.register(field.name, {
+                            valueAsNumber: true,
+                          })}
+                        />
+                        {form.formState.errors[field.name] && (
+                          <FieldError>
+                            {t(
+                              'Please enter an integer between {{min}} and {{max}}',
+                              {
+                                min: field.min,
+                                max: field.max,
+                              }
+                            )}
+                          </FieldError>
+                        )}
+                      </Field>
+                    ))}
+                </FieldGroup>
+              </TabsContent>
+            )
+          )}
         </Tabs>
         <p className='text-muted-foreground text-xs'>
           {t(

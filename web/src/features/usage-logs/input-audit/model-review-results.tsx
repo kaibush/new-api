@@ -66,6 +66,7 @@ export function ModelReviewResults(props: {
     p: 1,
     page_size: 20,
     status: props.status ?? '',
+    category: '',
     user_id: props.userID,
     job_id: props.jobID,
   })
@@ -77,6 +78,7 @@ export function ModelReviewResults(props: {
     job_id?: number
     user_id?: number
     status?: string
+    category?: string
   }>()
   const remove = useMutation({
     mutationFn: deleteModelReviewResults,
@@ -260,12 +262,13 @@ export function ModelReviewResults(props: {
           query.isError ? t('Failed to load audit records') : t('No records')
         }
         toolbar={
-          <div className='grid gap-2 sm:grid-cols-[1fr_1fr_auto_auto]'>
+          <div className='grid gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto_auto]'>
             <UserSelector
               value={filters.user_id}
               onChange={(id) => setFilters({ ...filters, p: 1, user_id: id })}
             />
             <NativeSelect
+              className='w-full'
               aria-label={t('Review result')}
               value={filters.status}
               onChange={(event) =>
@@ -280,6 +283,25 @@ export function ModelReviewResults(props: {
                   </NativeSelectOption>
                 )
               )}
+            </NativeSelect>
+            <NativeSelect
+              className='w-full'
+              aria-label={t('Category')}
+              value={filters.category}
+              onChange={(event) => {
+                const category = event.target.value
+                table.resetRowSelection()
+                setFilters((previous) => ({ ...previous, p: 1, category }))
+              }}
+            >
+              <NativeSelectOption value=''>
+                {t('All categories')}
+              </NativeSelectOption>
+              {Object.entries(categories).map(([value, label]) => (
+                <NativeSelectOption key={value} value={value}>
+                  {label}
+                </NativeSelectOption>
+              ))}
             </NativeSelect>
             <Button
               variant='outline'
@@ -299,6 +321,7 @@ export function ModelReviewResults(props: {
                   job_id: filters.job_id,
                   user_id: filters.user_id,
                   status: filters.status,
+                  category: filters.category,
                 })
               }
             >
@@ -316,7 +339,7 @@ export function ModelReviewResults(props: {
         desc={
           deletion?.all
             ? t(
-                'Delete all review results matching the selected task, user and status filters. This cannot be undone.'
+                'Delete all review results matching the selected filters. This cannot be undone.'
               )
             : t('Delete the selected review results. This cannot be undone.')
         }

@@ -79,6 +79,7 @@ export interface ModelReviewFilters {
   p: number
   page_size: number
   status: string
+  category?: string
   job_id?: number
   user_id?: number
 }
@@ -204,6 +205,7 @@ export async function deleteModelReviewResults(values: {
   job_id?: number
   user_id?: number
   status?: string
+  category?: string
 }) {
   const response = await api.delete<ApiResponse>(`${base}/results`, {
     data: values,

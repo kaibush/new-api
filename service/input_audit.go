@@ -32,6 +32,7 @@ type InputAuditRecorder struct {
 	matchQueue          chan model.InputAuditMatch
 	matchDropped        atomic.Uint64
 	matchFailures       atomic.Uint64
+	matchQueuedBytes    atomic.Int64
 	evidenceQueue       chan model.InputAuditEvidence
 	evidenceQueuedBytes atomic.Int64
 	evidenceDropped     atomic.Uint64
@@ -480,6 +481,7 @@ func (r *InputAuditRecorder) Flush(ctx context.Context) {
 	for range 32 {
 		select {
 		case entry := <-r.matchQueue:
+			r.matchQueuedBytes.Add(-int64(len(entry.RequestBody)))
 			matches = append(matches, entry)
 		default:
 		}

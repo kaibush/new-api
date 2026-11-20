@@ -5,6 +5,8 @@ import { useTranslation } from 'react-i18next'
 import { z } from 'zod'
 
 import { CopyButton } from '@/components/copy-button'
+import { ErrorState } from '@/components/error-state'
+import { LoadingState } from '@/components/loading-state'
 import {
   Accordion,
   AccordionContent,
@@ -18,15 +20,18 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { UserIdentity } from '@/components/user-identity'
+import { toIntlLocale } from '@/i18n/languages'
 import dayjs from '@/lib/dayjs'
+import { formatNumber } from '@/lib/format'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { useInputAuditCaseLabels } from './case-labels'
+import { InputAuditEvidenceView } from './evidence-view'
 import { AuditFeatureSurface } from './feature-surface'
 import { decideMatch, getMatch, type MatchRecord } from './match-api'
 
 export function MatchDetail(props: { id: number; onClose: () => void }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const userID = useAuthStore((state) => state.auth.user?.id)
   const labels = useInputAuditCaseLabels().statuses
   const query = useQuery({
@@ -36,6 +41,8 @@ export function MatchDetail(props: { id: number; onClose: () => void }) {
   })
   const data = query.data
   const evidence = data?.evidence
+  const context = data?.request_context
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   return (
     <AuditFeatureSurface
       open
@@ -45,16 +52,16 @@ export function MatchDetail(props: { id: number; onClose: () => void }) {
       title={t('Match evidence')}
       contentClassName='sm:max-w-3xl'
     >
-      {query.isPending && <p role='status'>{t('Loading...')}</p>}
+      {query.isPending && (
+        <div role='status'>
+          <LoadingState />
+        </div>
+      )}
       {query.isError && (
-        <Alert variant='destructive'>
-          <AlertDescription>
-            {t('Audit evidence is unavailable or expired')}
-            <Button variant='outline' onClick={() => void query.refetch()}>
-              {t('Retry')}
-            </Button>
-          </AlertDescription>
-        </Alert>
+        <ErrorState
+          title={t('Audit evidence is unavailable or expired')}
+          onRetry={() => void query.refetch()}
+        />
       )}
       {data && (
         <>
@@ -68,6 +75,7 @@ export function MatchDetail(props: { id: number; onClose: () => void }) {
           <Tabs defaultValue='evidence'>
             <TabsList className='w-full'>
               <TabsTrigger value='evidence'>{t('Match evidence')}</TabsTrigger>
+              <TabsTrigger value='request'>{t('Request content')}</TabsTrigger>
               <TabsTrigger value='review'>{t('Human review')}</TabsTrigger>
             </TabsList>
             <TabsContent value='evidence' className='space-y-4 pt-3'>
@@ -174,7 +182,45 @@ export function MatchDetail(props: { id: number; onClose: () => void }) {
                 </AccordionItem>
               </Accordion>
             </TabsContent>
-            <TabsContent value='review' className='pt-3'>
+            <TabsContent value='request' className='space-y-4 pt-3' keepMounted>
+              <p className='text-muted-foreground text-sm'>
+                {t(
+                  'This is the request body at the rejection stage. Earlier plugins may have modified it. Headers and media are not retained.'
+                )}
+              </p>
+              {data.record.request_max_chars !== undefined && (
+                <p className='text-muted-foreground text-xs'>
+                  {t('Capture limit for this request: {{limit}} characters', {
+                    limit: formatNumber(data.record.request_max_chars, locale),
+                  })}
+                </p>
+              )}
+              {context?.available && context.document ? (
+                <InputAuditEvidenceView
+                  document={context.document}
+                  complete={context.complete}
+                />
+              ) : (
+                <Alert>
+                  <AlertDescription>
+                    {context?.reason === 'queue_dropped' &&
+                      t(
+                        'Request content was dropped because the capture queue was full. The match record is retained.'
+                      )}
+                    {context?.reason === 'capture_failed' &&
+                      t(
+                        'Request content could not be captured or read. The match record is retained.'
+                      )}
+                    {context?.reason !== 'queue_dropped' &&
+                      context?.reason !== 'capture_failed' &&
+                      t(
+                        'Request content was not retained. Historical interception records cannot be reconstructed.'
+                      )}
+                  </AlertDescription>
+                </Alert>
+              )}
+            </TabsContent>
+            <TabsContent value='review' className='pt-3' keepMounted>
               <MatchDecision key={data.record.version} record={data.record} />
             </TabsContent>
           </Tabs>

@@ -32,11 +32,31 @@ import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { InputAuditViewer } from '..'
-import type { ModelReviewSettings, ModelReviewJob } from '../model-review-api'
+import type {
+  ModelReviewSettings,
+  ModelReviewJob,
+  ModelReviewResult,
+} from '../model-review-api'
 import { ModelReviewDialog } from '../model-review-dialog'
+import { ModelReviewResults } from '../model-review-results'
 
 let client: QueryClient
 let jobs: ModelReviewJob[] = []
+const reviewResult: ModelReviewResult = {
+  id: 7,
+  job_id: 3,
+  audit_id: 1,
+  user_id: 4,
+  created_at: 1700000000,
+  status: 'review',
+  category: 'cyber_abuse',
+  confidence: 92,
+  reason: '<script>model suggestion</script>',
+  quote: 'original evidence',
+  model: 'review-model',
+  complete: false,
+  chunks: 2,
+}
 const settings: ModelReviewSettings = {
   enabled: true,
   automatic: false,
@@ -106,23 +126,7 @@ beforeEach(() => {
         data: {
           success: true,
           data: {
-            items: [
-              {
-                id: 7,
-                job_id: 3,
-                audit_id: 1,
-                user_id: 4,
-                created_at: 1700000000,
-                status: 'review',
-                category: 'cyber_abuse',
-                confidence: 92,
-                reason: '<script>model suggestion</script>',
-                quote: 'original evidence',
-                model: 'review-model',
-                complete: false,
-                chunks: 2,
-              },
-            ],
+            items: [reviewResult],
             total: 1,
           },
         },
@@ -255,6 +259,121 @@ it('user dashboard displays anomaly categories and clicking a user filters resul
   await waitFor(() =>
     expect(api.get).toHaveBeenCalledWith('/api/input-audit/model/results', {
       params: expect.objectContaining({ user_id: undefined, status: '' }),
+    })
+  )
+})
+
+it('changing category queries all result pages, preserves task and user filters and resets pagination and selection', async () => {
+  const previous = vi.mocked(api.get).getMockImplementation()
+  if (!previous) {
+    throw new Error('Missing API fixture')
+  }
+  vi.mocked(api.get).mockImplementation(async (url, config) => {
+    if (url === '/api/input-audit/model/results') {
+      return {
+        data: { success: true, data: { items: [reviewResult], total: 41 } },
+      }
+    }
+    return previous(url, config)
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <ModelReviewResults userID={4} jobID={3} status='review' />
+    </QueryClientProvider>
+  )
+  await screen.findByRole('button', { name: 'Details' })
+  const category = screen.getByRole('combobox', { name: 'Category' })
+  expect(category).toHaveValue('')
+  expect(
+    within(category).getByRole('option', { name: 'All categories' })
+  ).toBeVisible()
+  expect(category.closest('[data-slot="native-select-wrapper"]')).toHaveClass(
+    'w-full'
+  )
+  expect(category.closest('.grid')).toHaveClass(
+    'sm:grid-cols-2',
+    'lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto_auto]'
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Go to next page' }))
+  await waitFor(() =>
+    expect(api.get).toHaveBeenCalledWith('/api/input-audit/model/results', {
+      params: expect.objectContaining({
+        p: 2,
+        user_id: 4,
+        job_id: 3,
+        status: 'review',
+      }),
+    })
+  )
+  await userEvent.click(
+    await screen.findByRole('checkbox', { name: 'Select row' })
+  )
+  await userEvent.selectOptions(category, 'prompt_injection')
+  await waitFor(() =>
+    expect(api.get).toHaveBeenCalledWith('/api/input-audit/model/results', {
+      params: expect.objectContaining({
+        category: 'prompt_injection',
+        p: 1,
+        user_id: 4,
+        job_id: 3,
+        status: 'review',
+      }),
+    })
+  )
+  expect(
+    await screen.findByRole('checkbox', { name: 'Select row' })
+  ).not.toBeChecked()
+  await userEvent.selectOptions(category, '')
+  await waitFor(() =>
+    expect(api.get).toHaveBeenCalledWith('/api/input-audit/model/results', {
+      params: expect.objectContaining({
+        category: '',
+        p: 1,
+        user_id: 4,
+        job_id: 3,
+        status: 'review',
+      }),
+    })
+  )
+})
+
+it('clearing category-filtered results confirms and deletes only that category with the existing task and user filters', async () => {
+  const remove = vi
+    .spyOn(api, 'delete')
+    .mockResolvedValue({ data: { success: true } })
+  render(
+    <QueryClientProvider client={client}>
+      <ModelReviewResults userID={4} jobID={3} status='review' />
+    </QueryClientProvider>
+  )
+  await screen.findByRole('button', { name: 'Details' })
+  await userEvent.selectOptions(
+    screen.getByRole('combobox', { name: 'Category' }),
+    'cyber_abuse'
+  )
+  await waitFor(() =>
+    expect(api.get).toHaveBeenCalledWith('/api/input-audit/model/results', {
+      params: expect.objectContaining({ category: 'cyber_abuse' }),
+    })
+  )
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Clear filtered results' })
+  )
+  expect(remove).not.toHaveBeenCalled()
+  await userEvent.click(
+    within(screen.getByRole('alertdialog')).getByRole('button', {
+      name: 'Delete',
+    })
+  )
+  await waitFor(() =>
+    expect(remove).toHaveBeenCalledWith('/api/input-audit/model/results', {
+      data: {
+        all: true,
+        job_id: 3,
+        user_id: 4,
+        status: 'review',
+        category: 'cyber_abuse',
+      },
     })
   )
 })
@@ -615,7 +734,13 @@ it.each(['Delete', 'Delete selected', 'Clear filtered results'])(
       expect(remove).toHaveBeenCalledWith('/api/input-audit/model/results', {
         data:
           action === 'Clear filtered results'
-            ? { all: true, job_id: undefined, user_id: undefined, status: '' }
+            ? {
+                all: true,
+                job_id: undefined,
+                user_id: undefined,
+                status: '',
+                category: '',
+              }
             : { ids: [7] },
       })
     )

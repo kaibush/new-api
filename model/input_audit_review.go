@@ -396,7 +396,11 @@ func DeleteInputAuditReviewJobs(db *gorm.DB, ids []int64) error {
 	})
 }
 
-func DeleteInputAuditReviewResults(db *gorm.DB, ids []int64, jobID int64, userID int, status string) error {
+func IsInputAuditReviewCategory(category string) bool {
+	return slices.Contains([]string{"fraud", "cyber_abuse", "sexual", "dangerous_materials", "self_harm", "prompt_injection", "other"}, category)
+}
+
+func DeleteInputAuditReviewResults(db *gorm.DB, ids []int64, jobID int64, userID int, status, category string) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		var guard Option
 		if err := lockForUpdate(tx).Where(&Option{Key: InputAuditReviewOption}).First(&guard).Error; err != nil {
@@ -429,6 +433,9 @@ func DeleteInputAuditReviewResults(db *gorm.DB, ids []int64, jobID int64, userID
 		}
 		if status != "" {
 			scope = scope.Where("status = ?", status)
+		}
+		if category != "" {
+			scope = scope.Where("category = ?", category)
 		}
 		var active int64
 		jobIDs := scope.Session(&gorm.Session{}).Select("job_id")

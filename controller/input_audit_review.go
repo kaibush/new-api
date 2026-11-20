@@ -161,6 +161,13 @@ func GetInputAuditReviewResults(c *gin.Context) {
 		}
 		q = q.Where("status = ?", status)
 	}
+	if category := c.Query("category"); category != "" {
+		if !model.IsInputAuditReviewCategory(category) {
+			c.JSON(400, gin.H{"success": false, "message": "Invalid audit filters"})
+			return
+		}
+		q = q.Where("category = ?", category)
+	}
 	page := common.GetPageQuery(c)
 	if page.Page < 1 || page.Page > 100000 || page.PageSize < 1 || page.PageSize > 100 {
 		c.JSON(400, gin.H{"success": false, "message": "Invalid pagination"})
@@ -423,22 +430,27 @@ func DeleteInputAuditReviewJobs(c *gin.Context) {
 
 func DeleteInputAuditReviewResults(c *gin.Context) {
 	var request struct {
-		IDs    []int64 `json:"ids"`
-		All    bool    `json:"all"`
-		JobID  int64   `json:"job_id"`
-		UserID int     `json:"user_id"`
-		Status string  `json:"status"`
+		IDs      []int64 `json:"ids"`
+		All      bool    `json:"all"`
+		JobID    int64   `json:"job_id"`
+		UserID   int     `json:"user_id"`
+		Status   string  `json:"status"`
+		Category string  `json:"category"`
 	}
 	if err := common.DecodeJson(http.MaxBytesReader(c.Writer, c.Request.Body, 4096), &request); err != nil || len(request.IDs) > 100 || (!request.All && len(request.IDs) == 0) || (request.All && len(request.IDs) > 0) || request.JobID < 0 || request.UserID < 0 || slices.ContainsFunc(request.IDs, func(id int64) bool { return id < 1 }) || (request.Status != "" && !slices.Contains([]string{"safe", "review", "insufficient_evidence", "failed"}, request.Status)) {
 		c.JSON(400, gin.H{"success": false, "message": "Invalid audit filters"})
 		return
 	}
+	if request.Category != "" && !model.IsInputAuditReviewCategory(request.Category) {
+		c.JSON(400, gin.H{"success": false, "message": "Invalid audit filters"})
+		return
+	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
-	if err := model.DeleteInputAuditReviewResults(model.DB.WithContext(ctx), request.IDs, request.JobID, request.UserID, request.Status); err != nil {
+	if err := model.DeleteInputAuditReviewResults(model.DB.WithContext(ctx), request.IDs, request.JobID, request.UserID, request.Status, request.Category); err != nil {
 		c.JSON(409, gin.H{"success": false, "message": err.Error()})
 		return
 	}
-	recordManageAudit(c, "input_audit.model_results_delete", map[string]any{"result_ids": request.IDs, "job_id": request.JobID, "user_id": request.UserID, "status": request.Status})
+	recordManageAudit(c, "input_audit.model_results_delete", map[string]any{"result_ids": request.IDs, "job_id": request.JobID, "user_id": request.UserID, "status": request.Status, "category": request.Category})
 	c.JSON(200, gin.H{"success": true})
 }

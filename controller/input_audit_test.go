@@ -3,11 +3,13 @@ package controller
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -1582,6 +1584,9 @@ func TestInputAuditDecisiveMatchCapture(t *testing.T) {
 }
 
 func TestInputAuditMatchDatabaseMatrix(t *testing.T) {
+	previousRedis := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() { common.RedisEnabled = previousRedis })
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
 		t.Run(dialect, func(t *testing.T) {
 			db := inputAuditTestDB(t, dialect)
@@ -1595,26 +1600,50 @@ func TestInputAuditMatchDatabaseMatrix(t *testing.T) {
 			// Start with representative released options/users, then add audit tables.
 			require.NoError(t, db.AutoMigrate(&model.Option{}, &inputAuditReleasedUser{}))
 			require.NoError(t, db.Create(&inputAuditReleasedUser{Username: "existing", Password: "fixture"}).Error)
+			require.NoError(t, db.AutoMigrate(&inputAuditLegacyMatch{}))
+			legacy := inputAuditLegacyMatch{RequestId: "legacy-match", UserId: 61, CreatedAt: time.Now().Unix(), Evidence: `{"match":"legacy quote"}`, Status: "dismissed", Version: 2}
+			require.NoError(t, db.Create(&legacy).Error)
 			for range 2 {
 				require.NoError(t, db.AutoMigrate(&model.InputAuditMatch{}, &model.InputAudit{}, &model.InputAuditEvidence{}, &model.InputAuditEvidenceTextRef{}, &model.InputAuditEvidenceText{}, &model.InputAuditCase{}, &model.InputAuditDecision{}))
 			}
 			assert.Error(t, db.Create(&inputAuditReleasedUser{Username: "existing", Password: "fixture"}).Error)
 			settings := model.DefaultInputAuditSettings()
 			settings.Enabled, settings.EvidenceEnabled = true, true
+			// Old persisted settings acquire interception defaults on upgrade.
+			require.NoError(t, db.Create(&model.Option{Key: model.InputAuditOptionKey, Value: `{"enabled":true,"retention_days":7,"max_records":20000,"max_chars":2048}`}).Error)
+			loaded, err := model.LoadInputAuditSettings(db)
+			require.NoError(t, err)
+			assert.Equal(t, settings.MatchMaxChars, loaded.MatchMaxChars)
 			require.NoError(t, model.SaveInputAuditSettings(db, settings))
 			recorder, err := service.NewInputAuditRecorder(db)
 			require.NoError(t, err)
 			evidence := &jsplugin.TransformMatchEvidence{Path: "/messages/0/content", Role: "system", Before: "禁止", Match: "色情", After: "内容 %_!", Method: "keyword", Representation: "original"}
+			// A deterministic text fixture exercises compressed blobs above MySQL
+			// TEXT's 64 KiB boundary, while remaining within the capture allowance.
+			var text strings.Builder
+			for i := range 2000 {
+				fmt.Fprintf(&text, "%x\n", sha256.Sum256([]byte(fmt.Sprintf("request context line %d", i))))
+			}
+			requestBody, err := common.Marshal(map[string]any{"messages": []any{map[string]any{"role": "user", "content": text.String()}}})
+			require.NoError(t, err)
 			for _, requestID := range []string{"request-one", "request-two"} {
-				recorder.CaptureMatch(model.InputAuditMatch{RequestId: requestID, UserId: 61, Rule: "色情"}, evidence)
+				recorder.CaptureMatch(model.InputAuditMatch{RequestId: requestID, UserId: 61, Rule: "色情"}, evidence, requestBody)
 			}
 			recorder.Flush(t.Context())
 			var rows []model.InputAuditMatch
-			require.NoError(t, db.Order("id").Find(&rows).Error)
+			require.NoError(t, db.Where("request_id <> ?", "legacy-match").Order("id").Find(&rows).Error)
 			require.Len(t, rows, 2)
 			assert.NotEqual(t, rows[0].RequestId, rows[1].RequestId)
 			assert.Contains(t, rows[0].SearchText, "色情")
 			assert.Contains(t, rows[0].Evidence, "禁止")
+			assert.Greater(t, len(rows[0].RequestBody), 65535)
+			document, err := model.DecodeInputAuditMatchRequest(rows[0].RequestBody)
+			require.NoError(t, err)
+			require.NotNil(t, document)
+			assert.False(t, document.Truncated)
+			assert.True(t, slices.ContainsFunc(document.Messages, func(message model.InputAuditEvidenceMessage) bool {
+				return message.Path == "/messages/0/content" && message.Text == text.String()
+			}))
 			require.NoError(t, model.DecideInputAuditMatch(db, rows[0].Id, 1, 1, "dismissed", "The system instruction forbids this content"))
 			assert.Error(t, model.DecideInputAuditMatch(db, rows[0].Id, 1, 2, "confirmed", "Stale decision"))
 			var decided model.InputAuditMatch
@@ -1622,9 +1651,12 @@ func TestInputAuditMatchDatabaseMatrix(t *testing.T) {
 			assert.Equal(t, "dismissed", decided.Status)
 			assert.EqualValues(t, 2, decided.Version)
 			// Search the private retained context, never the last-user preview.
-			oldDB := model.DB
-			model.DB = db
-			defer func() { model.DB = oldDB }()
+			require.NoError(t, db.AutoMigrate(&model.User{}, &model.AuditLog{}))
+			var operator model.User
+			require.NoError(t, db.Where("username = ?", "existing").First(&operator).Error)
+			oldDB, oldLogDB := model.DB, model.LOG_DB
+			model.DB, model.LOG_DB = db, db
+			defer func() { model.DB, model.LOG_DB = oldDB, oldLogDB }()
 			response := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(response)
 			c.Request = httptest.NewRequest("GET", "/?user_id=61&keyword="+url.QueryEscape("%_!"), nil)
@@ -1632,12 +1664,55 @@ func TestInputAuditMatchDatabaseMatrix(t *testing.T) {
 			require.Equal(t, 200, response.Code)
 			assert.Contains(t, response.Body.String(), `"total":2`)
 			assert.NotContains(t, response.Body.String(), "禁止")
+			assert.NotContains(t, response.Body.String(), text.String()[:64])
+			response = httptest.NewRecorder()
+			c, _ = gin.CreateTestContext(response)
+			c.Request = httptest.NewRequest("GET", "/", nil)
+			c.Params = gin.Params{{Key: "match_id", Value: fmt.Sprint(rows[0].Id)}}
+			c.Set("id", operator.Id)
+			c.Set("role", common.RoleRootUser)
+			GetInputAuditMatch(c)
+			assert.Equal(t, 200, response.Code)
+			assert.Contains(t, response.Body.String(), `"request_context":{"available":true`)
+			assert.Contains(t, response.Body.String(), text.String()[:64])
+			response = httptest.NewRecorder()
+			c, _ = gin.CreateTestContext(response)
+			c.Request = httptest.NewRequest("GET", "/", nil)
+			c.Params = gin.Params{{Key: "match_id", Value: fmt.Sprint(legacy.Id)}}
+			c.Set("id", operator.Id)
+			c.Set("role", common.RoleRootUser)
+			GetInputAuditMatch(c)
+			assert.Equal(t, 200, response.Code)
+			assert.Contains(t, response.Body.String(), `"available":false`)
+			assert.Contains(t, response.Body.String(), `"reason":"not_captured"`)
+			assert.Contains(t, response.Body.String(), "legacy quote")
 			// Restart migration preserves captured data and adjudication.
 			for range 2 {
 				require.NoError(t, db.AutoMigrate(&model.InputAuditMatch{}))
 			}
 			require.NoError(t, db.First(&decided, rows[0].Id).Error)
 			assert.Equal(t, "dismissed", decided.Status)
+			assert.Equal(t, rows[0].RequestBody, decided.RequestBody)
+			// A context's real compressed size participates in the separate cap.
+			settings.MatchMaxBytes = 8 << 20
+			settings.MatchMaxRecords = 100
+			require.NoError(t, recorder.UpdateSettings(t.Context(), settings))
+			for i := range 100 {
+				recorder.CaptureMatch(model.InputAuditMatch{RequestId: fmt.Sprintf("capacity-%d", i), UserId: 61}, evidence, requestBody)
+			}
+			for range 4 {
+				recorder.Flush(t.Context())
+			}
+			var retained []model.InputAuditMatch
+			require.NoError(t, db.Order("id DESC").Find(&retained).Error)
+			require.NotEmpty(t, retained)
+			assert.Less(t, len(retained), settings.MatchMaxRecords)
+			assert.Equal(t, "capacity-99", retained[0].RequestId)
+			var storedBytes int64
+			for _, row := range retained {
+				storedBytes += row.StoredBytes
+			}
+			assert.LessOrEqual(t, storedBytes, settings.MatchMaxBytes)
 			// Collection off discards new evidence, while retention still cleans up.
 			settings.EvidenceEnabled = false
 			require.NoError(t, recorder.UpdateSettings(t.Context(), settings))
@@ -1707,6 +1782,90 @@ func TestInputAuditMatchLiveIngressIsPrivateAndDryRunDoesNotPersist(t *testing.T
 	assert.Equal(t, "live-evidence-request", saved.RequestId)
 	assert.Contains(t, saved.Evidence, "禁止生成")
 	assert.Equal(t, 61, saved.UserId)
+	document, err := model.DecodeInputAuditMatchRequest(saved.RequestBody)
+	require.NoError(t, err)
+	require.NotNil(t, document)
+	assert.Equal(t, "rejection_stage_request", document.Source)
+	assert.False(t, document.Truncated)
+	var texts []string
+	for _, message := range document.Messages {
+		texts = append(texts, message.Text)
+	}
+	assert.Contains(t, texts, "hello")
+	assert.Contains(t, texts, "禁止生成色情内容")
+}
+
+// The released interception table had no request context or storage accounting.
+type inputAuditLegacyMatch struct {
+	Id        int64
+	RequestId string `gorm:"type:varchar(64);index"`
+	UserId    int    `gorm:"index"`
+	CreatedAt int64  `gorm:"index"`
+	Evidence  string `gorm:"type:text"`
+	Status    string `gorm:"type:varchar(32);index"`
+	Version   int64
+}
+
+func (inputAuditLegacyMatch) TableName() string { return "input_audit_matches" }
+
+func TestInputAuditMatchRequestBudgetAndMedia(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, wantRole, wantText string
+	}{
+		{"chat", `{"model":"test","messages":[{"role":"system","content":"policy"},{"role":"developer","content":"developer instruction"},{"role":"user","content":"audit instruction"}],"temperature":0}`, "developer", "developer instruction"},
+		{"responses tools", `{"instructions":"policy","input":[{"type":"function_call_output","call_id":"c1","output":"{\"result\":\"tool evidence\",\"image_url\":\"SECRET_MEDIA\"}"}]}`, "tool", "tool evidence"},
+		{"claude", `{"system":"policy","messages":[{"role":"assistant","content":[{"type":"tool_use","name":"execute","id":"c1","input":{"command":"run command"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"c1","content":"tool evidence"}]}]}`, "assistant", "run command"},
+		{"gemini", `{"systemInstruction":{"parts":[{"text":"policy"}]},"contents":[{"role":"user","parts":[{"functionResponse":{"name":"execute","response":{"output":"tool evidence"}},"inlineData":{"mimeType":"image/png","data":"SECRET_MEDIA"}}]}]}`, "tool", "tool evidence"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			document := service.ExtractInputAuditMatchRequest([]byte(tc.body), 131072)
+			var found bool
+			for _, message := range document.Messages {
+				if message.Role == tc.wantRole && message.Text == tc.wantText {
+					found = true
+				}
+				assert.NotContains(t, message.Text, "SECRET_MEDIA")
+			}
+			assert.True(t, found)
+			assert.False(t, document.Truncated)
+		})
+	}
+	t.Run("long tools cannot displace short historical instructions or latest content blocks", func(t *testing.T) {
+		request := map[string]any{"messages": []any{
+			map[string]any{"role": "system", "content": "system policy"},
+			map[string]any{"role": "user", "content": "historical audit instruction"},
+			map[string]any{"role": "tool", "tool_call_id": "c1", "content": "TOOL_HEAD " + strings.Repeat("中间", 100000) + " TOOL_TAIL"},
+			map[string]any{"role": "user", "content": []any{map[string]any{"type": "text", "text": "latest instruction first block"}, map[string]any{"type": "text", "text": "latest instruction second block"}, map[string]any{"type": "image_url", "image_url": "SECRET_MEDIA"}}},
+		}}
+		body, err := common.Marshal(request)
+		require.NoError(t, err)
+		document := service.ExtractInputAuditMatchRequest(body, 1024)
+		var texts []string
+		stored := 0
+		for _, message := range document.Messages {
+			texts = append(texts, message.Text)
+			stored += utf8.RuneCountInString(message.Text)
+			assert.NotEmpty(t, message.OriginalHash)
+		}
+		assert.Contains(t, texts, "historical audit instruction")
+		assert.Contains(t, texts, "latest instruction first block")
+		assert.Contains(t, texts, "latest instruction second block")
+		assert.Contains(t, texts, "system policy")
+		assert.LessOrEqual(t, stored, 1024)
+		assert.Contains(t, strings.Join(texts, "\n"), "TOOL_HEAD")
+		assert.Contains(t, strings.Join(texts, "\n"), "TOOL_TAIL")
+		assert.NotContains(t, strings.Join(texts, "\n"), "SECRET_MEDIA")
+		assert.True(t, document.Truncated)
+	})
+	t.Run("external context and embedded media are explicit gaps", func(t *testing.T) {
+		document := service.ExtractInputAuditMatchRequest([]byte(`{"previous_response_id":"old-response","input":"continue data:image/png;base64,SECRET_MEDIA"}`), 131072)
+		assert.True(t, document.ContextMissing)
+		assert.Contains(t, document.Omitted, "external_context")
+		assert.Contains(t, document.Omitted, "media_not_retained")
+		for _, message := range document.Messages {
+			assert.NotContains(t, message.Text, "SECRET_MEDIA")
+		}
+	})
 }
 
 func TestInputAuditModelReviewCredentialSettings(t *testing.T) {
@@ -1868,7 +2027,7 @@ func TestInputAuditQueueManagementAndDeletion(t *testing.T) {
 			result := model.InputAuditReviewResult{JobId: one.Id, AuditId: first.Id, UserId: 1, Status: "review", Category: "fraud"}
 			require.NoError(t, db.Create(&result).Error)
 			assert.Error(t, model.DeleteInputAuditReviewJobs(db, []int64{one.Id}))
-			assert.Error(t, model.DeleteInputAuditReviewResults(db, []int64{result.Id}, 0, 0, ""))
+			assert.Error(t, model.DeleteInputAuditReviewResults(db, []int64{result.Id}, 0, 0, "", ""))
 			assert.Error(t, model.DeleteInputAuditMessages(db, []int64{first.Id}, model.InputAuditFilter{}))
 			count, err := model.CancelInputAuditReviewQueue(db)
 			require.NoError(t, err)
@@ -1880,7 +2039,7 @@ func TestInputAuditQueueManagementAndDeletion(t *testing.T) {
 			assert.Error(t, model.DeleteInputAuditReviewJobs(db, []int64{one.Id}))
 			require.NoError(t, db.Model(&one).Update("lease_until", 0).Error)
 			require.NoError(t, model.DeleteInputAuditReviewJobs(db, []int64{two.Id}))
-			require.NoError(t, model.DeleteInputAuditReviewResults(db, []int64{result.Id}, 0, 0, ""))
+			require.NoError(t, model.DeleteInputAuditReviewResults(db, []int64{result.Id}, 0, 0, "", ""))
 			var stored model.InputAudit
 			require.NoError(t, db.First(&stored, first.Id).Error)
 			assert.NotZero(t, stored.ReviewAttemptedAt)
@@ -1891,7 +2050,7 @@ func TestInputAuditQueueManagementAndDeletion(t *testing.T) {
 			b := model.InputAuditReviewResult{JobId: 999, AuditId: second.Id, UserId: 2, Status: "review"}
 			require.NoError(t, db.Create(&a).Error)
 			require.NoError(t, db.Create(&b).Error)
-			require.NoError(t, model.DeleteInputAuditReviewResults(db, nil, 0, 1, ""))
+			require.NoError(t, model.DeleteInputAuditReviewResults(db, nil, 0, 1, "", ""))
 			require.NoError(t, db.First(&b, b.Id).Error)
 			// Literal wildcard filtering and evidence cleanup share list semantics.
 			require.NoError(t, model.DeleteInputAuditMessages(db, nil, model.InputAuditFilter{Keyword: "%_!", UserId: 1}))
@@ -1922,6 +2081,115 @@ func TestInputAuditQueueManagementAndDeletion(t *testing.T) {
 				router.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body)))
 				assert.Equal(t, 400, w.Code)
 			}
+		})
+	}
+}
+
+func TestInputAuditReviewCategoryQueryAndFilteredDeletion(t *testing.T) {
+	previousRedis := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() { common.RedisEnabled = previousRedis })
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := inputAuditTestDB(t, dialect)
+			require.NoError(t, db.Migrator().DropTable(&model.InputAuditReviewResult{}, &model.InputAuditReviewJob{}))
+			require.NoError(t, db.AutoMigrate(&model.Option{}, &model.InputAuditReviewJob{}, &model.InputAuditReviewResult{}, &model.User{}, &model.AuditLog{}))
+			require.NoError(t, model.SaveInputAuditReviewSettings(db, model.DefaultInputAuditReviewSettings()))
+			previousDB, previousLogDB := model.DB, model.LOG_DB
+			model.DB, model.LOG_DB = db, db
+			t.Cleanup(func() { model.DB, model.LOG_DB = previousDB, previousLogDB })
+			operator := model.User{Username: "category-review-root", Role: common.RoleRootUser, Status: common.UserStatusEnabled}
+			require.NoError(t, db.Create(&operator).Error)
+			jobs := []model.InputAuditReviewJob{{Status: "completed"}, {Status: "completed"}}
+			require.NoError(t, db.Create(&jobs).Error)
+			rows := []model.InputAuditReviewResult{
+				{JobId: jobs[0].Id, UserId: 27, Status: "review", Category: "prompt_injection"},
+				{JobId: jobs[0].Id, UserId: 27, Status: "review", Category: "prompt_injection"},
+				{JobId: jobs[0].Id, UserId: 27, Status: "review", Category: "cyber_abuse"},
+				{JobId: jobs[0].Id, UserId: 27, Status: "safe", Category: "prompt_injection"},
+				{JobId: jobs[0].Id, UserId: 28, Status: "review", Category: "prompt_injection"},
+				{JobId: jobs[1].Id, UserId: 27, Status: "review", Category: "prompt_injection"},
+				{JobId: jobs[1].Id, UserId: 28, Status: "review", Category: "fraud"},
+				{JobId: jobs[1].Id, UserId: 28, Status: "review", Category: "sexual"},
+				{JobId: jobs[1].Id, UserId: 28, Status: "review", Category: "dangerous_materials"},
+				{JobId: jobs[1].Id, UserId: 28, Status: "review", Category: "self_harm"},
+				{JobId: jobs[1].Id, UserId: 28, Status: "review", Category: "other"},
+			}
+			for i := range rows {
+				rows[i].AuditId = int64(i + 1)
+			}
+			require.NoError(t, db.Create(&rows).Error)
+			router := gin.New()
+			router.Use(func(c *gin.Context) {
+				c.Set("id", operator.Id)
+				c.Set("role", operator.Role)
+				c.Set("username", operator.Username)
+			})
+			router.GET("/results", GetInputAuditReviewResults)
+			router.DELETE("/results", DeleteInputAuditReviewResults)
+			for _, tc := range []struct {
+				query string
+				total int64
+				ids   []int64
+			}{
+				{"category=prompt_injection&p=1&page_size=2", 5, []int64{rows[5].Id, rows[4].Id}},
+				{"category=prompt_injection&p=2&page_size=2", 5, []int64{rows[3].Id, rows[1].Id}},
+				{fmt.Sprintf("category=prompt_injection&job_id=%d&user_id=27&status=review&p=2&page_size=1", jobs[0].Id), 2, []int64{rows[0].Id}},
+				{"category=cyber_abuse", 1, []int64{rows[2].Id}},
+				{"category=fraud", 1, []int64{rows[6].Id}},
+				{"category=sexual", 1, []int64{rows[7].Id}},
+				{"category=dangerous_materials", 1, []int64{rows[8].Id}},
+				{"category=self_harm", 1, []int64{rows[9].Id}},
+				{"category=other", 1, []int64{rows[10].Id}},
+				{"category=&page_size=1", 11, []int64{rows[10].Id}},
+				{"category=prompt_injection&status=failed", 0, []int64{}},
+			} {
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/results?"+tc.query, nil))
+				require.Equal(t, http.StatusOK, w.Code, tc.query)
+				var response struct {
+					Success bool
+					Data    struct {
+						Items []model.InputAuditReviewResult
+						Total int64
+					}
+				}
+				require.NoError(t, common.Unmarshal(w.Body.Bytes(), &response))
+				assert.True(t, response.Success)
+				assert.Equal(t, tc.total, response.Data.Total, tc.query)
+				ids := make([]int64, 0, len(response.Data.Items))
+				for _, row := range response.Data.Items {
+					ids = append(ids, row.Id)
+				}
+				assert.Equal(t, tc.ids, ids, tc.query)
+			}
+			for _, category := range []string{"unknown", "%"} {
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/results?category="+url.QueryEscape(category), nil))
+				assert.Equal(t, http.StatusBadRequest, w.Code)
+				body, err := common.Marshal(map[string]any{"all": true, "category": category})
+				require.NoError(t, err)
+				w = httptest.NewRecorder()
+				router.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/results", bytes.NewReader(body)))
+				assert.Equal(t, http.StatusBadRequest, w.Code)
+			}
+			var count int64
+			require.NoError(t, db.Model(&model.InputAuditReviewResult{}).Count(&count).Error)
+			assert.Equal(t, int64(11), count)
+			body, err := common.Marshal(map[string]any{"all": true, "job_id": jobs[0].Id, "user_id": 27, "status": "review", "category": "prompt_injection"})
+			require.NoError(t, err)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/results", bytes.NewReader(body)))
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			var remaining []model.InputAuditReviewResult
+			require.NoError(t, db.Order("id ASC").Find(&remaining).Error)
+			assert.Equal(t, rows[2:], remaining)
+			// Category-only cleanup keeps the other categories across all users/jobs.
+			w = httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/results", strings.NewReader(`{"all":true,"category":"prompt_injection"}`)))
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			require.NoError(t, db.Order("id ASC").Find(&remaining).Error)
+			assert.Equal(t, append([]model.InputAuditReviewResult{rows[2]}, rows[6:]...), remaining)
 		})
 	}
 }

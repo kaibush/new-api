@@ -53,6 +53,9 @@ export interface InputAuditSettings {
   evidence_max_records?: number
   evidence_max_bytes?: number
   case_retention_days?: number
+  match_max_chars?: number
+  match_max_records?: number
+  match_max_bytes?: number
 }
 
 export interface InputAuditStatus {
