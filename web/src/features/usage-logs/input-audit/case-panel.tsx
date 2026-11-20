@@ -251,11 +251,12 @@ function InputAuditCaseReview(props: { caseID: number }) {
             onSubmit={form.handleSubmit((values) => {
               if (
                 values.status === 'confirmed' &&
-                (!detail.complete || !values.quote.trim())
+                (!(detail.reviewable ?? detail.complete) ||
+                  !values.quote.trim())
               ) {
                 form.setError('quote', {
                   message: t(
-                    'Complete evidence and an exact quote are required'
+                    'Retained original text and an exact quote are required'
                   ),
                 })
                 return
@@ -277,7 +278,10 @@ function InputAuditCaseReview(props: { caseID: number }) {
                     <NativeSelectOption
                       key={value}
                       value={value}
-                      disabled={value === 'confirmed' && !detail.complete}
+                      disabled={
+                        value === 'confirmed' &&
+                        !(detail.reviewable ?? detail.complete)
+                      }
                     >
                       {label}
                     </NativeSelectOption>
@@ -366,8 +370,9 @@ function InputAuditCaseReview(props: { caseID: number }) {
                   disabled={mutation.isPending || query.isFetching}
                   onClick={async () => {
                     const refreshed = await query.refetch()
-                    if (!refreshed.isError)
-                      {setVersion(refreshed.data?.case.version)}
+                    if (!refreshed.isError) {
+                      setVersion(refreshed.data?.case.version)
+                    }
                   }}
                 >
                   {t('Refresh case version')}

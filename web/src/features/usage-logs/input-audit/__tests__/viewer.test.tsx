@@ -34,6 +34,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import { InputAuditViewer } from '..'
 import { AuditLogs } from '../../audit'
 import type { InputAuditAllowlist } from '../api'
+import { InputAuditDetailsDialog } from '../details-dialog'
 
 const settings = {
   enabled: false,
@@ -204,6 +205,112 @@ it('root opens message audits on demand and sees safe text, first receive time a
   await waitFor(() =>
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   )
+})
+
+it('a prompt lookup searches its exact version across users and can return to the user timeline', async () => {
+  const promptHash = 'a'.repeat(64)
+  vi.mocked(api.get).mockImplementation(async (url) => {
+    if (url === '/api/input-audit/1/evidence') {
+      return {
+        data: {
+          success: true,
+          data: {
+            available: true,
+            complete: true,
+            document: {
+              version: 2,
+              source: 'client_request',
+              scope: 'submitted_text_excerpts',
+              messages: [
+                {
+                  index: 0,
+                  role: 'system',
+                  kind: 'message',
+                  text: 'Shared policy',
+                  original_hash: promptHash,
+                },
+              ],
+              truncated: false,
+              context_missing: false,
+              omitted: [],
+            },
+          },
+        },
+      }
+    }
+    return { data: { success: true, data: { items: [], total: 0 } } }
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <InputAuditDetailsDialog entry={entry} />
+    </QueryClientProvider>
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Details' }))
+  const dialog = screen.getByRole('dialog', { name: 'Input Audits' })
+  await waitFor(() =>
+    expect(api.get).toHaveBeenCalledWith('/api/input-audit', {
+      params: { p: 1, page_size: 10, user_id: 4 },
+    })
+  )
+  await userEvent.click(
+    within(dialog).getByRole('tab', { name: 'Evidence message' })
+  )
+  await userEvent.click(
+    await within(dialog).findByRole('button', {
+      name: 'Requests using this prompt',
+    })
+  )
+  await waitFor(() =>
+    expect(api.get).toHaveBeenCalledWith('/api/input-audit', {
+      params: { p: 1, page_size: 10, prompt_hash: promptHash },
+    })
+  )
+  expect(
+    within(dialog).getByText(
+      'Related requests do not prove they belong to the same conversation.'
+    )
+  ).toBeVisible()
+  await userEvent.click(
+    within(dialog).getByRole('button', {
+      name: 'Recent requests from this user',
+    })
+  )
+  expect(
+    within(dialog).getByRole('heading', {
+      name: 'Recent requests from this user',
+    })
+  ).toBeVisible()
+})
+
+it('an evicted evidence record displays its retention reason', async () => {
+  vi.mocked(api.get).mockImplementation(async (url) => {
+    if (url === '/api/input-audit/1/evidence') {
+      return {
+        data: {
+          success: true,
+          data: {
+            available: false,
+            complete: false,
+            reason: 'capacity_evicted',
+          },
+        },
+      }
+    }
+    return { data: { success: true, data: { items: [], total: 0 } } }
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <InputAuditDetailsDialog entry={entry} />
+    </QueryClientProvider>
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Details' }))
+  const dialog = screen.getByRole('dialog', { name: 'Input Audits' })
+  await userEvent.click(
+    within(dialog).getByRole('tab', { name: 'Evidence message' })
+  )
+  expect(
+    await within(dialog).findByText('Evidence was removed by storage limits')
+  ).toBeVisible()
 })
 
 it('selecting a user by name sends its ID and reset clears the selection', async () => {

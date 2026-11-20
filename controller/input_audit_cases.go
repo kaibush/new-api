@@ -40,15 +40,15 @@ func GetInputAuditEvidence(c *gin.Context) {
 	var evidence model.InputAuditEvidence
 	err = model.DB.WithContext(ctx).Where("request_id = ? AND user_id = ? AND content_hash = ? AND created_at >= ?", audit.RequestId, audit.UserId, audit.ContentHash, time.Now().Unix()-int64(settings.RetentionDays)*86400).First(&evidence).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) || audit.RequestId == "" {
-		c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"available": false, "complete": false}})
+		c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"available": false, "complete": false, "reason": audit.EvidenceState}})
 		return
 	}
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	var document model.InputAuditEvidenceDocument
-	if err := common.UnmarshalJsonStr(evidence.Body, &document); err != nil {
+	document, err := model.ReadInputAuditEvidence(model.DB.WithContext(ctx), evidence)
+	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -126,7 +126,7 @@ func GetInputAuditCase(c *gin.Context) {
 		}
 		history = append(history, gin.H{"id": decision.Id, "created_at": decision.CreatedAt, "created_by": decision.CreatedBy, "version": decision.Version, "status": decision.Status, "category": decision.Category, "reason": decision.Reason, "references": references})
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"case": review, "snapshot": snapshot, "complete": snapshot.Document.Complete(), "decisions": history}})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"case": review, "snapshot": snapshot, "complete": snapshot.Document.Complete(), "reviewable": snapshot.Document.Reviewable(), "decisions": history}})
 }
 
 func CreateInputAuditCase(c *gin.Context) {

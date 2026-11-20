@@ -21,7 +21,7 @@ func GetInputAudits(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid audit filters"})
 		return
 	}
-	filter := model.InputAuditFilter{RequestId: c.Query("request_id"), Keyword: strings.TrimSpace(keyword)}
+	filter := model.InputAuditFilter{RequestId: c.Query("request_id"), Keyword: strings.TrimSpace(keyword), PromptHash: c.Query("prompt_hash")}
 	values := []struct {
 		key    string
 		target *int64
@@ -47,7 +47,7 @@ func GetInputAudits(c *gin.Context) {
 		}
 		filter.UserId = id
 	}
-	if len(filter.RequestId) > 64 || (filter.Start > 0 && filter.End > 0 && filter.End < filter.Start) {
+	if (filter.PromptHash != "" && (len(filter.PromptHash) != 64 || strings.ContainsAny(filter.PromptHash, "%_"))) || len(filter.RequestId) > 64 || (filter.Start > 0 && filter.End > 0 && filter.End < filter.Start) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid audit filters"})
 		return
 	}

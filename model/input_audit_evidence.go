@@ -11,27 +11,45 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/request_plugin_setting"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 	gormlogger "gorm.io/gorm/logger"
 )
 
 type InputAuditEvidenceMessage struct {
-	Index int    `json:"index"`
-	Role  string `json:"role"`
-	Text  string `json:"text"`
+	Index         int    `json:"index"`
+	Role          string `json:"role"`
+	Text          string `json:"text"`
+	Kind          string `json:"kind,omitempty"`
+	Path          string `json:"path,omitempty"`
+	CallID        string `json:"call_id,omitempty"`
+	Name          string `json:"name,omitempty"`
+	OriginalChars int    `json:"original_chars,omitempty"`
+	OriginalHash  string `json:"original_hash,omitempty"`
+	Truncated     bool   `json:"truncated,omitempty"`
+	TextHash      string `json:"text_hash,omitempty"`
 }
 
 type InputAuditEvidenceDocument struct {
-	Source         string                      `json:"source"`
-	Scope          string                      `json:"scope"`
-	Messages       []InputAuditEvidenceMessage `json:"messages"`
-	Truncated      bool                        `json:"truncated"`
-	ContextMissing bool                        `json:"context_missing"`
-	Omitted        []string                    `json:"omitted"`
+	Version            int                         `json:"version,omitempty"`
+	PreviousResponseID string                      `json:"previous_response_id,omitempty"`
+	Source             string                      `json:"source"`
+	Scope              string                      `json:"scope"`
+	Messages           []InputAuditEvidenceMessage `json:"messages"`
+	Truncated          bool                        `json:"truncated"`
+	ContextMissing     bool                        `json:"context_missing"`
+	Omitted            []string                    `json:"omitted"`
 }
 
 func (document InputAuditEvidenceDocument) Complete() bool {
 	return document.Source == "client_request" && !document.Truncated && !document.ContextMissing && len(document.Omitted) == 0 && len(document.Messages) > 0
+}
+
+// Reviewable reports whether retained original excerpts can be cited by a
+// human. It deliberately does not imply complete context or an automated verdict.
+func (document InputAuditEvidenceDocument) Reviewable() bool {
+	if document.Complete() {
+		return true
+	}
+	return document.Version >= 2 && document.Source == "client_request" && slices.ContainsFunc(document.Messages, func(message InputAuditEvidenceMessage) bool { return message.Text != "" && message.OriginalHash != "" })
 }
 
 type InputAuditEvidence struct {
@@ -97,54 +115,6 @@ type InputAuditDecision struct {
 	References string `json:"-"`
 }
 
-func PersistInputAuditEvidence(db *gorm.DB, rows []InputAuditEvidence, now int64) error {
-	return db.Session(&gorm.Session{Logger: gormlogger.Discard}).Transaction(func(tx *gorm.DB) error {
-		settings, err := LoadInputAuditSettings(lockForUpdate(tx))
-		if err != nil {
-			return err
-		}
-		if settings.Enabled && settings.EvidenceEnabled && len(rows) > 0 {
-			conflict := clause.OnConflict{DoNothing: true}
-			if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
-				conflict = clause.OnConflict{DoUpdates: clause.Set{{Column: clause.Column{Name: "content_hash"}, Value: clause.Column{Name: "content_hash"}}}}
-			}
-			if err := tx.Clauses(conflict).Create(&rows).Error; err != nil {
-				return err
-			}
-		}
-		if err := tx.Where("created_at < ?", now-int64(settings.RetentionDays)*86400).Delete(&InputAuditEvidence{}).Error; err != nil {
-			return err
-		}
-		var kept []InputAuditEvidence
-		if err := tx.Select("id", "body_bytes", "created_at").Order("created_at DESC").Order("id DESC").Find(&kept).Error; err != nil {
-			return err
-		}
-		var bytes int64
-		for i, row := range kept {
-			bytes += row.BodyBytes
-			if i >= settings.EvidenceMaxRecords || bytes > settings.EvidenceMaxBytes {
-				if err := tx.Where("created_at < ? OR (created_at = ? AND id <= ?)", row.CreatedAt, row.CreatedAt, row.Id).Delete(&InputAuditEvidence{}).Error; err != nil {
-					return err
-				}
-				break
-			}
-		}
-		var expired []int64
-		if err := tx.Model(&InputAuditCase{}).Where("expires_at <= ?", now).Pluck("id", &expired).Error; err != nil {
-			return err
-		}
-		if len(expired) > 0 {
-			if err := tx.Where("case_id IN ?", expired).Delete(&InputAuditDecision{}).Error; err != nil {
-				return err
-			}
-			if err := tx.Where("id IN ?", expired).Delete(&InputAuditCase{}).Error; err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
-
 func CreateInputAuditCase(db *gorm.DB, auditID int64, operator int, reason string) (InputAuditCase, error) {
 	var review InputAuditCase
 	if auditID < 1 || operator < 1 || !utf8.ValidString(reason) || strings.TrimSpace(reason) == "" || utf8.RuneCountInString(reason) > 500 || strings.ContainsRune(reason, '\x00') {
@@ -179,8 +149,10 @@ func CreateInputAuditCase(db *gorm.DB, auditID int64, operator int, reason strin
 		if audit.RequestId != "" {
 			err := tx.Where("request_id = ? AND user_id = ? AND content_hash = ? AND created_at >= ?", audit.RequestId, audit.UserId, audit.ContentHash, time.Now().Unix()-int64(settings.RetentionDays)*86400).First(&evidence).Error
 			if err == nil {
-				if err := common.UnmarshalJsonStr(evidence.Body, &snapshot.Document); err != nil {
-					return err
+				var readErr error
+				snapshot.Document, readErr = ReadInputAuditEvidence(tx, evidence)
+				if readErr != nil {
+					return readErr
 				}
 				if evidence.Policy != "" {
 					if err := common.UnmarshalJsonStr(evidence.Policy, &snapshot.Allowlist); err != nil {
@@ -232,8 +204,8 @@ func DecideInputAuditCase(db *gorm.DB, caseID, version int64, operator int, stat
 		if err := common.UnmarshalJsonStr(review.Snapshot, &snapshot); err != nil {
 			return err
 		}
-		if status == "confirmed" && (!snapshot.Document.Complete() || len(references) == 0) {
-			return errors.New("Complete submitted text evidence and an exact quote are required to confirm a violation")
+		if status == "confirmed" && (!snapshot.Document.Reviewable() || len(references) == 0) {
+			return errors.New("Retained original text and an exact quote are required")
 		}
 		for i := range references {
 			reference := &references[i]
@@ -245,7 +217,7 @@ func DecideInputAuditCase(db *gorm.DB, caseID, version int64, operator int, stat
 			}
 			text := snapshot.Document.Messages[reference.MessageIndex].Text
 			position := strings.Index(text, reference.Quote)
-			if position < 0 {
+			if position < 0 || strings.Contains(reference.Quote, "[… omitted …]") || strings.Contains(reference.Quote, "[media omitted]") {
 				return errors.New("The evidence quote does not exist in the original message")
 			}
 			reference.Start = utf8.RuneCountInString(text[:position])

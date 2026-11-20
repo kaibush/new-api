@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -144,18 +145,36 @@ func (r *InputAuditRecorder) Capture(c *gin.Context, request any) {
 	if userId <= 0 {
 		return
 	}
-	texts := inputAuditUserTexts(request)
-	if len(texts) == 0 {
-		return
-	}
-	hash, chars := inputAuditFingerprint(texts)
-	if chars == 0 {
-		return
-	}
 	if c.GetString(common.RequestIdKey) == "" {
 		c.Set(common.RequestIdKey, common.GetUUID())
 	}
-	r.captureEvidence(c, request, hash, settings)
+	document := ExtractInputAuditEvidence(request, settings.EvidenceMaxChars)
+	texts := inputAuditUserTexts(request)
+	for i := range texts {
+		texts[i], _ = inputAuditWithoutMedia(texts[i])
+	}
+	if len(texts) == 0 {
+		for i := len(document.Messages) - 1; i >= 0; i-- {
+			if document.Messages[i].Text != "" {
+				texts = []string{document.Messages[i].Text}
+				break
+			}
+		}
+	}
+	if len(texts) == 0 && len(document.Omitted) == 0 {
+		return
+	}
+	if len(texts) == 0 {
+		texts = []string{"[non-text content omitted]"}
+	}
+	inputHash, chars := inputAuditFingerprint(texts)
+	if chars == 0 {
+		return
+	}
+	// Every request has its own event, including identical latest user text.
+	// Keep the old unique index; content_hash now identifies a request event.
+	digest := sha256.Sum256([]byte(strconv.Itoa(userId) + ":" + c.GetString(common.RequestIdKey)))
+	hash := hex.EncodeToString(digest[:])
 	now := time.Now().Unix()
 	key := inputAuditKey{user: userId, hash: hash}
 	r.mu.Lock()
@@ -166,6 +185,11 @@ func (r *InputAuditRecorder) Capture(c *gin.Context, request any) {
 		return
 	}
 	entry := inputAuditPreview(texts, hash, chars, settings.MaxChars)
+	entry.InputHash = inputHash
+	entry.EvidenceState = "disabled"
+	if settings.EvidenceEnabled {
+		entry.EvidenceState = "pending"
+	}
 	entry.UserId = userId
 	entry.CreatedAt = now
 	entry.Username = boundedAuditText(common.GetContextKeyString(c, constant.ContextKeyUserName), 64)
@@ -174,6 +198,9 @@ func (r *InputAuditRecorder) Capture(c *gin.Context, request any) {
 	entry.RequestId = boundedAuditText(c.GetString(common.RequestIdKey), 64)
 	entry.Route = boundedAuditText(c.FullPath(), 255)
 	entry.Ip = boundedAuditText(c.ClientIP(), 64)
+	if settings.EvidenceEnabled {
+		entry.EvidenceState = r.captureEvidence(c, document, hash)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
@@ -463,20 +490,6 @@ func (r *InputAuditRecorder) Flush(ctx context.Context) {
 		common.SysError("input match evidence batch failed")
 	}
 
-	evidence := make([]model.InputAuditEvidence, 0, 32)
-	for range 32 {
-		select {
-		case entry := <-r.evidenceQueue:
-			evidence = append(evidence, entry)
-			r.evidenceQueuedBytes.Add(-entry.BodyBytes)
-		default:
-		}
-	}
-	if err := model.PersistInputAuditEvidence(r.db.WithContext(ctx), evidence, time.Now().Unix()); err != nil {
-		r.evidenceFailures.Add(1)
-		r.evidenceDropped.Add(uint64(len(evidence)))
-		common.SysError("input evidence batch failed: " + err.Error())
-	}
 	batch := make([]model.InputAudit, 0, 100)
 	for range 100 {
 		select {
@@ -495,4 +508,22 @@ func (r *InputAuditRecorder) Flush(ctx context.Context) {
 		r.mu.Unlock()
 		common.SysError("input audit batch failed: " + err.Error())
 	}
+	evidence := make([]model.InputAuditEvidence, 0, 32)
+	for range 32 {
+		select {
+		case entry := <-r.evidenceQueue:
+			evidence = append(evidence, entry)
+			r.evidenceQueuedBytes.Add(-entry.BodyBytes)
+		default:
+		}
+	}
+	if err := model.PersistInputAuditEvidence(r.db.WithContext(ctx), evidence, time.Now().Unix()); err != nil {
+		r.evidenceFailures.Add(1)
+		r.evidenceDropped.Add(uint64(len(evidence)))
+		common.SysError("input evidence batch failed")
+		for _, row := range evidence {
+			_ = r.db.WithContext(ctx).Model(&model.InputAudit{}).Where("user_id = ? AND request_id = ?", row.UserId, row.RequestId).Update("evidence_state", "write_failed").Error
+		}
+	}
+
 }

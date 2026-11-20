@@ -36,6 +36,8 @@ export interface InputAudit {
   route: string
   ip: string
   content: string
+  input_hash?: string
+  evidence_state?: string
   content_hash: string
   content_chars: number
   truncated: boolean
@@ -72,6 +74,7 @@ export interface InputAuditFilters {
   user_id?: number
   request_id?: string
   keyword?: string
+  prompt_hash?: string
   start_timestamp?: number
   end_timestamp?: number
 }
@@ -119,15 +122,29 @@ function requireAuditData<T>(response: ApiResponse<T>): T {
 }
 
 export interface InputAuditEvidenceDocument {
+  version?: number
+  previous_response_id?: string
   source: string
   scope: string
-  messages: { index?: number; role: string; text: string }[]
+  messages: {
+    index?: number
+    role: string
+    text: string
+    kind?: string
+    path?: string
+    call_id?: string
+    name?: string
+    original_chars?: number
+    original_hash?: string
+    truncated?: boolean
+  }[]
   truncated: boolean
   context_missing: boolean
   omitted: string[]
 }
 
 export interface InputAuditEvidenceResponse {
+  reason?: string
   available: boolean
   complete: boolean
   document?: InputAuditEvidenceDocument
@@ -162,6 +179,7 @@ export interface InputAuditEvidenceReference {
 }
 
 export interface InputAuditCaseDetail {
+  reviewable?: boolean
   case: InputAuditCase
   complete: boolean
   snapshot: {

@@ -44,8 +44,8 @@ const schema = z.object({
   max_records: z.number().int().min(100).max(1000000),
   max_chars: z.number().int().min(256).max(8192),
   evidence_enabled: z.boolean(),
-  evidence_max_chars: z.number().int().min(1024).max(65536),
-  evidence_max_records: z.number().int().min(100).max(10000),
+  evidence_max_chars: z.number().int().min(1024).max(262144),
+  evidence_max_records: z.number().int().min(100).max(1000000),
   evidence_max_bytes: z
     .number()
     .int()
@@ -66,7 +66,7 @@ export function InputAuditSettingsDialog(props: {
     defaultValues: {
       evidence_enabled: true,
       evidence_max_chars: 32768,
-      evidence_max_records: 1000,
+      evidence_max_records: 20000,
       evidence_max_bytes: 64 * 1024 * 1024,
       case_retention_days: 30,
       ...props.settings,
@@ -103,13 +103,13 @@ export function InputAuditSettingsDialog(props: {
       name: 'evidence_max_chars' as const,
       label: t('Evidence characters per request'),
       min: 1024,
-      max: 65536,
+      max: 262144,
     },
     {
       name: 'evidence_max_records' as const,
       label: t('Maximum evidence records'),
       min: 100,
-      max: 10000,
+      max: 1000000,
     },
     {
       name: 'evidence_max_bytes' as const,
@@ -134,7 +134,7 @@ export function InputAuditSettingsDialog(props: {
           form.reset({
             evidence_enabled: true,
             evidence_max_chars: 32768,
-            evidence_max_records: 1000,
+            evidence_max_records: 20000,
             evidence_max_bytes: 64 * 1024 * 1024,
             case_retention_days: 30,
             ...props.settings,
@@ -238,7 +238,7 @@ export function InputAuditSettingsDialog(props: {
         </Tabs>
         <p className='text-muted-foreground text-xs'>
           {t(
-            'Identical messages from the same user are merged while retained. Collection is best effort; overloaded queues may drop records.'
+            'Each request is recorded separately. Repeated text is compressed and deduplicated. Long text retains excerpts; images and other media are not stored. Queue overload may drop evidence.'
           )}
         </p>
         <Button className='mt-4' type='submit' disabled={mutation.isPending}>

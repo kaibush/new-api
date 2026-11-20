@@ -112,8 +112,8 @@ func ReviewInputAudit(ctx context.Context, db *gorm.DB, client *http.Client, set
 	}
 	err = db.Where("user_id = ? AND request_id = ? AND content_hash = ? AND created_at >= ?", audit.UserId, audit.RequestId, audit.ContentHash, time.Now().Unix()-int64(collection.RetentionDays)*86400).First(&evidence).Error
 	if err == nil {
-		var retained model.InputAuditEvidenceDocument
-		if common.UnmarshalJsonStr(evidence.Body, &retained) != nil {
+		retained, readErr := model.ReadInputAuditEvidence(db, evidence)
+		if readErr != nil {
 			result.Reason = "invalid_evidence"
 			return result
 		}

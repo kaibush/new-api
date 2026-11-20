@@ -393,6 +393,8 @@ func migrateDB() error {
 		&SiteVisit{},
 		&InputAudit{},
 		&InputAuditEvidence{},
+		&InputAuditEvidenceText{},
+		&InputAuditEvidenceTextRef{},
 		&InputAuditMatch{},
 		&InputAuditPolicyRevision{},
 		&InputAuditCase{},

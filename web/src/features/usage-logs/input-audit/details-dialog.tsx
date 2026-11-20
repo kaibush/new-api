@@ -21,6 +21,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '@/components/copy-button'
+import { DataTablePagination, useDataTable } from '@/components/data-table'
 import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
 import {
@@ -41,7 +42,7 @@ import {
   DetailRow,
   DetailSection,
 } from '../components/dialogs/log-detail-layout'
-import { getInputAuditEvidence, type InputAudit } from './api'
+import { getInputAuditEvidence, getInputAudits, type InputAudit } from './api'
 import { InputAuditCasePanel } from './case-panel'
 import { InputAuditEvidenceView } from './evidence-view'
 import { AuditFeatureSurface } from './feature-surface'
@@ -49,6 +50,8 @@ import { AuditFeatureSurface } from './feature-surface'
 export function InputAuditDetailsDialog(props: { entry: InputAudit }) {
   const { t, i18n } = useTranslation()
   const [open, setOpen] = useState(false)
+  const [promptHash, setPromptHash] = useState('')
+  const [relatedPage, setRelatedPage] = useState(1)
   const user = useAuthStore((state) => state.auth.user)
   const evidence = useQuery({
     queryKey: ['input-audit-evidence', user?.id, props.entry.id],
@@ -56,7 +59,49 @@ export function InputAuditDetailsDialog(props: { entry: InputAudit }) {
     enabled: open && user?.role === ROLE.SUPER_ADMIN,
     retry: false,
   })
+  const related = useQuery({
+    queryKey: [
+      'input-audit-related',
+      user?.id,
+      props.entry.user_id,
+      promptHash,
+      relatedPage,
+    ],
+    queryFn: () =>
+      getInputAudits({
+        p: relatedPage,
+        page_size: 10,
+        ...(promptHash
+          ? { prompt_hash: promptHash }
+          : { user_id: props.entry.user_id }),
+      }),
+    enabled: open && user?.role === ROLE.SUPER_ADMIN,
+    retry: false,
+  })
+  const { table: relatedTable } = useDataTable({
+    data: related.data?.items ?? [],
+    columns: [],
+    totalCount: related.data?.total ?? 0,
+    manualPagination: true,
+    pagination: { pageIndex: relatedPage - 1, pageSize: 10 },
+    onPaginationChange: (updater) => {
+      const next =
+        typeof updater === 'function'
+          ? updater({ pageIndex: relatedPage - 1, pageSize: 10 })
+          : updater
+      setRelatedPage(next.pageIndex + 1)
+    },
+  })
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const evidenceReasons: Record<string, string> = {
+    expired: t('Evidence expired'),
+    capacity_evicted: t('Evidence was removed by storage limits'),
+    disabled: t('Evidence collection is disabled'),
+    pending: t('Evidence is waiting to be stored'),
+    capture_failed: t('Evidence collection or storage failed'),
+    write_failed: t('Evidence collection or storage failed'),
+    queue_dropped: t('Evidence was dropped because the queue was full'),
+  }
   return (
     <AuditFeatureSurface
       open={open}
@@ -100,7 +145,7 @@ export function InputAuditDetailsDialog(props: { entry: InputAudit }) {
               />
               <DetailRow
                 label={t('Original content hash')}
-                value={props.entry.content_hash}
+                value={props.entry.input_hash ?? props.entry.content_hash}
                 mono
               />
             </DetailSection>
@@ -109,12 +154,12 @@ export function InputAuditDetailsDialog(props: { entry: InputAudit }) {
       </Accordion>
       <Tabs defaultValue='message'>
         <TabsList className='grid w-full grid-cols-3'>
-          <TabsTrigger value='message'>{t('User message')}</TabsTrigger>
+          <TabsTrigger value='message'>{t('Request text preview')}</TabsTrigger>
           <TabsTrigger value='evidence'>{t('Evidence message')}</TabsTrigger>
           <TabsTrigger value='review'>{t('Review')}</TabsTrigger>
         </TabsList>
         <TabsContent value='message'>
-          <DetailSection label={t('User message')}>
+          <DetailSection label={t('Request text preview')}>
             {props.entry.truncated && (
               <p role='status' className='text-muted-foreground text-xs'>
                 {t(
@@ -146,11 +191,18 @@ export function InputAuditDetailsDialog(props: { entry: InputAudit }) {
                   <InputAuditEvidenceView
                     document={evidence.data.document}
                     complete={evidence.data.complete}
+                    onPromptHash={(hash) => {
+                      setPromptHash(hash)
+                      setRelatedPage(1)
+                    }}
                   />
                 )}
                 {evidence.data && !evidence.data.available && (
                   <p>
-                    {t('Historical preview; original context was not retained')}
+                    {evidenceReasons[evidence.data.reason ?? ''] ??
+                      t(
+                        'Historical preview; original context was not retained'
+                      )}
                   </p>
                 )}
               </DetailSection>
@@ -161,6 +213,55 @@ export function InputAuditDetailsDialog(props: { entry: InputAudit }) {
           </>
         )}
       </Tabs>
+      {open && user?.role === ROLE.SUPER_ADMIN && (
+        <section
+          aria-label={t('Related requests')}
+          className='flex flex-col gap-2 border-t pt-3'
+        >
+          <h3 className='text-sm font-medium'>
+            {promptHash
+              ? t('Requests using this prompt')
+              : t('Recent requests from this user')}
+          </h3>
+          <p className='text-muted-foreground text-xs'>
+            {t(
+              'Related requests do not prove they belong to the same conversation.'
+            )}
+          </p>
+          {promptHash && (
+            <Button
+              variant='ghost'
+              size='sm'
+              onClick={() => {
+                setPromptHash('')
+                setRelatedPage(1)
+              }}
+            >
+              {t('Recent requests from this user')}
+            </Button>
+          )}
+          {related.isPending && <LoadingState />}
+          {related.isError && (
+            <ErrorState onRetry={() => void related.refetch()} />
+          )}
+          {related.data?.items
+            .filter((entry) => entry.id !== props.entry.id)
+            .map((entry) => (
+              <div
+                key={entry.id}
+                className='flex items-center justify-between gap-2 text-xs'
+              >
+                <p className='min-w-0 truncate'>
+                  #{entry.user_id} ·{' '}
+                  {dayjs.unix(entry.created_at).format('MM-DD HH:mm:ss')} ·{' '}
+                  {entry.content}
+                </p>
+                <InputAuditDetailsDialog entry={entry} />
+              </div>
+            ))}
+          {related.data && <DataTablePagination table={relatedTable} compact />}
+        </section>
+      )}
     </AuditFeatureSurface>
   )
 }

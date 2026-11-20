@@ -20,6 +20,8 @@ type InputAudit struct {
 	ReviewAttemptedAt int64  `json:"model_reviewed_at" gorm:"index"`
 	Id                int64  `json:"id" gorm:"index:idx_input_audit_time_id,priority:2"`
 	UserId            int    `json:"user_id" gorm:"uniqueIndex:idx_input_audit_user_hash,priority:1;index:idx_input_audit_user_time,priority:1"`
+	EvidenceState     string `json:"evidence_state,omitempty" gorm:"type:varchar(32)"`
+	InputHash         string `json:"input_hash,omitempty" gorm:"type:varchar(64)"`
 	ContentHash       string `json:"content_hash" gorm:"type:varchar(64);uniqueIndex:idx_input_audit_user_hash,priority:2"`
 	CreatedAt         int64  `json:"created_at" gorm:"index:idx_input_audit_time_id,priority:1;index:idx_input_audit_user_time,priority:2"`
 	Username          string `json:"username" gorm:"type:varchar(64)"`
@@ -46,14 +48,14 @@ type InputAuditSettings struct {
 }
 
 func DefaultInputAuditSettings() InputAuditSettings {
-	return InputAuditSettings{RetentionDays: 7, MaxRecords: 20000, MaxChars: 2048, EvidenceEnabled: true, EvidenceMaxChars: 32768, EvidenceMaxRecords: 1000, EvidenceMaxBytes: 64 << 20, CaseRetentionDays: 30}
+	return InputAuditSettings{RetentionDays: 7, MaxRecords: 20000, MaxChars: 2048, EvidenceEnabled: true, EvidenceMaxChars: 32768, EvidenceMaxRecords: 20000, EvidenceMaxBytes: 64 << 20, CaseRetentionDays: 30}
 }
 
 func (s InputAuditSettings) Validate() error {
 	if s.RetentionDays < 1 || s.RetentionDays > 90 || s.MaxRecords < 100 || s.MaxRecords > 1000000 || s.MaxChars < 256 || s.MaxChars > 8192 {
 		return errors.New("input audit limits: retention 1–90 days, records 100–1000000, characters 256–8192")
 	}
-	if s.EvidenceMaxChars < 1024 || s.EvidenceMaxChars > 65536 || s.EvidenceMaxRecords < 100 || s.EvidenceMaxRecords > 10000 || s.EvidenceMaxBytes < 8<<20 || s.EvidenceMaxBytes > 512<<20 || s.CaseRetentionDays < 1 || s.CaseRetentionDays > 90 {
+	if s.EvidenceMaxChars < 1024 || s.EvidenceMaxChars > 262144 || s.EvidenceMaxRecords < 100 || s.EvidenceMaxRecords > 1000000 || s.EvidenceMaxBytes < 8<<20 || s.EvidenceMaxBytes > 512<<20 || s.CaseRetentionDays < 1 || s.CaseRetentionDays > 90 {
 		return errors.New("invalid evidence retention limits")
 	}
 	return nil
@@ -168,11 +170,12 @@ func PersistInputAudits(db *gorm.DB, rows []InputAudit, now int64) error {
 }
 
 type InputAuditFilter struct {
-	UserId    int
-	RequestId string
-	Keyword   string
-	Start     int64
-	End       int64
+	UserId     int
+	RequestId  string
+	PromptHash string
+	Keyword    string
+	Start      int64
+	End        int64
 }
 
 func QueryInputAudits(db *gorm.DB, filter InputAuditFilter, offset, limit int) ([]InputAudit, int64, error) {
@@ -193,6 +196,11 @@ func filteredInputAudits(db *gorm.DB, filter InputAuditFilter) *gorm.DB {
 	}
 	if filter.RequestId != "" {
 		query = query.Where("request_id = ?", filter.RequestId)
+	}
+	if filter.PromptHash != "" {
+		evidenceIDs := db.Model(&InputAuditEvidenceTextRef{}).Select("evidence_id").Where("prompt_hash = ?", filter.PromptHash)
+		evidence := db.Model(&InputAuditEvidence{}).Select("1").Where("input_audit_evidences.user_id = input_audits.user_id AND input_audit_evidences.request_id = input_audits.request_id").Where("id IN (?)", evidenceIDs)
+		query = query.Where("EXISTS (?)", evidence)
 	}
 	if filter.Keyword != "" {
 		// Treat SQL wildcard characters as literal message text. LOWER supports
@@ -243,7 +251,11 @@ func DeleteInputAuditMessages(db *gorm.DB, ids []int64, filter InputAuditFilter)
 			deleted := make([]int64, 0, len(rows))
 			for _, row := range rows {
 				deleted = append(deleted, row.Id)
-				if err := tx.Where("user_id = ? AND request_id = ? AND content_hash = ?", row.UserId, row.RequestId, row.ContentHash).Delete(&InputAuditEvidence{}).Error; err != nil {
+				var evidenceIDs []int64
+				if err := tx.Model(&InputAuditEvidence{}).Where("user_id = ? AND request_id = ? AND content_hash = ?", row.UserId, row.RequestId, row.ContentHash).Pluck("id", &evidenceIDs).Error; err != nil {
+					return err
+				}
+				if err := DeleteInputAuditEvidence(tx, evidenceIDs, "deleted"); err != nil {
 					return err
 				}
 				if err := tx.Where("user_id = ? AND request_id = ?", row.UserId, row.RequestId).Delete(&InputAuditMatch{}).Error; err != nil {
