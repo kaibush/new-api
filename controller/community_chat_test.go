@@ -1628,3 +1628,95 @@ func TestCommunityRedPacketRetention(t *testing.T) {
 		})
 	}
 }
+
+// The existing options table is unchanged; exercise publication persistence and
+// the notification-only socket against every supported primary database.
+func TestFrontendReleaseNotifications(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			if dialect != "sqlite" && os.Getenv("TEST_"+strings.ToUpper(dialect)+"_DSN") == "" {
+				t.Skip("database DSN not configured")
+			}
+			t.Setenv("TEST_SECURITY_DIALECT", dialect)
+			user, _ := setupSecurityEnrollmentTest(t)
+			require.NoError(t, model.DB.AutoMigrate(&model.CommunityConfig{}))
+			require.NoError(t, model.SaveCommunityConfig(model.CommunityConfig{Enabled: false}))
+			require.NoError(t, model.DB.Create(&model.Option{Key: "Notice", Value: "existing notice"}).Error)
+			initial, err := model.GetFrontendRelease()
+			require.NoError(t, err)
+			assert.Zero(t, initial.Revision)
+			member, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "release-test")
+			require.NoError(t, err)
+			root := model.User{Username: "release-root", AffCode: "relroot", Role: common.RoleRootUser, Status: common.UserStatusEnabled, AuthVersion: 1}
+			require.NoError(t, model.DB.Create(&root).Error)
+			admin, err := service.CreateLoginSession(root.Id, "password", "127.0.0.1", "release-test")
+			require.NoError(t, err)
+			router := gin.New()
+			router.GET("/ws", CommunityWebSocket)
+			router.POST("/publish", middleware.RootAuth(), PublishFrontendRelease)
+			request := func(token, body string, want int) *httptest.ResponseRecorder {
+				req := httptest.NewRequest("POST", "/publish", strings.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				if token != "" {
+					req.Header.Set("Authorization", "Bearer "+token)
+				}
+				rr := httptest.NewRecorder()
+				router.ServeHTTP(rr, req)
+				require.Equal(t, want, rr.Code, rr.Body.String())
+				return rr
+			}
+			request("", `{"version":"v1"}`, 401)
+			request(member.AccessToken, `{"version":"v1"}`, 403)
+			request(admin.AccessToken, `{"version":" "}`, 400)
+			request(admin.AccessToken, `{"version":"`+strings.Repeat("x", 81)+`"}`, 400)
+			request(admin.AccessToken, `{"version":"v1","notes":"`+strings.Repeat("x", 2001)+`"}`, 400)
+			server := httptest.NewServer(router)
+			defer server.Close()
+			connect := func() *websocket.Conn {
+				conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/ws", http.Header{"Origin": {server.URL}})
+				require.NoError(t, err)
+				payload, err := common.Marshal(map[string]any{"token": member.AccessToken, "system_events": true})
+				require.NoError(t, err)
+				require.NoError(t, conn.WriteMessage(websocket.TextMessage, payload))
+				return conn
+			}
+			read := func(conn *websocket.Conn) model.FrontendRelease {
+				require.NoError(t, conn.SetReadDeadline(time.Now().Add(8*time.Second)))
+				_, data, err := conn.ReadMessage()
+				require.NoError(t, err)
+				var frame struct {
+					Type    string                `json:"type"`
+					Release model.FrontendRelease `json:"release"`
+				}
+				require.NoError(t, common.Unmarshal(data, &frame))
+				require.Equal(t, "frontend_release", frame.Type, "disabled chat must not expose history or presence")
+				return frame.Release
+			}
+			conn := connect()
+			defer conn.Close()
+			assert.Zero(t, read(conn).Revision)
+			request(admin.AccessToken, `{"version":" v1 ","notes":"First update"}`, 200)
+			first := read(conn)
+			assert.EqualValues(t, 1, first.Revision)
+			assert.Equal(t, "v1", first.Version)
+			assert.Equal(t, "First update", first.Notes)
+			request(admin.AccessToken, `{"version":"v1","notes":"Second publication"}`, 200)
+			second := read(conn)
+			assert.EqualValues(t, 2, second.Revision)
+			// Reconnect delivers the persisted snapshot, not only future publications.
+			require.NoError(t, conn.Close())
+			reconnected := connect()
+			defer reconnected.Close()
+			assert.Equal(t, second, read(reconnected))
+			require.Error(t, model.UpdateOption(model.FrontendReleaseOptionKey, `{}`))
+			var untouched model.Option
+			require.NoError(t, model.DB.Where(&model.Option{Key: "Notice"}).First(&untouched).Error)
+			assert.Equal(t, "existing notice", untouched.Value)
+			// Logout invalidates notification-only sockets as well.
+			require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", user.Id).Update("status", common.UserStatusDisabled).Error)
+			require.NoError(t, reconnected.SetReadDeadline(time.Now().Add(8*time.Second)))
+			_, _, err = reconnected.ReadMessage()
+			require.Error(t, err)
+		})
+	}
+}

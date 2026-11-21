@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"maps"
 	"strconv"
 	"strings"
@@ -226,6 +227,9 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
+	if key == FrontendReleaseOptionKey {
+		return errors.New("use the frontend release publication endpoint")
+	}
 	if err := operation_setting.ValidateMonthlyTopUpLimitOption(key, value); err != nil {
 		return err
 	}

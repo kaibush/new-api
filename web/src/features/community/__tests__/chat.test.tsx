@@ -13,6 +13,7 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 import { beforeEach, afterEach, expect, test, vi } from 'vitest'
 
+import { useFrontendRelease } from '@/features/frontend-release/store'
 import { SettingsPageProvider } from '@/features/system-settings/components/settings-page-context'
 import { useSidebarData } from '@/hooks/use-sidebar-data'
 import { api } from '@/lib/api'
@@ -66,6 +67,7 @@ function show(component: React.ReactNode) {
 }
 beforeEach(() => {
   FakeSocket.instances = []
+  useFrontendRelease.setState({ release: null, dismissed: 0 })
   vi.stubGlobal(
     'URL',
     class extends URL {
@@ -181,7 +183,7 @@ test('loads recent history over an authenticated socket and sends a bot mention'
     })
   })
   expect(socket.send).toHaveBeenCalledWith(
-    JSON.stringify({ token: 'test-session-token' })
+    JSON.stringify({ token: 'test-session-token', system_events: true })
   )
   expect(await screen.findByText('Earlier message')).toBeInTheDocument()
   expect(screen.getByText('Bob')).toBeInTheDocument()
@@ -199,7 +201,7 @@ test('loads recent history over an authenticated socket and sends a bot mention'
   )
 })
 
-test('disabled chat hides the composer and does not open a socket', async () => {
+test('disabled chat hides the composer but receives global version notifications', async () => {
   vi.mocked(api.get).mockResolvedValue({
     data: { success: true, data: { enabled: false } },
   })
@@ -210,7 +212,44 @@ test('disabled chat hides the composer and does not open a socket', async () => 
   expect(
     screen.queryByRole('textbox', { name: 'Message' })
   ).not.toBeInTheDocument()
-  expect(FakeSocket.instances).toHaveLength(0)
+  await waitFor(() => expect(FakeSocket.instances).toHaveLength(1))
+  act(() =>
+    FakeSocket.instances[0].onmessage?.({
+      data: JSON.stringify({
+        type: 'frontend_release',
+        release: {
+          revision: 1,
+          version: 'v2',
+          notes: 'Update ready',
+          published_at: 123,
+        },
+      }),
+    })
+  )
+  expect(await screen.findByRole('alertdialog')).toHaveTextContent('v2')
+})
+
+test('the status snapshot delivers a missed version notification without a working socket', async () => {
+  vi.mocked(api.get).mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        enabled: false,
+        frontend_release: {
+          revision: 3,
+          version: 'v3',
+          notes: 'Missed update',
+          published_at: 123,
+        },
+      },
+    },
+  })
+  show(
+    <CommunityProvider onOpenChat={() => {}}>
+      <p>Console</p>
+    </CommunityProvider>
+  )
+  expect(await screen.findByRole('alertdialog')).toHaveTextContent('v3')
 })
 
 test('the current avatar is visible without messages and opens the full image with keyboard focus restored', async () => {
@@ -2532,7 +2571,7 @@ test.each(['denied', 'unsupported', 'constructor-failure'])(
   }
 )
 
-test('guest pages and disabled community chat do not open a presence connection', async () => {
+test('guest pages do not connect and signing in with chat disabled opens the global connection', async () => {
   useAuthStore.setState((state) => ({
     auth: { ...state.auth, user: null, accessToken: '' },
   }))
@@ -2558,7 +2597,7 @@ test('guest pages and disabled community chat do not open a presence connection'
   await waitFor(() =>
     expect(api.get).toHaveBeenCalledWith('/api/community/status')
   )
-  expect(FakeSocket.instances).toHaveLength(0)
+  await waitFor(() => expect(FakeSocket.instances).toHaveLength(1))
   rendered.unmount()
 })
 

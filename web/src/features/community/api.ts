@@ -1,3 +1,4 @@
+import type { FrontendRelease } from '@/features/frontend-release/store'
 import { api } from '@/lib/api'
 import { authResult } from '@/lib/secure-verification'
 import { requireServerSuccess } from '@/lib/server-error-message'
@@ -34,6 +35,7 @@ export type ChatMessage = {
 }
 export type ChatMember = { user_id: number; name: string; avatar: string }
 export type ChatStatus = {
+  frontend_release?: FrontendRelease
   name: string
   enabled: boolean
   bot_enabled: boolean

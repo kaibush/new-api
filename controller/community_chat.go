@@ -66,7 +66,12 @@ func GetCommunityStatus(c *gin.Context) {
 		communityError(c, 500, "Could not load community settings")
 		return
 	}
-	c.JSON(200, gin.H{"success": true, "data": gin.H{"enabled": config.Enabled, "name": config.Name, "bot_enabled": config.BotEnabled, "bot_name": config.BotName, "history_days": config.HistoryDays, "red_packet_retention_minutes": config.RedPacketRetentionMinutes}})
+	release, err := model.GetFrontendRelease()
+	if err != nil {
+		communityError(c, 500, "Could not load frontend release")
+		return
+	}
+	c.JSON(200, gin.H{"success": true, "data": gin.H{"frontend_release": release, "enabled": config.Enabled, "name": config.Name, "bot_enabled": config.BotEnabled, "bot_name": config.BotName, "history_days": config.HistoryDays, "red_packet_retention_minutes": config.RedPacketRetentionMinutes}})
 }
 
 func GetCommunitySettings(c *gin.Context) {
@@ -395,7 +400,8 @@ func CommunityWebSocket(c *gin.Context) {
 		return
 	}
 	var auth struct {
-		Token string `json:"token"`
+		Token        string `json:"token"`
+		SystemEvents bool   `json:"system_events"`
 	}
 	if common.Unmarshal(data, &auth) != nil {
 		return
@@ -443,50 +449,73 @@ func CommunityWebSocket(c *gin.Context) {
 	defer ticker.Stop()
 	var previous []byte
 	var previousPresence []byte
+	var previousRelease int64 = -1
 	for {
-		// Revalidate on every history refresh; disabling chat, logout and bans close live sockets.
+		// Revalidate all sockets, including notification-only clients, on every tick.
 		config, e := model.GetCommunityConfig()
-		if e != nil || !config.Enabled {
+		if e != nil || (!config.Enabled && !auth.SystemEvents) {
 			return
 		}
 		if _, _, e = service.ValidateLoginSession(identity); e != nil {
 			return
 		}
-		page, e := model.CommunityMessageHistory(0, 50, false)
-		if e != nil {
-			return
-		}
-		data, e = common.Marshal(gin.H{"type": "history", "messages": page.Items, "has_more": page.HasMore, "day_start": page.DayStart, "day_end": page.DayEnd, "history_days": page.HistoryDays, "deleted_ids": page.DeletedIDs, "cleared_through_id": page.ClearedThroughID})
-		if e != nil {
-			return
-		}
-		if !bytes.Equal(previous, data) {
-			_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			if conn.WriteMessage(websocket.TextMessage, data) != nil {
+		if config.Enabled {
+			page, e := model.CommunityMessageHistory(0, 50, false)
+			if e != nil {
 				return
 			}
-			previous = data
-		}
-		communityConnections.Lock()
-		ids := make([]int, 0, len(communityConnections.users))
-		for id := range communityConnections.users {
-			ids = append(ids, id)
-		}
-		communityConnections.Unlock()
-		members, e := model.GetCommunityMembers(ids)
-		if e != nil {
-			return
-		}
-		presence, e := common.Marshal(gin.H{"type": "presence", "users": members})
-		if e != nil {
-			return
-		}
-		if !bytes.Equal(previousPresence, presence) {
-			_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			if conn.WriteMessage(websocket.TextMessage, presence) != nil {
+			data, e = common.Marshal(gin.H{"type": "history", "messages": page.Items, "has_more": page.HasMore, "day_start": page.DayStart, "day_end": page.DayEnd, "history_days": page.HistoryDays, "deleted_ids": page.DeletedIDs, "cleared_through_id": page.ClearedThroughID})
+			if e != nil {
 				return
 			}
-			previousPresence = presence
+			if !bytes.Equal(previous, data) {
+				_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+				if conn.WriteMessage(websocket.TextMessage, data) != nil {
+					return
+				}
+				previous = data
+			}
+			communityConnections.Lock()
+			ids := make([]int, 0, len(communityConnections.users))
+			for id := range communityConnections.users {
+				ids = append(ids, id)
+			}
+			communityConnections.Unlock()
+			members, e := model.GetCommunityMembers(ids)
+			if e != nil {
+				return
+			}
+			presence, e := common.Marshal(gin.H{"type": "presence", "users": members})
+			if e != nil {
+				return
+			}
+			if !bytes.Equal(previousPresence, presence) {
+				_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+				if conn.WriteMessage(websocket.TextMessage, presence) != nil {
+					return
+				}
+				previousPresence = presence
+			}
+		} else {
+			previous = nil
+			previousPresence = nil
+		}
+		if auth.SystemEvents {
+			release, err := model.GetFrontendRelease()
+			if err != nil {
+				return
+			}
+			if release.Revision != previousRelease {
+				payload, err := common.Marshal(gin.H{"type": "frontend_release", "release": release})
+				if err != nil {
+					return
+				}
+				_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+				if conn.WriteMessage(websocket.TextMessage, payload) != nil {
+					return
+				}
+				previousRelease = release.Revision
+			}
 		}
 		if conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)) != nil {
 			return

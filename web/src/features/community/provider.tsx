@@ -1,6 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
-import type { ReactNode } from 'react'
+import { useEffect, type ReactNode } from 'react'
 
+import { FrontendRefreshDialog } from '@/features/frontend-release/refresh-dialog'
+import { useFrontendRelease } from '@/features/frontend-release/store'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { getChatStatus } from './api'
@@ -32,10 +34,20 @@ function CommunitySession(props: {
   })
   const enabled = loggedIn && status.data?.enabled === true
   const notifications = useMentionNotifications(enabled, props.onOpenChat)
-  const chat = useChat(enabled, notifications.notify)
+  const chat = useChat(
+    enabled,
+    notifications.notify,
+    loggedIn && status.isSuccess
+  )
+  useEffect(() => {
+    if (status.data?.frontend_release) {
+      useFrontendRelease.getState().receive(status.data.frontend_release)
+    }
+  }, [status.data])
   return (
     <CommunityContext value={{ status, chat, notifications }}>
       {props.children}
+      {loggedIn && <FrontendRefreshDialog />}
     </CommunityContext>
   )
 }

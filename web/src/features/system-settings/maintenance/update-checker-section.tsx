@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useTranslation } from 'react-i18next'
 
+import { PublishFrontendReleaseSection } from '@/features/frontend-release/publish-section'
 import { SystemUpdateAction } from '@/features/system-update/system-update-action'
 import { useStatus } from '@/hooks/use-status'
 import { formatTimestamp } from '@/lib/format'
@@ -55,6 +56,7 @@ export function UpdateCheckerSection(props: UpdateCheckerSectionProps) {
           </div>
         </div>
         <SystemUpdateAction compact={false} />
+        <PublishFrontendReleaseSection />
       </div>
     </SettingsSection>
   )

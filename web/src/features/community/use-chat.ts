@@ -1,6 +1,7 @@
 import { useMutation } from '@tanstack/react-query'
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 
+import { useFrontendRelease } from '@/features/frontend-release/store'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
@@ -115,7 +116,8 @@ function mergeChatHistory(
 
 export function useChat(
   enabled: boolean,
-  onNewMessages?: (messages: ChatMessage[]) => void
+  onNewMessages?: (messages: ChatMessage[]) => void,
+  systemEvents = false
 ) {
   const notifyMessages = useEffectEvent((messages: ChatMessage[]) => {
     onNewMessages?.(messages)
@@ -223,7 +225,7 @@ export function useChat(
     setHistory(emptyHistory)
     setOutgoing([])
     acknowledged.current.clear()
-    if (!enabled || !token) {
+    if ((!enabled && !systemEvents) || !token) {
       setUsers([])
       setConnected(false)
       return
@@ -237,12 +239,20 @@ export function useChat(
       const url = new URL('/api/community/ws', window.location.href)
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
       socket = new WebSocket(url)
-      socket.onopen = () => socket?.send(JSON.stringify({ token }))
+      socket.onopen = () =>
+        socket?.send(JSON.stringify({ token, system_events: systemEvents }))
       socket.onmessage = (event) => {
         if (disposed) return
         try {
           const data = JSON.parse(event.data)
-          if (data.type === 'history' && Array.isArray(data.messages)) {
+          if (data.type === 'frontend_release' && data.release) {
+            useFrontendRelease.getState().receive(data.release)
+          }
+          if (
+            enabled &&
+            data.type === 'history' &&
+            Array.isArray(data.messages)
+          ) {
             const page: ChatHistory = {
               cleared_through_id: data.cleared_through_id || 0,
               items: data.messages,
@@ -294,7 +304,11 @@ export function useChat(
             )
             setConnected(true)
           }
-          if (data.type === 'presence' && Array.isArray(data.users)) {
+          if (
+            enabled &&
+            data.type === 'presence' &&
+            Array.isArray(data.users)
+          ) {
             setUsers(data.users)
           }
         } catch {
@@ -317,7 +331,7 @@ export function useChat(
       socket?.close()
       setConnected(false)
     }
-  }, [enabled, token])
+  }, [enabled, token, systemEvents])
   const currentHistoryRequest =
     earlier.variables?.day === history.day_start &&
     earlier.variables?.days === history.history_days &&

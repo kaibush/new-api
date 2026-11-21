@@ -251,6 +251,8 @@ func SetApiRouter(router *gin.Engine) {
 		optionRoute := apiRouter.Group("/option")
 		optionRoute.Use(middleware.RootAuth())
 		{
+			optionRoute.GET("/frontend-release", middleware.DisableCache(), controller.GetFrontendRelease)
+			optionRoute.POST("/frontend-release", middleware.DisableCache(), middleware.UserCriticalRateLimit("frontend-release"), controller.PublishFrontendRelease)
 			optionRoute.GET("/", controller.GetOptions)
 			optionRoute.GET("/checkin", middleware.DisableCache(), controller.GetCheckinSettings)
 			optionRoute.PUT("/checkin", middleware.DisableCache(), controller.UpdateCheckinSettings)
