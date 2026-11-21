@@ -125,6 +125,19 @@ func normalizeRequestPluginInstances(instances []request_plugin_setting.Instance
 				return nil, common.NewMessage("Request plugin instance {{name}} has an empty group", map[string]any{"name": instance.Name})
 			}
 		}
+		if len(instance.UserIDs) > 100 {
+			return nil, common.NewMessage("Request plugin instance {{name}} lists more than {{max}} users", map[string]any{"name": instance.Name, "max": 100})
+		}
+		userIDs := make([]int, 0, len(instance.UserIDs))
+		for _, id := range instance.UserIDs {
+			if id <= 0 {
+				return nil, common.NewMessage("Request plugin instance {{name}} has an invalid user ID", map[string]any{"name": instance.Name})
+			}
+			if !slices.Contains(userIDs, id) {
+				userIDs = append(userIDs, id)
+			}
+		}
+		instance.UserIDs = userIDs
 		models := make([]string, 0, len(instance.Models))
 		for _, name := range instance.Models {
 			name = strings.TrimSpace(name)

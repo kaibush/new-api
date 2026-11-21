@@ -643,9 +643,13 @@ func DryRun(ctx context.Context, input DryRunInput) DryRunResult {
 		result.Reply, _ = common.Marshal(DryRunReply{Text: *input.Reply})
 	}
 	plan := NewPlan()
+	if plan != nil {
+		plan.userID = input.User.ID
+	}
 	if input.Instance != nil {
 		instance := *input.Instance
-		// An unsaved instance runs on every model.
+		// An unsaved instance exercises the plugin regardless of user or model.
+		instance.UserIDs = nil
 		instance.Enabled, instance.Global, instance.Models, instance.PluginScope = true, true, nil, nil
 		plan = newPlanOf([]request_plugin_setting.Instance{instance})
 	}

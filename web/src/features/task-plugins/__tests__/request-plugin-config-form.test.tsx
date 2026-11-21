@@ -28,6 +28,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import type { TaskPluginOption } from '@/features/channels/api'
+import { api } from '@/lib/api'
 
 import { RequestPluginInstanceEditor } from '../components/request-plugin-instance-editor'
 import type { RequestPluginInstance } from '../types'
@@ -430,4 +431,44 @@ test('a keyword list is edited like a multi-line text and saved as typed', async
   await user.click(within(dialog).getByRole('button', { name: 'Save' }))
 
   expect(onSave.mock.calls[0][0].config.blocked).toBe('spam\n\nscam')
+})
+
+test('user restrictions require a selection, deduplicate picks and can return to all users', async () => {
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        items: [
+          { id: 47, username: 'alice' },
+          { id: 48, username: 'bob' },
+        ],
+      },
+    },
+  })
+  const { user, dialog, onSave } = await openEditor('Image compress')
+  const toggle = within(dialog).getByRole('switch', {
+    name: 'Limit to selected users',
+  })
+  await user.click(toggle)
+  await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+  expect(onSave).not.toHaveBeenCalled()
+  expect(within(dialog).getByText('Pick at least one user')).toBeVisible()
+  for (const name of ['alice (#47)', 'alice (#47)', 'bob (#48)']) {
+    await user.click(
+      within(dialog).getByRole('combobox', {
+        name: 'Search users by name or ID',
+      })
+    )
+    await user.click(await screen.findByRole('option', { name }))
+  }
+  await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+  expect(onSave.mock.lastCall?.[0].user_ids).toEqual([47, 48])
+  await user.click(
+    within(dialog).getByRole('button', { name: 'Remove user #47' })
+  )
+  await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+  expect(onSave.mock.lastCall?.[0].user_ids).toEqual([48])
+  await user.click(toggle)
+  await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+  expect(onSave.mock.lastCall?.[0].user_ids).toEqual([])
 })

@@ -42,6 +42,8 @@ import { Input } from '@/components/ui/input'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
+import { UserIdentity } from '@/components/user-identity'
+import { UserSelector } from '@/components/user-selector'
 import type { TaskPluginOption } from '@/features/channels/api'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { resolveLocalizedText } from '@/lib/localized-text'
@@ -211,6 +213,9 @@ function InstanceEditorDialog(props: RequestPluginInstanceEditorProps) {
     if (!props.instance || props.instance.global) return 'all'
     return props.instance.groups.length > 0 ? 'groups' : 'channels'
   })
+  const [userIds, setUserIds] = useState(props.instance?.user_ids ?? [])
+  const [limitUsers, setLimitUsers] = useState(userIds.length > 0)
+  const usersMissing = limitUsers && userIds.length === 0
   const [groups, setGroups] = useState(props.instance?.groups ?? [])
   const [models, setModels] = useState(props.instance?.models ?? [])
   const [modelScope, setModelScope] = useState<ModelScope>(
@@ -278,6 +283,7 @@ function InstanceEditorDialog(props: RequestPluginInstanceEditorProps) {
       plugin: pluginKey,
       enabled,
       global: scope === 'all',
+      user_ids: limitUsers ? userIds : [],
       groups: scope === 'groups' ? groups : [],
       models: modelScope === 'chosen' ? models : [],
       config,
@@ -301,7 +307,7 @@ function InstanceEditorDialog(props: RequestPluginInstanceEditorProps) {
       }
       config = parsed.config
     }
-    if (groupsMissing || modelsMissing) {
+    if (groupsMissing || modelsMissing || usersMissing) {
       setShowAllErrors(true)
       return
     }
@@ -521,6 +527,65 @@ function InstanceEditorDialog(props: RequestPluginInstanceEditorProps) {
             {showAllErrors && groupsMissing && (
               <FieldError>{t('Pick at least one group')}</FieldError>
             )}
+            <Field data-invalid={showAllErrors && usersMissing}>
+              <div className='flex items-center justify-between gap-3'>
+                <FieldLabel htmlFor={`${formId}-limit-users`}>
+                  {t('Limit to selected users')}
+                </FieldLabel>
+                <Switch
+                  id={`${formId}-limit-users`}
+                  checked={limitUsers}
+                  onCheckedChange={setLimitUsers}
+                  disabled={props.saving}
+                />
+              </div>
+              <FieldDescription>
+                {t(
+                  'When enabled, only selected users are checked within the scope above. Otherwise, all users are checked.'
+                )}
+              </FieldDescription>
+              {limitUsers && (
+                <>
+                  <UserSelector
+                    id={`${formId}-users`}
+                    disabled={props.saving || userIds.length >= 100}
+                    aria-invalid={showAllErrors && usersMissing}
+                    onChange={(id) => {
+                      if (id && !userIds.includes(id)) {
+                        setUserIds([...userIds, id])
+                      }
+                    }}
+                  />
+                  <div className='flex flex-wrap gap-2'>
+                    {userIds.map((id) => (
+                      <div
+                        key={id}
+                        className='flex max-w-full min-w-0 items-center gap-2 rounded-md border px-2 py-1 text-sm'
+                      >
+                        <UserIdentity userId={id} />
+                        <Button
+                          type='button'
+                          variant='ghost'
+                          size='sm'
+                          disabled={props.saving}
+                          aria-label={t('Remove user #{{id}}', { id })}
+                          onClick={() =>
+                            setUserIds(
+                              userIds.filter((userId) => userId !== id)
+                            )
+                          }
+                        >
+                          {t('Remove')}
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                  {showAllErrors && usersMissing && (
+                    <FieldError>{t('Pick at least one user')}</FieldError>
+                  )}
+                </>
+              )}
+            </Field>
             {!followsPlugin && (
               <ScopeCards<ModelScope>
                 id={`${formId}-models`}

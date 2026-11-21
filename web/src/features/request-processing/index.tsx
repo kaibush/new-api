@@ -247,6 +247,13 @@ export function RequestProcessing() {
                     ) : (
                       scope
                     )}
+                    {(instance.user_ids ?? []).length > 0 && (
+                      <span className='text-muted-foreground block text-xs'>
+                        {t('Selected user IDs: {{ids}}', {
+                          ids: instance.user_ids?.join(', '),
+                        })}
+                      </span>
+                    )}
                     {/* Servers before the model filter send no list. */}
                     {!instance.plugin_scope &&
                       (instance.models ?? []).length > 0 && (

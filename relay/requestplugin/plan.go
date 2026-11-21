@@ -220,6 +220,9 @@ func (p *Plan) scope(stage, group, model string, channelType int, bound []string
 	base := reasoning.ParseModelModifiers(model).Base
 	var scoped []*request_plugin_setting.Instance
 	add := func(instance *request_plugin_setting.Instance) {
+		if len(instance.UserIDs) > 0 && (p.userID <= 0 || !slices.Contains(instance.UserIDs, p.userID)) {
+			return
+		}
 		if slices.Contains(scoped, instance) {
 			return
 		}

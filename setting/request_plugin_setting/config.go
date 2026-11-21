@@ -16,7 +16,8 @@ const InstancesOption = "request_plugin_setting.instances"
 // on every request, group instances on the requests of their groups, and a
 // channel runs the instances its request_plugins setting lists. Models
 // narrows any of them to requests for those models; empty means every
-// model. Whether a failure stops the request is the plugin's meta.optional;
+// model. UserIDs further restricts every scope to the listed users; empty
+// means all users. Whether a failure stops the request is the plugin's meta.optional;
 // the required member of older saved lists is dropped on load.
 //
 // A plugin scope instance runs where its plugin's meta.scope says instead,
@@ -32,6 +33,7 @@ type Instance struct {
 	Global  bool            `json:"global"`
 	Groups  []string        `json:"groups"`
 	Models  []string        `json:"models"`
+	UserIDs []int           `json:"user_ids,omitempty"`
 	Config  json.RawMessage `json:"config"`
 	// PluginScope is the confirmed scope of a plugin scope instance; nil for
 	// an instance placed by hand.

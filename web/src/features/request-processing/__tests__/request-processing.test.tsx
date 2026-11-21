@@ -217,6 +217,7 @@ async function openNewInstance() {
 }
 
 test('the page shows its title and each instance in order with its scope and plugin', async () => {
+  instances[0].user_ids = [47, 48]
   renderInstances()
   await screen.findByText('Block secrets')
 
@@ -229,6 +230,7 @@ test('the page shows its title and each instance in order with its scope and plu
     rows.map((row) => within(row).getAllByRole('cell')[1].textContent)
   ).toEqual(['Block secrets', 'VIP filter', 'Channel filter'])
   expect(rows[0]).toHaveTextContent('All requests')
+  expect(rows[0]).toHaveTextContent('Selected user IDs: 47, 48')
   expect(rows[0]).toHaveTextContent('Request filter')
   expect(rows[1]).toHaveTextContent('vip, svip')
   expect(rows[1]).toHaveTextContent('Models: gpt-4o, claude-sonnet-4-5')
@@ -401,6 +403,7 @@ test('scope and config values reach the saved list', async () => {
     global: false,
     groups: ['vip'],
     models: [],
+    user_ids: [],
     config: {
       message: 'Custom refusal',
       mode: 'reject',
@@ -435,6 +438,7 @@ test('chosen groups need at least one group before the instance saves', async ()
 })
 
 test('an instance for chosen groups opens with those groups picked', async () => {
+  instances[1].user_ids = [47, 48]
   const user = userEvent.setup()
   renderInstances()
   await screen.findByText('VIP filter')
@@ -448,6 +452,15 @@ test('an instance for chosen groups opens with those groups picked', async () =>
   expect(
     within(dialog).getByRole('radio', { name: /Chosen models/ })
   ).toBeChecked()
+  expect(
+    within(dialog).getByRole('switch', { name: 'Limit to selected users' })
+  ).toBeChecked()
+  expect(
+    within(dialog).getByRole('button', { name: 'Remove user #47' })
+  ).toBeVisible()
+  expect(
+    within(dialog).getByRole('button', { name: 'Remove user #48' })
+  ).toBeVisible()
   expect(within(dialog).getByText('gpt-4o')).toBeVisible()
   expect(within(dialog).getByText('claude-sonnet-4-5')).toBeVisible()
   expect(

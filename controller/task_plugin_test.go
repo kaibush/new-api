@@ -1369,12 +1369,20 @@ func TestRequestPluginInstanceValidationAndConfigDisclosure(t *testing.T) {
  export function ingress(){ return {action:"continue"}; }`, jsplugin.Options{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, jsplugin.DefaultRegistry.Unregister(plugin.Meta.Key)) })
-	instance := request_plugin_setting.Instance{Name: "Policy", Plugin: plugin.Meta.Key, Enabled: true, Global: true, Models: []string{" test-model ", "test-model"}, Config: []byte(`{"apiKey":"fixture-secret"}`)}
+	instance := request_plugin_setting.Instance{Name: "Policy", Plugin: plugin.Meta.Key, Enabled: true, Global: true, UserIDs: []int{47, 48, 47}, Models: []string{" test-model ", "test-model"}, Config: []byte(`{"apiKey":"fixture-secret"}`)}
 	normalized, err := normalizeRequestPluginInstances([]request_plugin_setting.Instance{instance})
 	require.NoError(t, err)
 	require.Len(t, normalized, 1)
 	assert.NotEmpty(t, normalized[0].ID)
 	assert.Equal(t, []string{"test-model"}, normalized[0].Models)
+	assert.Equal(t, []int{47, 48}, normalized[0].UserIDs)
+	for _, users := range [][]int{{0}, {-1}, make([]int, 101)} {
+		invalidUsers := instance
+		invalidUsers.UserIDs = users
+		_, err := normalizeRequestPluginInstances([]request_plugin_setting.Instance{invalidUsers})
+		require.Error(t, err)
+	}
+
 	_, err = normalizeRequestPluginInstances([]request_plugin_setting.Instance{normalized[0], normalized[0]})
 	require.Error(t, err)
 	invalid := instance
@@ -1403,6 +1411,7 @@ func TestRequestPluginInstanceValidationAndConfigDisclosure(t *testing.T) {
 		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &reply))
 		require.Len(t, reply.Data.Instances, 1)
 		assert.Equal(t, normalized[0].ID, reply.Data.Instances[0].ID)
+		assert.Equal(t, []int{47, 48}, reply.Data.Instances[0].UserIDs)
 		if role == common.RoleRootUser {
 			assert.JSONEq(t, string(normalized[0].Config), string(reply.Data.Instances[0].Config))
 		} else {

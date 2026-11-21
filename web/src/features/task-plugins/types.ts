@@ -148,6 +148,8 @@ export type RequestPluginInstance = {
   plugin: string
   enabled: boolean
   global: boolean
+  /** Empty or absent applies to every user within the other scopes. */
+  user_ids?: number[]
   groups: string[]
   models: string[]
   config: Record<string, unknown>

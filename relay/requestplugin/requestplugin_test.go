@@ -519,7 +519,7 @@ func TestDryRun(t *testing.T) {
 
 	// An editor's unsaved instance runs alone, whatever its scope.
 	result = DryRun(context.Background(), DryRunInput{Format: "openai", Model: "gpt", Body: []byte(`{"model":"gpt"}`), Instance: &request_plugin_setting.Instance{
-		ID: "try", Name: "Try", Plugin: "rp-stages", Groups: []string{"vip"},
+		ID: "try", Name: "Try", Plugin: "rp-stages", Groups: []string{"vip"}, UserIDs: []int{47},
 		Config: json.RawMessage(`{"effects":{"request":[{"type":"reasoning.set","effort":"low"}]}}`),
 	}})
 	assert.Nil(t, result.Failed)
@@ -2089,4 +2089,52 @@ func TestPluginScopeDeclarationValidation(t *testing.T) {
 			require.Error(t, err)
 		})
 	}
+}
+
+func TestUserRestrictedRequestPlugins(t *testing.T) {
+	plugin, err := jsplugin.DefaultRegistry.Register(`export const meta={apiVersion:1,key:"user-scope",name:"User scope",version:"1.0.0",author:{name:"Test"},scope:{models:["gpt"]}};
+ export function ingress(){return {action:"reject",code:"blocked"};}
+ export function request(){return {action:"reject",code:"blocked"};}
+ export function outbound(){return {action:"reject",code:"blocked"};}
+ export function egress(){return {action:"reject",code:"blocked"};}
+ export function reply(){return {action:"stop",code:"blocked"};}
+ export function report(){}`, jsplugin.Options{})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, jsplugin.DefaultRegistry.Unregister(plugin.Meta.Key)) })
+	for _, placement := range []string{`"global":true`, `"groups":["vip"]`, `"global":false`, `"plugin_scope":{"models":["gpt"],"channel_types":[]}`} {
+		t.Run(placement, func(t *testing.T) {
+			setInstances(t, `[{"id":"filter","name":"Filter","plugin":"user-scope","enabled":true,"models":["gpt"],"user_ids":[47,48],`+placement+`}]`)
+			for _, userID := range []int{47, 48, 90, 0} {
+				plan := NewPlan(userID)
+				require.NotNil(t, plan)
+				for _, stage := range []string{StageIngress, StageRequest, StageOutbound, StageEgress, jsplugin.ReplyHook, jsplugin.ReportHook} {
+					expected := 0
+					if userID == 47 || userID == 48 {
+						expected = 1
+					}
+					assert.Len(t, plan.scope(stage, "vip", "gpt", 1, []string{"filter"}), expected, "stage=%s user=%d", stage, userID)
+					assert.Empty(t, plan.scope(stage, "vip", "other", 1, []string{"filter"}))
+				}
+				outcome := plan.Run(context.Background(), Call{Stage: StageIngress, Model: "gpt", Group: "vip", Bound: []string{"filter"}, Body: []byte(`{"user":47}`), User: jsplugin.TransformUser{ID: 47}})
+				assert.Equal(t, userID == 47 || userID == 48, outcome.Rejected != nil, "only the plan's host identity determines scope")
+			}
+		})
+	}
+	setInstances(t, `[{"id":"filter","name":"Filter","plugin":"user-scope","enabled":true,"global":true,"user_ids":[47]}]`)
+	oldPlan := NewPlan(90)
+	require.NotNil(t, oldPlan)
+	setInstances(t, `[{"id":"filter","name":"Filter","plugin":"user-scope","enabled":true,"global":true}]`)
+	assert.Empty(t, oldPlan.scope(StageIngress, "vip", "gpt", 1, []string{"filter"}), "in-flight requests keep the prior user scope")
+	assert.Len(t, NewPlan(90).scope(StageIngress, "", "gpt", 0, nil), 1, "legacy instances still cover all users")
+	setInstances(t, `[{"id":"filter","name":"Filter","plugin":"user-scope","enabled":true,"global":true,"user_ids":[47]}]`)
+	for _, id := range []int{47, 90} {
+		result := DryRun(context.Background(), DryRunInput{Format: "openai", Model: "gpt", User: jsplugin.TransformUser{ID: id}, Body: []byte(`{}`)})
+		assert.Equal(t, id == 47, result.Rejected != nil)
+	}
+	SetUnloadedPlugins(map[string]string{"user-unavailable": "cannot load"})
+	t.Cleanup(func() { SetUnloadedPlugins(nil) })
+	setInstances(t, `[{"id":"filter","name":"Filter","plugin":"user-unavailable","enabled":true,"global":true,"user_ids":[47]}]`)
+	call := Call{Stage: StageIngress, Model: "gpt", Body: []byte(`{}`)}
+	assert.Nil(t, NewPlan(90).Run(context.Background(), call).Failed)
+	require.NotNil(t, NewPlan(47).Run(context.Background(), call).Failed)
 }
