@@ -70,22 +70,13 @@ export function CheckinCalendarCard({
 }: CheckinCalendarCardProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const [currentMonth, setCurrentMonth] = useState(() => {
-    const now = new Date()
-    return new Date(now.getFullYear(), now.getMonth(), 1)
-  })
+  const [selectedMonth, setSelectedMonth] = useState<string>()
   const [checkinLoading, setCheckinLoading] = useState(false)
   const [rewardDialogOpen, setRewardDialogOpen] = useState(false)
   const [turnstileModalVisible, setTurnstileModalVisible] = useState(false)
   const [turnstileWidgetKey, setTurnstileWidgetKey] = useState(0)
   const [initialLoaded, setInitialLoaded] = useState(false)
   const [collapsed, setCollapsed] = useState<boolean>(false)
-
-  const currentMonthStr = useMemo(() => {
-    const y = currentMonth.getFullYear()
-    const m = String(currentMonth.getMonth() + 1).padStart(2, '0')
-    return `${y}-${m}`
-  }, [currentMonth])
 
   // Fetch checkin status
   /* eslint-disable @tanstack/query/exhaustive-deps */
@@ -96,9 +87,9 @@ export function CheckinCalendarCard({
     isFetching,
     refetch,
   } = useQuery({
-    queryKey: ['checkin-status', currentMonthStr],
+    queryKey: ['checkin-status', selectedMonth ?? 'current'],
     queryFn: async () => {
-      const res = await getCheckinStatus(currentMonthStr)
+      const res = await getCheckinStatus(selectedMonth)
       if (res.success && res.data) {
         return res.data
       }
@@ -126,12 +117,13 @@ export function CheckinCalendarCard({
     )
   }, [checkinData?.stats?.records])
 
-  const todayString = useMemo(() => {
-    const d = new Date()
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  }, [])
-
   const eligibility = checkinData?.eligibility
+  const todayString = eligibility?.today || dayjs().format('YYYY-MM-DD')
+  const currentMonthStr = selectedMonth ?? todayString.slice(0, 7)
+  const currentMonth = useMemo(() => {
+    const [year, month] = currentMonthStr.split('-').map(Number)
+    return new Date(year, month - 1, 1)
+  }, [currentMonthStr])
   const checkedToday = checkinData?.stats?.checked_in_today === true
   const todayAward = checkinRecordsMap[eligibility?.today || todayString]
 
@@ -195,15 +187,11 @@ export function CheckinCalendarCard({
   )
 
   const handlePrevMonth = () => {
-    setCurrentMonth(
-      new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1)
-    )
+    setSelectedMonth(dayjs(currentMonth).subtract(1, 'month').format('YYYY-MM'))
   }
 
   const handleNextMonth = () => {
-    setCurrentMonth(
-      new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1)
-    )
+    setSelectedMonth(dayjs(currentMonth).add(1, 'month').format('YYYY-MM'))
   }
 
   // Build calendar grid
@@ -500,6 +488,7 @@ export function CheckinCalendarCard({
                       <Button
                         key={dateStr}
                         variant={isToday ? 'default' : 'ghost'}
+                        aria-current={isToday ? 'date' : undefined}
                         disabled={!dayObj.isCurrentMonth}
                         className={cn(
                           'relative flex h-9 w-full flex-col items-center justify-center rounded-lg px-0 text-xs font-medium sm:h-10 sm:text-sm',

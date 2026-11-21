@@ -85,7 +85,12 @@ describe('security sidebar visibility', () => {
       result.current
         .find((group) => group.id === 'personal')
         ?.items.map((item) => item.title)
-    ).toEqual(['Wallet', 'Profile', 'Security & Access'])
+    ).toEqual([
+      'Wallet',
+      'Profile',
+      'Security & Access',
+      'Check-in leaderboard',
+    ])
     expect(
       result.current
         .flatMap((group) => group.items)
@@ -276,5 +281,38 @@ describe('community sidebar visibility', () => {
         .flatMap((group) => group.items)
         .some((item) => 'url' in item && item.url === '/community')
     ).toBe(false)
+  })
+})
+
+describe('check-in leaderboard sidebar entry', () => {
+  it('shows the leaderboard to regular users and saves its independent visibility setting', () => {
+    const config = parseSidebarModulesAdmin('{}')
+    const { result, unmount } = sidebarFor(config)
+    expect(
+      result.current.find((group) => group.id === 'personal')?.items
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: 'Check-in leaderboard',
+          url: '/checkin-leaderboard',
+        }),
+      ])
+    )
+    unmount()
+    config.personal.checkin_leaderboard = false
+    const saved = parseSidebarModulesAdmin(serializeSidebarModulesAdmin(config))
+    const hidden = sidebarFor(saved, {
+      personal: { checkin_leaderboard: true },
+    })
+    expect(
+      hidden.result.current
+        .flatMap((group) => group.items)
+        .map((item) => item.title)
+    ).not.toContain('Check-in leaderboard')
+    expect(
+      hidden.result.current
+        .flatMap((group) => group.items)
+        .map((item) => item.title)
+    ).toContain('Wallet')
   })
 })

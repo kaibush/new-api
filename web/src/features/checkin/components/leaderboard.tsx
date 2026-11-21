@@ -51,10 +51,11 @@ export function CheckinLeaderboard() {
       <EmptyState title={t('Leaderboard is disabled')} className='min-h-40' />
     )
   }
-  let entries = board.top ?? []
-  if (tab === 'highlights') entries = board.recent_highlights ?? []
-  if (tab === 'total') entries = board.recent_totals ?? []
   const hasHighlights = board.recent_highlights !== undefined
+  const activeTab = !hasHighlights && tab === 'highlights' ? 'today' : tab
+  let entries = board.top ?? []
+  if (activeTab === 'highlights') entries = board.recent_highlights ?? []
+  if (activeTab === 'total') entries = board.recent_totals ?? []
   return (
     <section className='space-y-5' aria-label={t('Check-in leaderboard')}>
       <div className='flex flex-wrap items-center justify-between gap-3'>
@@ -94,10 +95,7 @@ export function CheckinLeaderboard() {
           </div>
         </div>
       )}
-      <Tabs
-        value={hasHighlights || tab !== 'highlights' ? tab : 'today'}
-        onValueChange={(value) => setTab(String(value))}
-      >
+      <Tabs value={activeTab} onValueChange={(value) => setTab(String(value))}>
         <TabsList className='max-w-full flex-wrap group-data-horizontal/tabs:h-auto'>
           <TabsTrigger value='today'>{t('Today’s lucky winners')}</TabsTrigger>
           {hasHighlights && (
@@ -105,10 +103,7 @@ export function CheckinLeaderboard() {
           )}
           <TabsTrigger value='total'>{t('Recent total rewards')}</TabsTrigger>
         </TabsList>
-        <TabsContent
-          value={hasHighlights || tab !== 'highlights' ? tab : 'today'}
-          className='space-y-4 pt-3'
-        >
+        <TabsContent value={activeTab} className='space-y-4 pt-3'>
           {entries.length === 0 ? (
             <EmptyState
               title={t('No check-ins yet')}

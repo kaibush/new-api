@@ -40,27 +40,30 @@ export const checkinPoolSchema = z
         }
       }, 'Invalid check-in timezone'),
     stats_retention_days: z.number().int().min(1).max(30),
+    // Keep inactive configuration editable without validating hidden controls.
     tiers: z.array(
       z.object({
-        key,
-        name,
-        min_quota: quota,
-        max_quota: quota,
-        weight_bps: weight,
-        daily_max_count: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+        key: z.string(),
+        name: z.string().trim(),
+        min_quota: z.number(),
+        max_quota: z.number(),
+        weight_bps: z.number(),
+        daily_max_count: z.number(),
       })
     ),
     time_slots_enabled: z.boolean(),
-    default_slot_quota_bps: multiplier,
+    default_slot_quota_bps: z.number(),
     time_slots: z.array(
       z.object({
-        key,
-        name,
-        start_minute: z.number().int().min(0).max(1439),
-        end_minute: z.number().int().min(1).max(1440),
-        quota_bps: multiplier,
+        key: z.string(),
+        name: z.string().trim(),
+        start_minute: z.number(),
+        end_minute: z.number(),
+        quota_bps: z.number(),
         override_tiers: z.boolean(),
-        tier_weights: z.array(z.object({ tier_key: key, weight_bps: weight })),
+        tier_weights: z.array(
+          z.object({ tier_key: z.string(), weight_bps: z.number() })
+        ),
       })
     ),
     daily_pool: z.object({
@@ -97,6 +100,28 @@ export const checkinPoolSchema = z
         ])
       }
       pool.tiers.forEach((tier, index) => {
+        const result = z
+          .object({
+            key,
+            name,
+            min_quota: quota,
+            max_quota: quota,
+            weight_bps: weight,
+            daily_max_count: z
+              .number()
+              .int()
+              .min(0)
+              .max(Number.MAX_SAFE_INTEGER),
+          })
+          .safeParse(tier)
+        if (!result.success) {
+          for (const issue of result.error.issues) {
+            context.addIssue({
+              ...issue,
+              path: ['tiers', index, ...issue.path],
+            })
+          }
+        }
         if (tier.max_quota < tier.min_quota) {
           fail('Maximum must be at least the minimum', [
             'tiers',
@@ -114,6 +139,12 @@ export const checkinPoolSchema = z
       })
     }
     if (!pool.time_slots_enabled) return
+    const defaultMultiplier = multiplier.safeParse(pool.default_slot_quota_bps)
+    if (!defaultMultiplier.success) {
+      for (const issue of defaultMultiplier.error.issues) {
+        context.addIssue({ ...issue, path: ['default_slot_quota_bps'] })
+      }
+    }
     if (pool.time_slots.length < 1 || pool.time_slots.length > 8) {
       fail('Invalid check-in time slot settings', ['time_slots'])
     }
@@ -124,6 +155,23 @@ export const checkinPoolSchema = z
       fail('Invalid check-in time slot', ['time_slots'])
     }
     pool.time_slots.forEach((slot, index) => {
+      const result = z
+        .object({
+          key,
+          name,
+          start_minute: z.number().int().min(0).max(1439),
+          end_minute: z.number().int().min(1).max(1440),
+          quota_bps: multiplier,
+        })
+        .safeParse(slot)
+      if (!result.success) {
+        for (const issue of result.error.issues) {
+          context.addIssue({
+            ...issue,
+            path: ['time_slots', index, ...issue.path],
+          })
+        }
+      }
       if (slot.start_minute >= slot.end_minute) {
         fail('Invalid check-in time slot', ['time_slots', index, 'end_minute'])
       }
@@ -142,6 +190,17 @@ export const checkinPoolSchema = z
         ])
       }
       if (slot.override_tiers) {
+        const weights = z
+          .array(z.object({ tier_key: key, weight_bps: weight }))
+          .safeParse(slot.tier_weights)
+        if (!weights.success) {
+          for (const issue of weights.error.issues) {
+            context.addIssue({
+              ...issue,
+              path: ['time_slots', index, 'tier_weights', ...issue.path],
+            })
+          }
+        }
         const keys = new Set(slot.tier_weights.map((entry) => entry.tier_key))
         if (
           pool.reward_mode !== 'tiered' ||

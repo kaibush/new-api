@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"slices"
 	"sync"
 	"time"
 
@@ -178,7 +179,7 @@ func drawCheckinReward(tx *gorm.DB, settings operation_setting.CheckinSetting, e
 		}
 		scaled := (int64(tier.MinQuota) + raw) * int64(quotaBps) / 10000
 		scaled = min(max(scaled, 0), int64(settings.MaxQuota))
-		if selected > 0 && (tier.DailyMaxCount > 0 || pool.DailyPool.Enabled && pool.DailyPool.DailyBonusCap > 0) {
+		if selected > 0 {
 			awarded := checkinReward(int(scaled), eligibility)
 			if err := consumeCheckinPool(tx, local.Format("2006-01-02"), tier, pool.DailyPool, awarded, now.Unix()); err != nil {
 				if !errors.Is(err, errCheckinPoolLimit) {
@@ -193,12 +194,10 @@ func drawCheckinReward(tx *gorm.DB, settings operation_setting.CheckinSetting, e
 }
 
 func consumeCheckinPool(tx *gorm.DB, day string, tier operation_setting.CheckinRewardTier, config operation_setting.CheckinDailyPoolConfig, awarded int, now int64) error {
-	keys := make([]string, 0, 2)
-	if config.Enabled && config.DailyBonusCap > 0 {
-		keys = append(keys, "__bonus_quota__")
-	}
-	if tier.DailyMaxCount > 0 {
-		keys = append(keys, "tier:"+tier.Key)
+	// Always account for high-tier awards, including while limits are disabled.
+	keys := []string{"__bonus_quota__", "tier:" + tier.Key}
+	if err := seedCheckinDailyPool(tx, day, now); err != nil {
+		return err
 	}
 	for _, key := range keys {
 		row := CheckinDailyPool{StatDate: day, PoolKey: key, UpdatedAt: now}
@@ -211,10 +210,10 @@ func consumeCheckinPool(tx *gorm.DB, day string, tier operation_setting.CheckinR
 		return err
 	}
 	for _, row := range rows {
-		if row.PoolKey == "__bonus_quota__" && int64(awarded) > config.DailyBonusCap-row.UsedQuota {
+		if row.PoolKey == "__bonus_quota__" && config.Enabled && config.DailyBonusCap > 0 && int64(awarded) > config.DailyBonusCap-row.UsedQuota {
 			return errCheckinPoolLimit
 		}
-		if row.PoolKey == "tier:"+tier.Key && row.WinCount >= int64(tier.DailyMaxCount) {
+		if row.PoolKey == "tier:"+tier.Key && tier.DailyMaxCount > 0 && row.WinCount >= int64(tier.DailyMaxCount) {
 			return errCheckinPoolLimit
 		}
 	}
@@ -224,6 +223,58 @@ func consumeCheckinPool(tx *gorm.DB, day string, tier operation_setting.CheckinR
 		}
 	}
 	return nil
+}
+
+// seedCheckinDailyPool reconciles counters from pre-upgrade draw logs once per
+// day. Every high-tier draw takes the total-pool lock before touching tier rows.
+func seedCheckinDailyPool(tx *gorm.DB, day string, now int64) error {
+	total := CheckinDailyPool{StatDate: day, PoolKey: "__bonus_quota__", UpdatedAt: now}
+	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&total).Error; err != nil {
+		return err
+	}
+	if err := lockForUpdate(tx).Where("stat_date = ? AND pool_key = ?", day, total.PoolKey).First(&total).Error; err != nil {
+		return err
+	}
+	var seeded []CheckinDailyPool
+	if err := lockForUpdate(tx).Where("stat_date = ? AND pool_key = ?", day, "__ledger_seeded__").Find(&seeded).Error; err != nil {
+		return err
+	}
+	if len(seeded) != 0 {
+		return nil
+	}
+	// Locking reads see committed draws even if this MySQL transaction established
+	// its repeatable-read snapshot before waiting for the total-pool lock.
+	var draws []CheckinDrawLog
+	if err := lockForUpdate(tx).Select("id", "tier_key", "quota_awarded").Where("checkin_date = ? AND tier_rank > 0", day).Order("id").Find(&draws).Error; err != nil {
+		return err
+	}
+	counters := map[string]CheckinDailyPool{
+		total.PoolKey: {StatDate: day, PoolKey: total.PoolKey, UpdatedAt: now},
+	}
+	for _, draw := range draws {
+		for _, key := range []string{total.PoolKey, "tier:" + draw.TierKey} {
+			row := counters[key]
+			row.StatDate, row.PoolKey, row.UpdatedAt = day, key, now
+			row.UsedQuota += int64(draw.QuotaAwarded)
+			row.WinCount++
+			counters[key] = row
+		}
+	}
+	keys := make([]string, 0, len(counters))
+	for key := range counters {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	for _, key := range keys {
+		row := counters[key]
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "stat_date"}, {Name: "pool_key"}},
+			DoUpdates: clause.AssignmentColumns([]string{"used_quota", "win_count", "updated_at"}),
+		}).Create(&row).Error; err != nil {
+			return err
+		}
+	}
+	return tx.Create(&CheckinDailyPool{StatDate: day, PoolKey: "__ledger_seeded__", UpdatedAt: now}).Error
 }
 
 func writeCheckinDraw(tx *gorm.DB, record *Checkin, draw checkinDraw) error {

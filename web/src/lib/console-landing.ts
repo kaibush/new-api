@@ -45,6 +45,7 @@ export const CONSOLE_LANDING_PAGES = [
   { url: '/wallet', labelKey: 'Wallet' },
   { url: '/profile', labelKey: 'Profile' },
   { url: '/security', labelKey: 'Security & Access' },
+  { url: '/checkin-leaderboard', labelKey: 'Check-in leaderboard' },
   {
     url: '/visit-analytics',
     labelKey: 'Visit analytics',

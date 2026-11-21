@@ -28,6 +28,7 @@ import { Route as errors500RouteImport } from './routes/(errors)/500'
 import { Route as errors503RouteImport } from './routes/(errors)/503'
 import { Route as AuthenticatedChat2linkRouteImport } from './routes/_authenticated/chat2link'
 import { Route as AuthenticatedCheckinRouteImport } from './routes/_authenticated/checkin'
+import { Route as AuthenticatedCheckinLeaderboardRouteImport } from './routes/_authenticated/checkin-leaderboard'
 import { Route as AuthenticatedSystemSettingsRouteRouteImport } from './routes/_authenticated/system-settings/route'
 import { Route as AuthenticatedVisitAnalyticsRouteImport } from './routes/_authenticated/visit-analytics'
 import { Route as AboutIndexRouteImport } from './routes/about/index'
@@ -172,6 +173,12 @@ const AuthenticatedCheckinRoute = AuthenticatedCheckinRouteImport.update({
   path: '/checkin',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedCheckinLeaderboardRoute =
+  AuthenticatedCheckinLeaderboardRouteImport.update({
+    id: '/checkin-leaderboard',
+    path: '/checkin-leaderboard',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedSystemSettingsRouteRoute =
   AuthenticatedSystemSettingsRouteRouteImport.update({
     id: '/system-settings',
@@ -481,6 +488,7 @@ export interface FileRoutesByFullPath {
   '/503': typeof errors503Route
   '/chat2link': typeof AuthenticatedChat2linkRoute
   '/checkin': typeof AuthenticatedCheckinRoute
+  '/checkin-leaderboard': typeof AuthenticatedCheckinLeaderboardRoute
   '/visit-analytics': typeof AuthenticatedVisitAnalyticsRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
@@ -549,6 +557,7 @@ export interface FileRoutesByTo {
   '/503': typeof errors503Route
   '/chat2link': typeof AuthenticatedChat2linkRoute
   '/checkin': typeof AuthenticatedCheckinRoute
+  '/checkin-leaderboard': typeof AuthenticatedCheckinLeaderboardRoute
   '/visit-analytics': typeof AuthenticatedVisitAnalyticsRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about': typeof AboutIndexRoute
@@ -621,6 +630,7 @@ export interface FileRoutesById {
   '/(errors)/503': typeof errors503Route
   '/_authenticated/chat2link': typeof AuthenticatedChat2linkRoute
   '/_authenticated/checkin': typeof AuthenticatedCheckinRoute
+  '/_authenticated/checkin-leaderboard': typeof AuthenticatedCheckinLeaderboardRoute
   '/_authenticated/visit-analytics': typeof AuthenticatedVisitAnalyticsRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
@@ -692,6 +702,7 @@ export interface FileRouteTypes {
     | '/503'
     | '/chat2link'
     | '/checkin'
+    | '/checkin-leaderboard'
     | '/visit-analytics'
     | '/oauth/$provider'
     | '/about/'
@@ -760,6 +771,7 @@ export interface FileRouteTypes {
     | '/503'
     | '/chat2link'
     | '/checkin'
+    | '/checkin-leaderboard'
     | '/visit-analytics'
     | '/oauth/$provider'
     | '/about'
@@ -831,6 +843,7 @@ export interface FileRouteTypes {
     | '/(errors)/503'
     | '/_authenticated/chat2link'
     | '/_authenticated/checkin'
+    | '/_authenticated/checkin-leaderboard'
     | '/_authenticated/visit-analytics'
     | '/oauth/$provider'
     | '/about/'
@@ -1035,6 +1048,13 @@ declare module '@tanstack/react-router' {
       path: '/checkin'
       fullPath: '/checkin'
       preLoaderRoute: typeof AuthenticatedCheckinRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/checkin-leaderboard': {
+      id: '/_authenticated/checkin-leaderboard'
+      path: '/checkin-leaderboard'
+      fullPath: '/checkin-leaderboard'
+      preLoaderRoute: typeof AuthenticatedCheckinLeaderboardRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/system-settings': {
@@ -1483,6 +1503,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedSystemSettingsRouteRoute: typeof AuthenticatedSystemSettingsRouteRouteWithChildren
   AuthenticatedChat2linkRoute: typeof AuthenticatedChat2linkRoute
   AuthenticatedCheckinRoute: typeof AuthenticatedCheckinRoute
+  AuthenticatedCheckinLeaderboardRoute: typeof AuthenticatedCheckinLeaderboardRoute
   AuthenticatedVisitAnalyticsRoute: typeof AuthenticatedVisitAnalyticsRoute
   AuthenticatedChatChatIdRoute: typeof AuthenticatedChatChatIdRoute
   AuthenticatedDashboardSectionRoute: typeof AuthenticatedDashboardSectionRoute
@@ -1514,6 +1535,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
     AuthenticatedSystemSettingsRouteRouteWithChildren,
   AuthenticatedChat2linkRoute: AuthenticatedChat2linkRoute,
   AuthenticatedCheckinRoute: AuthenticatedCheckinRoute,
+  AuthenticatedCheckinLeaderboardRoute: AuthenticatedCheckinLeaderboardRoute,
   AuthenticatedVisitAnalyticsRoute: AuthenticatedVisitAnalyticsRoute,
   AuthenticatedChatChatIdRoute: AuthenticatedChatChatIdRoute,
   AuthenticatedDashboardSectionRoute: AuthenticatedDashboardSectionRoute,

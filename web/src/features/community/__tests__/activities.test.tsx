@@ -635,3 +635,53 @@ test('the full leaderboard opens from check-in and switches between today and re
   await user.click(within(dialog).getByRole('tab', { name: 'Recent jackpots' }))
   expect(await within(dialog).findByText('No check-ins yet')).toBeVisible()
 })
+
+test('hiding jackpots while open falls back to actual today entries', async () => {
+  const get = vi.mocked(api.get).getMockImplementation()
+  if (!get) throw new Error('Expected the default API fixture')
+  let highlightsEnabled = true
+  vi.mocked(api.get).mockImplementation(async (url, options) => {
+    if (url !== '/api/user/checkin/leaderboard') return get(url, options)
+    return {
+      data: {
+        success: true,
+        data: {
+          enabled: true,
+          today: '2030-01-01',
+          timezone: 'UTC',
+          top: [
+            {
+              rank: 1,
+              display_name: 'Today winner',
+              username: 'winner',
+              quota_awarded: 100,
+            },
+          ],
+          ...(highlightsEnabled ? { recent_highlights: [] } : {}),
+        },
+      },
+    }
+  })
+  show(<CommunityCheckin />)
+  const user = userEvent.setup()
+  await user.click(
+    await screen.findByRole('button', { name: 'View full leaderboard' })
+  )
+  const dialog = await screen.findByRole('dialog', {
+    name: 'Check-in leaderboard',
+  })
+  await user.click(
+    await within(dialog).findByRole('tab', { name: 'Recent jackpots' })
+  )
+  highlightsEnabled = false
+  await user.click(within(dialog).getByRole('button', { name: 'Refresh' }))
+  await waitFor(() =>
+    expect(
+      within(dialog).queryByRole('tab', { name: 'Recent jackpots' })
+    ).not.toBeInTheDocument()
+  )
+  expect(
+    within(dialog).getByRole('tab', { name: 'Today’s lucky winners' })
+  ).toHaveAttribute('aria-selected', 'true')
+  expect(within(dialog).queryAllByText('Today winner')).toHaveLength(2)
+})

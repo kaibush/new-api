@@ -1229,6 +1229,51 @@ func verifyCheckinRewardPool(t *testing.T, db *gorm.DB) {
 	for _, id := range []int{9100, 9101, 9102, 9103, 9104, 9105, 9106} {
 		require.NoError(t, db.Create(&checkinTestUser{Id: id, Username: fmt.Sprintf("private-user-%d", id), DisplayName: fmt.Sprintf("Private User %d", id), CreatedAt: time.Now().Unix()}).Error)
 	}
+
+	for _, limit := range []string{"quota", "winners", "legacy_counters"} {
+		t.Run("enabling_daily_"+limit+"_counts_already_issued_rewards", func(t *testing.T) {
+			policy := settings
+			policy.Pool.Tiers = append([]operation_setting.CheckinRewardTier(nil), settings.Pool.Tiers...)
+			policy.Pool.Tiers[1].Key = "existing-winner"
+			loc, err := time.LoadLocation(policy.Pool.Timezone)
+			require.NoError(t, err)
+			day := time.Now().In(loc).Format("2006-01-02")
+			t.Cleanup(func() {
+				require.NoError(t, db.Where("user_id IN ?", []int{9200, 9201, 9202}).Delete(&CheckinDrawLog{}).Error)
+				require.NoError(t, db.Where("user_id IN ?", []int{9200, 9201, 9202}).Delete(&CheckinGrant{}).Error)
+				require.NoError(t, db.Where("user_id IN ?", []int{9200, 9201, 9202}).Delete(&Checkin{}).Error)
+				require.NoError(t, db.Where("user_id IN ?", []int{9200, 9201, 9202}).Delete(&CheckinAccount{}).Error)
+				require.NoError(t, db.Unscoped().Where("id IN ?", []int{9200, 9201, 9202}).Delete(&checkinTestUser{}).Error)
+				require.NoError(t, db.Where("stat_date = ?", day).Delete(&CheckinDailyPool{}).Error)
+			})
+			saveCheckinTestSettings(t, policy)
+			for _, id := range []int{9200, 9201, 9202} {
+				require.NoError(t, db.Create(&checkinTestUser{Id: id, Username: fmt.Sprintf("pool-limit-%d", id), CreatedAt: time.Now().Unix()}).Error)
+			}
+			first, err := UserCheckin(9200)
+			require.NoError(t, err)
+			require.Equal(t, 30, first.QuotaAwarded)
+			if limit == "winners" {
+				policy.Pool.Tiers[1].DailyMaxCount = 1
+			} else {
+				policy.Pool.DailyPool = operation_setting.CheckinDailyPoolConfig{Enabled: true, DailyBonusCap: 30}
+			}
+			if limit == "legacy_counters" {
+				// Old versions omitted unlimited draws and could leave partial counters.
+				require.NoError(t, db.Where("stat_date = ? AND pool_key = ?", day, "__ledger_seeded__").Delete(&CheckinDailyPool{}).Error)
+				require.NoError(t, db.Model(&CheckinDailyPool{}).Where("stat_date = ?", day).Updates(map[string]any{"used_quota": 0, "win_count": 0}).Error)
+			}
+			saveCheckinTestSettings(t, policy)
+			second, err := UserCheckin(9201)
+			require.NoError(t, err)
+			assert.Equal(t, 6, second.QuotaAwarded, "today's earlier award already exhausted the new daily limit")
+			// The reconciliation marker must be idempotent; another claim still falls back.
+			third, err := UserCheckin(9202)
+			require.NoError(t, err)
+			assert.Equal(t, 6, third.QuotaAwarded)
+		})
+	}
+
 	t.Run("time_boundaries_override_weights_and_global_cap", func(t *testing.T) {
 		policy := settings
 		policy.Pool.TimeSlots = []operation_setting.CheckinTimeSlot{{Key: "morning", Name: "Morning", StartMinute: 360, EndMinute: 540, QuotaBps: 5000, OverrideTiers: true, TierWeights: []operation_setting.CheckinTimeSlotWeight{{TierKey: "base", WeightBps: 10000}, {TierKey: "lucky", WeightBps: 0}}}}
@@ -1280,7 +1325,7 @@ func verifyCheckinRewardPool(t *testing.T, db *gorm.DB) {
 		assert.True(t, draw.PoolFallback)
 		assert.Equal(t, "lucky", draw.OriginalTierKey)
 		var budget CheckinDailyPool
-		require.NoError(t, db.First(&budget, "pool_key = ?", "__bonus_quota__").Error)
+		require.NoError(t, db.First(&budget, "stat_date = ? AND pool_key = ?", time.Now().In(time.FixedZone("CST", 8*3600)).Format("2006-01-02"), "__bonus_quota__").Error)
 		assert.Equal(t, int64(30), budget.UsedQuota, "budget records issued quota rather than the unscaled tier maximum")
 		var wallet int64
 		require.NoError(t, db.Model(&checkinTestUser{}).Where("id = ?", 9100).Pluck("quota", &wallet).Error)
@@ -1298,6 +1343,9 @@ func verifyCheckinRewardPool(t *testing.T, db *gorm.DB) {
 		assert.GreaterOrEqual(t, board["my_rank"].(int64), int64(1))
 	})
 	t.Run("concurrent_daily_winner_limit", func(t *testing.T) {
+		previousKey := settings.Pool.Tiers[1].Key
+		settings.Pool.Tiers[1].Key = "concurrent-winner"
+		t.Cleanup(func() { settings.Pool.Tiers[1].Key = previousKey })
 		settings.Pool.DailyPool.Enabled = false
 		settings.Pool.Tiers[1].DailyMaxCount = 1
 		saveCheckinTestSettings(t, settings)
@@ -1328,11 +1376,11 @@ func verifyCheckinRewardPool(t *testing.T, db *gorm.DB) {
 		saveCheckinTestSettings(t, settings)
 		require.NoError(t, db.Model(&checkinTestUser{}).Where("id = ?", 9104).Update("quota", common.MaxWalletQuota).Error)
 		var budget CheckinDailyPool
-		require.NoError(t, db.First(&budget, "pool_key = ?", "__bonus_quota__").Error)
+		require.NoError(t, db.First(&budget, "stat_date = ? AND pool_key = ?", time.Now().In(time.FixedZone("CST", 8*3600)).Format("2006-01-02"), "__bonus_quota__").Error)
 		_, err := UserCheckin(9104)
 		require.ErrorIs(t, err, ErrWalletQuotaLimitExceeded)
 		var after CheckinDailyPool
-		require.NoError(t, db.First(&after, "pool_key = ?", "__bonus_quota__").Error)
+		require.NoError(t, db.First(&after, "stat_date = ? AND pool_key = ?", budget.StatDate, "__bonus_quota__").Error)
 		assert.Equal(t, budget, after)
 		var count int64
 		require.NoError(t, db.Model(&CheckinDrawLog{}).Where("user_id = ?", 9104).Count(&count).Error)

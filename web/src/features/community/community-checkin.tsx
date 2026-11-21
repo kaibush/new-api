@@ -12,7 +12,6 @@ import { getCheckinLeaderboard } from '@/features/checkin/api'
 import { getCheckinStatus } from '@/features/profile/api'
 import { useStatus } from '@/hooks/use-status'
 import { formatQuotaWithCurrency } from '@/lib/currency'
-import dayjs from '@/lib/dayjs'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { statusQueryOptions } from '@/lib/status-query'
 
@@ -34,11 +33,9 @@ export function CommunityCheckin() {
   const client = useQueryClient()
   const [open, setOpen] = useState(false)
   const [leaderboardOpen, setLeaderboardOpen] = useState(false)
-  const month = dayjs().format('YYYY-MM')
   const checkin = useQuery({
-    queryKey: ['checkin-status', month],
-    queryFn: async () =>
-      requireServerSuccess(await getCheckinStatus(month)).data,
+    queryKey: ['checkin-status', 'current'],
+    queryFn: async () => requireServerSuccess(await getCheckinStatus()).data,
     enabled: status?.checkin_enabled === true,
     staleTime: 30000,
     refetchInterval: 30000,

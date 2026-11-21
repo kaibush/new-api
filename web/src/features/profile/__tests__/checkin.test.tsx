@@ -657,3 +657,18 @@ test.each([1, 2])(
     )
   }
 )
+
+test('initial calendar month follows the server check-in date across time zones', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date('2026-10-31T23:30:00Z'))
+  try {
+    await renderCheckin({ ...eligibility, today: '2026-11-01' })
+    await screen.findByText('2026-11')
+    expect(api.get).toHaveBeenCalledWith('/api/user/checkin')
+    expect(
+      screen.getByRole('button', { name: '1', current: 'date' })
+    ).toBeVisible()
+  } finally {
+    vi.useRealTimers()
+  }
+})

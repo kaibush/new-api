@@ -180,6 +180,10 @@ export function SidebarModulesSection({
         title: t('Security & Access'),
         description: t('Manage your security settings and account access'),
       },
+      checkin_leaderboard: {
+        title: t('Check-in leaderboard'),
+        description: t('Show daily winners and recent high rewards to users.'),
+      },
     },
     admin: {
       channel: {

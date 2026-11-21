@@ -909,3 +909,28 @@ test('selecting tiered distribution initializes valid editable probabilities', a
     })
   ).not.toBeInTheDocument()
 })
+
+test('switching to uniform ignores hidden invalid tier names', async () => {
+  const user = userEvent.setup()
+  const save = vi
+    .spyOn(api, 'put')
+    .mockImplementation(async (_url, body) => ({
+      data: {
+        success: true,
+        data: { ...(body as object), version: 3, observed_since: 1700000000 },
+      },
+    }))
+  await renderAdmin('/system-settings/billing/checkin', ROLE.SUPER_ADMIN)
+  fireEvent.click(await screen.findByRole('button', { name: /Preset B/ }))
+  fireEvent.change(screen.getAllByRole('textbox', { name: 'Tier name' })[0], {
+    target: { value: '' },
+  })
+  await user.click(
+    screen.getByRole('combobox', { name: 'Reward distribution' })
+  )
+  await user.click(await screen.findByRole('option', { name: 'Uniform' }))
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Save check-in settings' })
+  )
+  await waitFor(() => expect(save).toHaveBeenCalled())
+})

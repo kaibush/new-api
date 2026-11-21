@@ -287,9 +287,11 @@ export function unbindCustomOAuth(
  * Get checkin status for a specific month
  */
 export async function getCheckinStatus(
-  month: string
+  month?: string
 ): Promise<ApiResponse<CheckinStatusResponse>> {
-  const res = await api.get(`/api/user/checkin?month=${month}`)
+  const res = await api.get(
+    month ? `/api/user/checkin?month=${month}` : '/api/user/checkin'
+  )
   return res.data
 }
 

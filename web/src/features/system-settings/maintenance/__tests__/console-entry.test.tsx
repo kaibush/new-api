@@ -347,3 +347,19 @@ it.each([
     expect(router.state.location.pathname).toBe('/')
   }
 )
+
+it('saves the check-in leaderboard visibility switch in sidebar module settings', async () => {
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = userEvent.setup()
+  renderSettings(true)
+  await user.click(screen.getByRole('switch', { name: 'Check-in leaderboard' }))
+  await user.click(screen.getByRole('button', { name: 'Save sidebar modules' }))
+  await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+  const request = put.mock.calls[0][1] as { key: string; value: string }
+  expect(request.key).toBe('SidebarModulesAdmin')
+  expect(JSON.parse(request.value)).toMatchObject({
+    personal: { checkin_leaderboard: false },
+  })
+})
