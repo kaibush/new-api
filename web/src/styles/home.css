@@ -16,107 +16,641 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-.mofish-home {
-  background: var(--background);
-}
-.mofish-headline {
-  color: #478de5;
-  text-decoration: underline;
-  text-decoration-color: #f6c85f;
-  text-decoration-thickness: 5px;
-  text-underline-offset: 12px;
-}
-.mofish-pond {
+/* ============================================================================
+ * Tidal Duality Sanctuary — "Work in Order · Unwind at Ease" (工作与摸鱼)
+ * Sunlit Celadon Courtyard Pond (Light) × Abyssal Bioluminescent Aquarium (Dark)
+ * ============================================================================ */
+
+.tidal-home {
+  --tidal-canvas: color-mix(
+    in oklch,
+    var(--background) 95%,
+    oklch(0.96 0.014 175)
+  );
+  --tidal-surface: color-mix(in oklch, var(--card) 94%, oklch(0.985 0.008 175));
+  --tidal-surface-elevated: rgba(255, 255, 255, 0.88);
+  --tidal-hairline: color-mix(in oklch, var(--foreground) 10%, transparent);
+  --tidal-hairline-strong: color-mix(
+    in oklch,
+    var(--foreground) 18%,
+    transparent
+  );
+  --tidal-contour-line: rgba(11, 138, 115, 0.075);
+
+  --tidal-jade: #0a8770;
+  --tidal-jade-soft: rgba(10, 135, 112, 0.13);
+  --tidal-coral: #df4d26;
+  --tidal-coral-soft: rgba(223, 77, 38, 0.12);
+  --tidal-gold: #c47a10;
+  --tidal-gold-soft: rgba(196, 122, 16, 0.14);
+  --tidal-indigo: #2563eb;
+  --tidal-indigo-soft: rgba(37, 99, 235, 0.11);
+
+  /* Above-waterline & below-waterline ecological tank layers */
+  --tidal-tank-border: rgba(12, 74, 66, 0.18);
+  --tidal-tank-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.92) inset,
+    0 28px 70px -28px rgba(10, 52, 48, 0.2),
+    0 8px 24px -10px rgba(15, 23, 42, 0.08);
+  --tidal-sky-bg: linear-gradient(
+    180deg,
+    rgba(255, 254, 250, 0.96) 0%,
+    rgba(241, 248, 246, 0.94) 100%
+  );
+  --tidal-pond-bg: linear-gradient(
+    180deg,
+    #dff2ee 0%,
+    #c8e7e1 48%,
+    #b1dad2 100%
+  );
+  --tidal-pond-shadow: rgba(11, 58, 52, 0.17);
+  --tidal-sunbeam: rgba(255, 252, 235, 0.48);
+  --tidal-caustic-dot: rgba(255, 255, 255, 0.42);
+
+  /* Abyssal Moonlit Sanctuary CTA */
+  --tidal-abyss-bg: #07111a;
+  --tidal-abyss-fg: #f4f7f6;
+  --tidal-abyss-muted: rgba(235, 244, 242, 0.7);
+
   position: relative;
-  width: 100%;
-  aspect-ratio: 520 / 240;
-  margin: 20px 0 18px;
-  isolation: isolate;
+  background: var(--tidal-canvas);
+  color: var(--foreground);
+  transition: background-color 450ms ease;
 }
-.mofish-waves {
-  stroke: var(--border);
+
+.dark .tidal-home {
+  --tidal-canvas: color-mix(in oklch, var(--background) 78%, #060d15);
+  --tidal-surface: color-mix(in oklch, var(--card) 72%, #0a1522);
+  --tidal-surface-elevated: rgba(12, 23, 36, 0.84);
+  --tidal-hairline: rgba(148, 210, 205, 0.11);
+  --tidal-hairline-strong: rgba(148, 210, 205, 0.22);
+  --tidal-contour-line: rgba(45, 212, 191, 0.065);
+
+  --tidal-jade: #2dd4bf;
+  --tidal-jade-soft: rgba(45, 212, 191, 0.16);
+  --tidal-coral: #ff6e42;
+  --tidal-coral-soft: rgba(255, 110, 66, 0.16);
+  --tidal-gold: #fbbf24;
+  --tidal-gold-soft: rgba(251, 191, 36, 0.16);
+  --tidal-indigo: #60a5fa;
+  --tidal-indigo-soft: rgba(96, 165, 250, 0.15);
+
+  --tidal-tank-border: rgba(94, 234, 212, 0.22);
+  --tidal-tank-shadow:
+    0 1px 0 rgba(153, 246, 228, 0.12) inset,
+    0 34px 90px -28px rgba(0, 0, 0, 0.88),
+    0 0 48px -18px rgba(45, 212, 191, 0.2);
+  --tidal-sky-bg: linear-gradient(
+    180deg,
+    rgba(13, 24, 38, 0.96) 0%,
+    rgba(9, 19, 31, 0.96) 100%
+  );
+  --tidal-pond-bg: linear-gradient(
+    180deg,
+    #091e2e 0%,
+    #061523 52%,
+    #040c16 100%
+  );
+  --tidal-pond-shadow: rgba(0, 0, 0, 0.46);
+  --tidal-sunbeam: rgba(45, 212, 191, 0.13);
+  --tidal-caustic-dot: rgba(94, 234, 212, 0.14);
+
+  --tidal-abyss-bg: #050b13;
+  --tidal-abyss-fg: #f4f7f6;
+  --tidal-abyss-muted: rgba(226, 238, 236, 0.68);
 }
-.mofish-fish {
-  cursor: pointer;
+
+/* Editorial Poetic Serif (Lora + CJK Song/Serif) */
+.tidal-serif {
+  font-family:
+    'Lora Variable', 'Lora', 'Noto Serif SC', 'Noto Serif CJK SC',
+    'Noto Serif TC', 'Noto Serif CJK TC', 'Noto Serif JP', 'Noto Serif CJK JP',
+    'Source Han Serif SC', 'Songti SC', Georgia, serif;
+}
+
+/* Flowing bioluminescent gradient for the "摸鱼有底气。" headline */
+.tidal-loaf-headline {
+  background-image: linear-gradient(
+    105deg,
+    var(--tidal-jade) 0%,
+    var(--tidal-gold) 52%,
+    var(--tidal-coral) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Concentric water-ripple contour background (replaces generic SaaS grid) */
+.tidal-water-contours {
+  background-image:
+    repeating-radial-gradient(
+      circle at 74% 38%,
+      transparent 0,
+      transparent 52px,
+      var(--tidal-contour-line) 53px,
+      transparent 54px
+    ),
+    repeating-radial-gradient(
+      circle at 18% 78%,
+      transparent 0,
+      transparent 68px,
+      var(--tidal-contour-line) 69px,
+      transparent 70px
+    );
+  mask-image: radial-gradient(
+    ellipse 90% 78% at 55% 36%,
+    black 30%,
+    transparent 92%
+  );
+  -webkit-mask-image: radial-gradient(
+    ellipse 90% 78% at 55% 36%,
+    black 30%,
+    transparent 92%
+  );
+}
+
+/* Ambient caustic water-light pools — shifts warmly in Loaf mode */
+.tidal-hero-atmosphere {
+  background:
+    radial-gradient(
+      ellipse 46% 42% at 74% 34%,
+      var(--tidal-jade-soft) 0%,
+      transparent 72%
+    ),
+    radial-gradient(
+      ellipse 36% 34% at 82% 68%,
+      var(--tidal-coral-soft) 0%,
+      transparent 74%
+    ),
+    radial-gradient(
+      ellipse 38% 34% at 20% 66%,
+      var(--tidal-gold-soft) 0%,
+      transparent 76%
+    );
+  transition:
+    opacity 500ms ease,
+    filter 500ms ease;
+}
+
+.tidal-home[data-mood='loaf'] .tidal-hero-atmosphere {
+  filter: saturate(1.22);
+}
+
+/* Surface & border helpers */
+.tidal-surface {
+  background: var(--tidal-surface);
+  border-color: var(--tidal-hairline);
+}
+
+.tidal-hairline-border {
+  border-color: var(--tidal-hairline);
+}
+
+/* ============================================================================
+ * Ecological Glass Aquarium Chassis (水上打工 · 水下摸鱼)
+ * ============================================================================ */
+.tidal-aquarium-chassis {
+  --mx: 52%;
+  --my: 62%;
+  position: relative;
+  border: 1px solid var(--tidal-tank-border);
+  box-shadow: var(--tidal-tank-shadow);
+  background: var(--tidal-surface-elevated);
+}
+
+.tidal-sky-deck {
+  background: var(--tidal-sky-bg);
+}
+
+.tidal-pond-chamber {
+  position: relative;
+  background: var(--tidal-pond-bg);
+}
+
+/* Pointer-reactive underwater caustic spotlight */
+.tidal-pond-chamber::before {
+  content: '';
   position: absolute;
-  height: auto;
-  padding: 0;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    320px circle at var(--mx) var(--my),
+    var(--tidal-caustic-dot),
+    transparent 68%
+  );
+  opacity: 0.9;
+  transition: opacity 300ms ease;
+}
+
+/* Subtle pebbled caustic water-bed shimmer */
+.tidal-pond-bed {
+  background-image: radial-gradient(
+    circle at 1.5px 1.5px,
+    var(--tidal-caustic-dot) 1.2px,
+    transparent 0
+  );
+  background-size: 28px 28px;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.25), black 85%);
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.25),
+    black 85%
+  );
+}
+
+/* Slanted Tyndall sunbeams / moonlight rays piercing the pond */
+.tidal-sunbeam {
+  pointer-events: none;
+  background: linear-gradient(180deg, var(--tidal-sunbeam) 0%, transparent 92%);
+  transform-origin: top center;
+  animation: tidal-beam-sway 9s ease-in-out infinite;
+}
+
+.tidal-sunbeam-delayed {
+  animation-delay: -4.2s;
+  animation-duration: 11.5s;
+}
+
+@keyframes tidal-beam-sway {
+  0%,
+  100% {
+    transform: skewX(-18deg) scaleX(1);
+    opacity: 0.72;
+  }
+  50% {
+    transform: skewX(-13deg) scaleX(1.14);
+    opacity: 1;
+  }
+}
+
+/* Undulating dual-layer waterline waves */
+.tidal-wave-front {
+  animation: tidal-wave-drift 9s ease-in-out infinite alternate;
+}
+
+.tidal-wave-back {
+  animation: tidal-wave-drift-reverse 12s ease-in-out infinite alternate;
+}
+
+@keyframes tidal-wave-drift {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-28px);
+  }
+}
+
+@keyframes tidal-wave-drift-reverse {
+  0% {
+    transform: translateX(-22px);
+  }
+  100% {
+    transform: translateX(18px);
+  }
+}
+
+/* Above-waterline API signal stream */
+.tidal-route-stream {
+  stroke-dasharray: 10 18;
+  animation: tidal-stream-dash 1.8s linear infinite;
+}
+
+@keyframes tidal-stream-dash {
+  from {
+    stroke-dashoffset: 56;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* ============================================================================
+ * Ornamental Spirit Koi — Organic Swimming & Tail Flutter
+ * ============================================================================ */
+.tidal-koi-btn {
+  position: absolute;
   border: 0;
-  border-radius: 40%;
+  padding: 0;
   background: transparent;
+  cursor: pointer;
+  outline: none;
+  transition:
+    filter 260ms ease,
+    transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
 }
-.mofish-fish:hover,
-.mofish-fish:active {
-  background: transparent;
+
+.tidal-koi-btn:focus-visible {
+  filter: drop-shadow(0 0 12px var(--tidal-jade));
 }
-.mofish-fish svg {
-  width: 100%;
-  height: auto;
-  pointer-events: none;
+
+.tidal-koi-glide-coral {
+  animation: tidal-koi-roam-1 11s ease-in-out infinite;
 }
-.mofish-fish-green {
-  left: 7%;
-  top: 30%;
-  width: 43%;
-  color: #168268;
+
+.tidal-koi-glide-jade {
+  animation: tidal-koi-roam-2 13.5s ease-in-out infinite;
 }
-.mofish-fish-blue {
-  right: 9%;
-  top: 51%;
-  width: 30%;
-  color: #478de5;
+
+.tidal-koi-glide-gold {
+  animation: tidal-koi-roam-3 10.5s ease-in-out infinite;
 }
-.mofish-fish-pink {
-  left: 46%;
-  top: 5%;
-  width: 21%;
-  color: #bc4278;
+
+.tidal-koi-glide-indigo {
+  animation: tidal-koi-roam-4 14.5s ease-in-out infinite;
 }
-.mofish-swimmer {
+
+.tidal-koi-btn[data-swimming='true'] .tidal-koi-body-wrap {
+  transform: scale(1.09) translateY(-3px);
+}
+
+.tidal-koi-body-wrap {
   display: block;
-  width: 100%;
+  transition: transform 380ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.tidal-koi-tail {
+  transform-box: fill-box;
+  transform-origin: right center;
+  animation: tidal-tail-swish 1.9s ease-in-out infinite;
+}
+
+.tidal-koi-btn[data-swimming='true'] .tidal-koi-tail {
+  animation-duration: 0.72s;
+}
+
+@keyframes tidal-tail-swish {
+  0%,
+  100% {
+    transform: rotate(-6deg);
+  }
+  50% {
+    transform: rotate(7deg);
+  }
+}
+
+@keyframes tidal-koi-roam-1 {
+  0%,
+  100% {
+    transform: translate(0, 0) rotate(-3deg);
+  }
+  35% {
+    transform: translate(26px, -12px) rotate(-7deg);
+  }
+  70% {
+    transform: translate(-14px, 9px) rotate(4deg);
+  }
+}
+
+@keyframes tidal-koi-roam-2 {
+  0%,
+  100% {
+    transform: translate(0, 0) rotate(3deg);
+  }
+  40% {
+    transform: translate(-28px, -10px) rotate(-5deg);
+  }
+  75% {
+    transform: translate(16px, 11px) rotate(6deg);
+  }
+}
+
+@keyframes tidal-koi-roam-3 {
+  0%,
+  100% {
+    transform: translate(0, 0) rotate(-6deg);
+  }
+  45% {
+    transform: translate(20px, 12px) rotate(4deg);
+  }
+  80% {
+    transform: translate(-12px, -8px) rotate(-8deg);
+  }
+}
+
+@keyframes tidal-koi-roam-4 {
+  0%,
+  100% {
+    transform: translate(0, 0) rotate(2deg);
+  }
+  50% {
+    transform: translate(-22px, 9px) rotate(-4deg);
+  }
+}
+
+/* Expanding water ripples when feeding or touching the pond */
+.tidal-ripple-ring {
   pointer-events: none;
-  transition: transform 700ms ease-out;
+  animation: tidal-ripple-bloom 1.65s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
-.mofish-fish-blue .mofish-swimmer {
-  transform: scaleX(-1) rotate(-8deg);
+
+.tidal-ripple-ring-outer {
+  pointer-events: none;
+  animation: tidal-ripple-bloom 2.1s cubic-bezier(0.16, 1, 0.3, 1) 0.14s
+    forwards;
 }
-.mofish-fish-pink .mofish-swimmer {
-  transform: rotate(-22deg);
+
+.tidal-pellet-drop {
+  pointer-events: none;
+  animation: tidal-pellet-sink 1.5s ease-out forwards;
 }
-.mofish-fish[data-swimming='true'] .mofish-swimmer {
-  animation: mofish-swim 2.4s ease-in-out infinite;
-}
-.mofish-fish-blue[data-swimming='true'] .mofish-swimmer {
-  animation-name: mofish-swim-left;
-}
-@keyframes mofish-swim {
-  0%,
+
+@keyframes tidal-ripple-bloom {
+  0% {
+    transform: translate(-50%, -50%) scale(0.18);
+    opacity: 0.92;
+  }
   100% {
-    transform: translate(0, 0) rotate(-5deg);
-  }
-  35% {
-    transform: translate(24px, -14px) rotate(-12deg);
-  }
-  70% {
-    transform: translate(-10px, 7px) rotate(5deg);
+    transform: translate(-50%, -50%) scale(2.6);
+    opacity: 0;
   }
 }
-@keyframes mofish-swim-left {
-  0%,
+
+@keyframes tidal-pellet-sink {
+  0% {
+    transform: translate(-50%, -140%) scale(1.15);
+    opacity: 1;
+  }
+  55% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 0.95;
+  }
   100% {
-    transform: translate(0, 0) scaleX(-1) rotate(-8deg);
-  }
-  35% {
-    transform: translate(-24px, -12px) scaleX(-1) rotate(5deg);
-  }
-  70% {
-    transform: translate(10px, 6px) scaleX(-1) rotate(-15deg);
+    transform: translate(-50%, 35%) scale(0.35);
+    opacity: 0;
   }
 }
+
+/* Rising micro bubbles */
+.tidal-bubble {
+  animation: tidal-bubble-rise 6.5s ease-in infinite;
+}
+
+.tidal-bubble-slow {
+  animation: tidal-bubble-rise 9s ease-in -3.2s infinite;
+}
+
+@keyframes tidal-bubble-rise {
+  0% {
+    transform: translateY(14px) scale(0.75);
+    opacity: 0;
+  }
+  25% {
+    opacity: 0.65;
+  }
+  85% {
+    opacity: 0.45;
+  }
+  100% {
+    transform: translateY(-68px) scale(1.15);
+    opacity: 0;
+  }
+}
+
+/* Swaying aquatic sea-grass */
+.tidal-kelp-sway {
+  transform-origin: bottom center;
+  animation: tidal-kelp 5.6s ease-in-out infinite alternate;
+}
+
+@keyframes tidal-kelp {
+  0% {
+    transform: rotate(-4deg);
+  }
+  100% {
+    transform: rotate(5deg);
+  }
+}
+
+/* Status beacon */
+.tidal-beacon-ping {
+  animation: tidal-ping 2.5s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+@keyframes tidal-ping {
+  0% {
+    transform: scale(0.95);
+    opacity: 0.78;
+  }
+  75%,
+  100% {
+    transform: scale(2.15);
+    opacity: 0;
+  }
+}
+
+/* Ocean-Current Provider Marquee */
+.tidal-ribbon-mask {
+  mask-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    black 8%,
+    black 92%,
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    black 8%,
+    black 92%,
+    transparent 100%
+  );
+}
+
+.tidal-ribbon-track {
+  display: flex;
+  width: max-content;
+  animation: tidal-ribbon-scroll 42s linear infinite;
+}
+
+.tidal-ribbon-track-reverse {
+  display: flex;
+  width: max-content;
+  animation: tidal-ribbon-scroll-reverse 46s linear infinite;
+}
+
+.tidal-ribbon-mask:hover .tidal-ribbon-track,
+.tidal-ribbon-mask:hover .tidal-ribbon-track-reverse {
+  animation-play-state: paused;
+}
+
+@keyframes tidal-ribbon-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes tidal-ribbon-scroll-reverse {
+  from {
+    transform: translateX(-50%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+/* Async Task Pipeline Shimmer */
+.tidal-pipeline-pulse {
+  animation: tidal-pipeline-sweep 2.8s ease-in-out infinite;
+}
+
+@keyframes tidal-pipeline-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+
+/* Abyssal Moonlit Sanctuary CTA Monolith */
+.tidal-sanctuary-monolith {
+  background:
+    radial-gradient(
+      ellipse 68% 58% at 50% 0%,
+      rgba(45, 212, 191, 0.22) 0%,
+      transparent 66%
+    ),
+    radial-gradient(
+      ellipse 45% 48% at 82% 88%,
+      rgba(255, 110, 66, 0.16) 0%,
+      transparent 70%
+    ),
+    radial-gradient(
+      ellipse 42% 45% at 16% 85%,
+      rgba(251, 191, 36, 0.12) 0%,
+      transparent 72%
+    ),
+    var(--tidal-abyss-bg);
+  color: var(--tidal-abyss-fg);
+  border: 1px solid rgba(153, 246, 228, 0.16);
+  box-shadow:
+    0 1px 0 rgba(153, 246, 228, 0.12) inset,
+    0 32px 80px -32px rgba(4, 12, 22, 0.68);
+}
+
+/* Reduced Motion Accessibility */
 @media (prefers-reduced-motion: reduce) {
-  .mofish-fish[data-swimming] .mofish-swimmer {
-    animation: none;
-    transition: none;
+  .tidal-sunbeam,
+  .tidal-wave-front,
+  .tidal-wave-back,
+  .tidal-route-stream,
+  .tidal-koi-glide-coral,
+  .tidal-koi-glide-jade,
+  .tidal-koi-glide-gold,
+  .tidal-koi-glide-indigo,
+  .tidal-koi-tail,
+  .tidal-bubble,
+  .tidal-bubble-slow,
+  .tidal-kelp-sway,
+  .tidal-beacon-ping,
+  .tidal-ribbon-track,
+  .tidal-ribbon-track-reverse,
+  .tidal-pipeline-pulse {
+    animation: none !important;
   }
 }

@@ -16,17 +16,28 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { PublicLayout } from '@/components/layout'
 import { Footer } from '@/components/layout/components/footer'
 import { RichContent } from '@/components/rich-content'
 import { useTheme } from '@/context/theme-provider'
+import { useStatus } from '@/hooks/use-status'
 import { isLikelyHtml } from '@/lib/content-format'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { Hero } from './components'
+import '@/styles/home.css'
+
+import {
+  CTA,
+  Hero,
+  ProtocolWorkbench,
+  ProviderConstellation,
+  Stats,
+  WorkLoafContrast,
+} from './components'
+import type { HomeMood, ProtocolId } from './constants'
 import { useHomePageContent } from './hooks'
 
 export function Home() {
@@ -34,8 +45,23 @@ export function Home() {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const { resolvedTheme } = useTheme()
   const { auth } = useAuthStore()
+  const { status } = useStatus()
   const isAuthenticated = !!auth.user
   const { content, isLoaded, isUrl } = useHomePageContent()
+  const [mood, setMood] = useState<HomeMood>('work')
+  const [selectedProtocolId, setSelectedProtocolId] =
+    useState<ProtocolId>('openai-chat')
+
+  const statusData = (status?.data ?? status) as
+    | { server_address?: string }
+    | null
+    | undefined
+  const configuredAddress = statusData?.server_address?.trim()
+  const fallbackOrigin =
+    typeof window !== 'undefined' && window.location?.origin
+      ? window.location.origin
+      : 'https://api.example.com'
+  const baseUrl = configuredAddress || fallbackOrigin
 
   const syncIframePreferences = useCallback(() => {
     try {
@@ -122,7 +148,25 @@ export function Home() {
 
   return (
     <PublicLayout showMainContainer={false}>
-      <Hero isAuthenticated={isAuthenticated} />
+      <main className='tidal-home' data-mood={mood}>
+        <Hero
+          isAuthenticated={isAuthenticated}
+          baseUrl={baseUrl}
+          mood={mood}
+          onMoodChange={setMood}
+          selectedProtocolId={selectedProtocolId}
+          onProtocolChange={setSelectedProtocolId}
+        />
+        <Stats />
+        <WorkLoafContrast />
+        <ProtocolWorkbench
+          baseUrl={baseUrl}
+          selectedProtocolId={selectedProtocolId}
+          onProtocolChange={setSelectedProtocolId}
+        />
+        <ProviderConstellation />
+        <CTA isAuthenticated={isAuthenticated} />
+      </main>
       <Footer />
     </PublicLayout>
   )

@@ -17,37 +17,74 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Link } from '@tanstack/react-router'
-import { ArrowRight } from 'lucide-react'
+import { ArrowRight, ArrowUpRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 
 interface HeroButtonsProps {
   isAuthenticated: boolean
+  docsUrl?: string
 }
 
-/**
- * Hero section action buttons
- */
-export function HeroButtons({ isAuthenticated }: HeroButtonsProps) {
+export function HeroButtons(props: HeroButtonsProps) {
   const { t } = useTranslation()
-  if (isAuthenticated) {
-    return (
-      <Button size='lg' render={<Link to='/dashboard' />}>
-        {t('Go to Dashboard')} <ArrowRight className='ml-2 h-5 w-5' />
-      </Button>
-    )
-  }
+  const docsUrl = props.docsUrl || 'https://docs.newapi.pro'
+  const isExternalDocs = docsUrl.startsWith('http')
 
   return (
-    <>
-      <Button size='lg' render={<Link to='/sign-up' />}>
-        {t('Get Started')}
-        <ArrowRight className='ml-2 h-5 w-5' />
+    <div className='flex flex-wrap items-center gap-3'>
+      {props.isAuthenticated ? (
+        <Button
+          size='lg'
+          className='group bg-foreground text-background hover:bg-foreground/90 h-11 rounded-xl px-5 text-sm font-medium'
+          render={<Link to='/dashboard' />}
+        >
+          {t('Go to Dashboard')}
+          <ArrowRight
+            aria-hidden='true'
+            className='size-4 transition-transform duration-200 group-hover:translate-x-0.5'
+          />
+        </Button>
+      ) : (
+        <>
+          <Button
+            size='lg'
+            className='group bg-foreground text-background hover:bg-foreground/90 h-11 rounded-xl px-5 text-sm font-medium'
+            render={<Link to='/sign-up' />}
+          >
+            {t('Get Started')}
+            <ArrowRight
+              aria-hidden='true'
+              className='size-4 transition-transform duration-200 group-hover:translate-x-0.5'
+            />
+          </Button>
+          <Button
+            size='lg'
+            variant='outline'
+            className='border-border/80 bg-background/80 hover:bg-muted/70 h-11 rounded-xl px-5 text-sm font-medium backdrop-blur-sm'
+            render={<Link to='/sign-in' />}
+          >
+            {t('Sign In')}
+          </Button>
+        </>
+      )}
+
+      <Button
+        size='lg'
+        variant='ghost'
+        className='text-muted-foreground hover:text-foreground h-11 rounded-xl px-4 text-sm font-medium'
+        render={
+          isExternalDocs ? (
+            <a href={docsUrl} target='_blank' rel='noopener noreferrer' />
+          ) : (
+            <Link to={docsUrl} />
+          )
+        }
+      >
+        {t('Docs')}
+        <ArrowUpRight aria-hidden='true' className='size-4' />
       </Button>
-      <Button size='lg' variant='outline' render={<Link to='/sign-in' />}>
-        {t('Sign In')}
-      </Button>
-    </>
+    </div>
   )
 }

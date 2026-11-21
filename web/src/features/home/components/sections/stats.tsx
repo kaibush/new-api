@@ -16,113 +16,77 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useRef, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
-interface CounterProps {
-  end: number
-  suffix?: string
-  prefix?: string
-  duration?: number
-  decimals?: number
-}
+import { AnimateInView } from '@/components/animate-in-view'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatNumber } from '@/lib/format'
+import { cn } from '@/lib/utils'
 
-function Counter(props: CounterProps) {
-  const { end, suffix = '', prefix = '', duration = 1600, decimals = 0 } = props
-  const ref = useRef<HTMLSpanElement>(null)
-  const startedRef = useRef(false)
-
-  const formatValue = useCallback(
-    (v: number) =>
-      decimals > 0 ? v.toFixed(decimals) : Math.round(v).toLocaleString(),
-    [decimals]
-  )
-
-  const animate = useCallback(() => {
-    const el = ref.current
-    if (!el) return
-    const start = performance.now()
-    const step = (now: number) => {
-      const progress = Math.min((now - start) / duration, 1)
-      const eased = 1 - Math.pow(1 - progress, 3)
-      el.textContent = `${prefix}${formatValue(eased * end)}${suffix}`
-      if (progress < 1) requestAnimationFrame(step)
-    }
-    requestAnimationFrame(step)
-  }, [end, duration, prefix, suffix, formatValue])
-
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
-    if (mq.matches) {
-      el.textContent = `${prefix}${formatValue(end)}${suffix}`
-      return
-    }
-
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting && !startedRef.current) {
-          startedRef.current = true
-          animate()
-          observer.unobserve(el)
-        }
-      },
-      { threshold: 0.5 }
-    )
-
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [animate, end, prefix, suffix, formatValue])
-
-  return (
-    <span ref={ref} className='tabular-nums'>
-      {prefix}0{suffix}
-    </span>
-  )
-}
+import { TIDAL_SPECS } from '../../constants'
 
 interface StatsProps {
   className?: string
 }
 
-interface StatItem {
-  end: number
-  suffix: string
-  label: string
-  decimals?: number
-}
-
-export function Stats(_props: StatsProps) {
-  const { t } = useTranslation()
-
-  const stats: StatItem[] = [
-    { end: 50, suffix: '+', label: t('upstream services integrated') },
-    { end: 100, suffix: '+', label: t('model billing support') },
-    { end: 50, suffix: '+', label: t('compatible API routes') },
-    { end: 10, suffix: '+', label: t('scheduling controls') },
-  ]
+export function Stats(props: StatsProps) {
+  const { i18n, t } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
 
   return (
-    <div className='border-border/40 bg-muted/10 relative z-10 border-y'>
-      <div className='mx-auto max-w-6xl px-6 py-10 md:py-12'>
-        <div className='grid grid-cols-2 gap-8 md:grid-cols-4 md:gap-12'>
-          {stats.map((s) => (
-            <div
-              key={s.label}
-              className='flex flex-col items-center text-center'
+    <section
+      aria-label={t('Breathing-room ledger')}
+      className={cn(
+        'tidal-hairline-border border-y bg-[var(--tidal-surface)]/65 backdrop-blur-xs',
+        props.className
+      )}
+    >
+      <div className='mx-auto max-w-7xl px-6 sm:px-8'>
+        <div className='tidal-hairline-border grid grid-cols-1 divide-y sm:grid-cols-2 sm:divide-y-0 lg:grid-cols-4 lg:divide-x'>
+          {TIDAL_SPECS.map((spec, idx) => (
+            <AnimateInView
+              key={spec.index}
+              animation='fade-up'
+              delay={idx * 55}
+              className={cn(
+                'py-8 sm:py-10',
+                idx > 0 && 'lg:pl-8',
+                idx < TIDAL_SPECS.length - 1 && 'lg:pr-8',
+                idx % 2 === 1 && 'sm:pl-6 lg:pl-8',
+                idx % 2 === 0 && 'sm:pr-6 lg:pr-8'
+              )}
             >
-              <span className='text-2xl font-bold tracking-tight md:text-3xl'>
-                <Counter end={s.end} suffix={s.suffix} decimals={s.decimals} />
-              </span>
-              <span className='text-muted-foreground mt-1.5 text-xs'>
-                {s.label}
-              </span>
-            </div>
+              <div className='text-muted-foreground flex items-center justify-between font-mono text-[11px] tracking-[0.16em]'>
+                <span>{spec.index}</span>
+                <span aria-hidden='true' className='opacity-40'>
+                  ~
+                </span>
+              </div>
+
+              <div className='tidal-serif mt-3 flex items-baseline gap-1 text-4xl font-semibold tracking-tight tabular-nums sm:text-[2.65rem]'>
+                <span>{formatNumber(spec.value, locale)}</span>
+                {spec.suffix && (
+                  <span className='text-2xl font-normal text-[var(--tidal-coral)]'>
+                    {spec.suffix}
+                  </span>
+                )}
+                {typeof spec.secondaryValue === 'number' && (
+                  <span className='text-2xl font-normal text-[var(--tidal-jade)]'>
+                    +{formatNumber(spec.secondaryValue, locale)}
+                  </span>
+                )}
+              </div>
+
+              <h2 className='mt-2.5 text-sm font-semibold tracking-tight'>
+                {t(spec.labelKey)}
+              </h2>
+              <p className='text-muted-foreground mt-1.5 text-xs leading-5'>
+                {t(spec.detailKey)}
+              </p>
+            </AnimateInView>
           ))}
         </div>
       </div>
-    </div>
+    </section>
   )
 }
