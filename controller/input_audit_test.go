@@ -2400,3 +2400,23 @@ func TestInputAuditExcerptStorageDatabaseMatrix(t *testing.T) {
 		})
 	}
 }
+
+func TestInputAuditToolHeavyHistoryRetainsUserIntent(t *testing.T) {
+	items := make([]map[string]any, 0, 700)
+	for i := range 700 {
+		items = append(items, map[string]any{"type": "function_call_output", "call_id": fmt.Sprint(i), "output": map[string]any{"a": "file", "b": "result", "c": "details"}})
+	}
+	items[300] = map[string]any{"role": "user", "content": "Investigate the search results in the app"}
+	input, err := common.Marshal(items)
+	require.NoError(t, err)
+	document := service.ExtractInputAuditEvidence(&dto.OpenAIResponsesRequest{Input: input}, 8192)
+	found := false
+	for _, message := range document.Messages {
+		if message.Role == "user" && message.Text == "Investigate the search results in the app" {
+			found = true
+		}
+	}
+	assert.True(t, found, "tool history must not evict the latest user instruction")
+	assert.LessOrEqual(t, len(document.Messages), 512)
+	assert.Contains(t, document.Omitted, "history_window")
+}

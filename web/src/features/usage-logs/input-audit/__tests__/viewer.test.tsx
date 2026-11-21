@@ -191,6 +191,9 @@ it('root opens message audits on demand and sees safe text, first receive time a
   await userEvent.click(screen.getByRole('tab', { name: 'Input Audits' }))
   await userEvent.click(await screen.findByRole('button', { name: 'Details' }))
   const dialog = screen.getByRole('dialog', { name: 'Input Audits' })
+  await userEvent.click(
+    within(dialog).getByRole('tab', { name: 'Request text preview' })
+  )
   expect(within(dialog).getByText(entry.content)).toBeVisible()
   expect(dialog.querySelector('script')).toBeNull()
   expect(
@@ -252,9 +255,9 @@ it('a prompt lookup searches its exact version across users and can return to th
       params: { p: 1, page_size: 10, user_id: 4 },
     })
   )
-  await userEvent.click(
+  expect(
     within(dialog).getByRole('tab', { name: 'Evidence message' })
-  )
+  ).toHaveAttribute('aria-selected', 'true')
   await userEvent.click(
     await within(dialog).findByRole('button', {
       name: 'Requests using this prompt',
@@ -343,6 +346,9 @@ it('related request navigation reuses one dialog, returns through visits and res
   const related = within(dialog).getByRole('region', {
     name: 'Related requests',
   })
+  await userEvent.click(
+    within(dialog).getByRole('tab', { name: 'Request text preview' })
+  )
   await within(related).findByText(/second request/)
   await userEvent.click(
     within(related).getAllByRole('button', { name: 'Details' })[0]
@@ -371,6 +377,9 @@ it('related request navigation reuses one dialog, returns through visits and res
   await userEvent.click(
     within(dialog).getByRole('button', { name: 'Back to previous request' })
   )
+  await userEvent.click(
+    within(dialog).getByRole('tab', { name: 'Request text preview' })
+  )
   expect(within(dialog).getByText(entry.content)).toBeVisible()
   expect(
     within(dialog).queryByRole('button', { name: 'Back to previous request' })
@@ -384,6 +393,13 @@ it('related request navigation reuses one dialog, returns through visits and res
   )
   expect(trigger).toHaveFocus()
   await userEvent.click(trigger)
+  expect(screen.getByRole('tab', { name: 'Evidence message' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+  await userEvent.click(
+    screen.getByRole('tab', { name: 'Request text preview' })
+  )
   expect(
     within(screen.getByRole('dialog')).getByText(entry.content)
   ).toBeVisible()
@@ -1321,6 +1337,9 @@ it('mobile message details use viewport height and close with Escape returning f
     'max-sm:max-h-[var(--dialog-available-height,100dvh)]',
     'max-sm:rounded-none',
     'sm:max-w-6xl'
+  )
+  await userEvent.click(
+    within(detail).getByRole('tab', { name: 'Request text preview' })
   )
   expect(within(detail).getByText(entry.content)).toBeVisible()
   await userEvent.keyboard('{Escape}')

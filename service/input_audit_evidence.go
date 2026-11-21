@@ -29,8 +29,14 @@ func ExtractInputAuditEvidence(request any, maxChars int) model.InputAuditEviden
 		if len(req.Messages) == 0 {
 			builder.content("user", "message", "/prompt", "", "", req.Prompt, 0)
 		}
+		latestUser := -1
 		for i, message := range req.Messages {
-			if i >= 128 && i < len(req.Messages)-128 && message.Role != "system" && message.Role != "developer" {
+			if message.Role == "user" {
+				latestUser = i
+			}
+		}
+		for i, message := range req.Messages {
+			if i != latestUser && i >= 128 && i < len(req.Messages)-128 && message.Role != "system" && message.Role != "developer" {
 				builder.omit("history_window")
 				builder.document.Truncated = true
 				continue
@@ -67,8 +73,14 @@ func ExtractInputAuditEvidence(request any, maxChars int) model.InputAuditEviden
 		if len(req.Messages) == 0 {
 			builder.content("user", "message", "/prompt", "", "", req.Prompt, 0)
 		}
+		latestUser := -1
 		for i, message := range req.Messages {
-			if i >= 128 && i < len(req.Messages)-128 && message.Role != "system" && message.Role != "developer" {
+			if message.Role == "user" {
+				latestUser = i
+			}
+		}
+		for i, message := range req.Messages {
+			if i != latestUser && i >= 128 && i < len(req.Messages)-128 && message.Role != "system" && message.Role != "developer" {
 				builder.omit("history_window")
 				builder.document.Truncated = true
 				continue
@@ -80,8 +92,14 @@ func ExtractInputAuditEvidence(request any, maxChars int) model.InputAuditEviden
 		if req.SystemInstructions != nil {
 			builder.gemini("system", "/systemInstruction", *req.SystemInstructions)
 		}
+		latestUser := -1
 		for i, message := range req.Contents {
-			if i >= 128 && i < len(req.Contents)-128 {
+			if message.Role == "user" || message.Role == "" {
+				latestUser = i
+			}
+		}
+		for i, message := range req.Contents {
+			if i != latestUser && i >= 128 && i < len(req.Contents)-128 {
 				builder.omit("history_window")
 				builder.document.Truncated = true
 				continue
@@ -207,12 +225,12 @@ func (builder *inputAuditEvidenceBuilder) add(role, kind, path, callID, name, te
 				break
 			}
 		}
-		if builder.fullText {
-			for i, message := range builder.document.Messages {
-				if message.Kind != "message" || message.Role == "tool" || message.Role == "assistant" {
-					drop = i
-					break
-				}
+		// Tool activity must not displace the user's instruction. In long
+		// agent runs it can precede hundreds of calls with no new user turn.
+		for i, message := range builder.document.Messages {
+			if message.Kind != "message" || message.Role == "tool" || message.Role == "assistant" {
+				drop = i
+				break
 			}
 		}
 		builder.document.Messages = slices.Delete(builder.document.Messages, drop, drop+1)
@@ -499,12 +517,21 @@ func (builder *inputAuditEvidenceBuilder) jsonContent(role, kind, path string, i
 	}
 	if item.IsArray() {
 		count := item.Get("#").Int()
+		latestUser := -1
+		position := 0
+		item.ForEach(func(_, part gjson.Result) bool {
+			if part.Get("role").Str == "user" {
+				latestUser = position
+			}
+			position++
+			return true
+		})
 		index := 0
 		item.ForEach(func(_, part gjson.Result) bool {
 			position := index
 			index++
 			partRole := part.Get("role").Str
-			if position >= 128 && int64(position) < count-128 && partRole != "system" && partRole != "developer" {
+			if position != latestUser && position >= 128 && int64(position) < count-128 && partRole != "system" && partRole != "developer" {
 				builder.omit("history_window")
 				builder.document.Truncated = true
 				return true

@@ -56,12 +56,21 @@ export function InputAuditEvidenceView(props: {
       ].some((value) => value?.toLowerCase().includes(needle))
     )
   }, [props.document.messages, search])
+  const latestUserIndex = props.document.messages.reduce(
+    (latest, message, index) =>
+      message.role === 'user' && message.text ? index : latest,
+    0
+  )
+  const latestUser = props.document.messages[latestUserIndex]
   const { table } = useDataTable({
     data: messages,
     columns: [],
     withPaginationRowModel: true,
     manualPagination: false,
-    initialPagination: { pageIndex: 0, pageSize: 10 },
+    initialPagination: {
+      pageIndex: Math.floor(latestUserIndex / 10),
+      pageSize: 10,
+    },
   })
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   return (
@@ -106,7 +115,9 @@ export function InputAuditEvidenceView(props: {
           table.setPageIndex(0)
         }}
       />
-      <Accordion defaultValue={['message-0']}>
+      <Accordion
+        defaultValue={[`message-${latestUser?.index ?? latestUserIndex}`]}
+      >
         {table.getRowModel().rows.map((row) => {
           const message = row.original
           const index = message.index ?? row.index

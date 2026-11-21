@@ -115,3 +115,39 @@ it('tool definitions do not offer a prompt lookup and unmatched searches show an
   )
   expect(screen.getByText('No Data')).toBeVisible()
 })
+
+it('opens the latest user instruction even when tool activity puts it after the first page', () => {
+  render(
+    <InputAuditEvidenceView
+      document={{
+        source: 'client_request',
+        scope: 'submitted_text_excerpts',
+        truncated: false,
+        context_missing: false,
+        omitted: [],
+        messages: [
+          ...Array.from({ length: 11 }, (_, index) => ({
+            index,
+            role: 'tool',
+            kind: 'tool_result',
+            text: `result-${index}`,
+          })),
+          {
+            index: 11,
+            role: 'user',
+            kind: 'message',
+            text: 'Investigate search results',
+          },
+          {
+            index: 12,
+            role: 'assistant',
+            kind: 'tool_call',
+            text: 'Search files',
+          },
+        ],
+      }}
+      complete
+    />
+  )
+  expect(screen.getByText('Investigate search results')).toBeVisible()
+})

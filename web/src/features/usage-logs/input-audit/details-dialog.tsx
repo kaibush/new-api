@@ -53,7 +53,7 @@ export function InputAuditDetailsDialog(props: { entry: InputAudit }) {
   const current = views.at(-1) ?? {
     visitId: 0,
     entry: props.entry,
-    tab: 'message',
+    tab: 'evidence',
     promptHash: '',
     relatedPage: 1,
   }
@@ -114,7 +114,7 @@ export function InputAuditDetailsDialog(props: { entry: InputAudit }) {
             {
               visitId: ++nextVisit.current,
               entry: props.entry,
-              tab: 'message',
+              tab: 'evidence',
               promptHash: '',
               relatedPage: 1,
             },
