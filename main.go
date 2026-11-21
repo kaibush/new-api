@@ -386,6 +386,7 @@ func InitResources() error {
 	}
 
 	service.StartAuthArtifactCleanup()
+	service.StartCheckinStatsCleanup()
 
 	return nil
 }

@@ -577,3 +577,61 @@ test('check-in status failure offers retry without enabling a claim', async () =
     await screen.findByRole('button', { name: 'Open check-in' })
   ).toBeEnabled()
 })
+
+test('the full leaderboard opens from check-in and switches between today and recent totals', async () => {
+  const get = vi.mocked(api.get).getMockImplementation()
+  if (!get) throw new Error('Expected the default API fixture')
+  vi.mocked(api.get).mockImplementation(async (url, options) => {
+    if (url !== '/api/user/checkin/leaderboard') return get(url, options)
+    return {
+      data: {
+        success: true,
+        data: {
+          enabled: true,
+          today: '2030-01-01',
+          timezone: 'Asia/Shanghai',
+          retention_days: 7,
+          my_rank: 12,
+          my_quota: 1000000,
+          surpassed_bps: 6000,
+          top: [
+            {
+              rank: 1,
+              username: 'a***b',
+              display_name: 'Winner',
+              quota_awarded: 5000000,
+              tier_name: 'Lucky',
+              checkin_date: '2030-01-01',
+            },
+          ],
+          recent_highlights: [],
+          recent_totals: [
+            {
+              rank: 1,
+              username: 'c***d',
+              display_name: 'Weekly winner',
+              quota_awarded: 10000000,
+              tier_name: '',
+              checkin_date: '',
+            },
+          ],
+        },
+      },
+    }
+  })
+  show(<CommunityCheckin />)
+  const user = userEvent.setup()
+  await user.click(
+    await screen.findByRole('button', { name: 'View full leaderboard' })
+  )
+  const dialog = await screen.findByRole('dialog', {
+    name: 'Check-in leaderboard',
+  })
+  await within(dialog).findByText('#12')
+  await user.click(
+    within(dialog).getByRole('tab', { name: 'Recent total rewards' })
+  )
+  expect(within(dialog).getAllByText('Weekly winner')).toHaveLength(2)
+  await user.click(within(dialog).getByRole('tab', { name: 'Recent jackpots' }))
+  expect(await within(dialog).findByText('No check-ins yet')).toBeVisible()
+})

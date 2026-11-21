@@ -2,7 +2,6 @@ package model
 
 import (
 	"errors"
-	"math/rand"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -43,9 +42,19 @@ func GetUserCheckinRecords(userId int, startDate, endDate string) ([]Checkin, er
 
 // HasCheckedInToday 检查用户今天是否已签到
 func HasCheckedInToday(userId int) (bool, error) {
-	today := time.Now().Format("2006-01-02")
+	config, err := CurrentCheckinConfiguration()
+	if err != nil {
+		return false, err
+	}
+	settings := config.Settings
+	settings.Normalize()
+	location, err := time.LoadLocation(settings.Pool.Timezone)
+	if err != nil {
+		return false, err
+	}
+	today := time.Now().In(location).Format("2006-01-02")
 	var count int64
-	err := DB.Model(&Checkin{}).
+	err = DB.Model(&Checkin{}).
 		Where("user_id = ? AND checkin_date = ?", userId, today).
 		Count(&count).Error
 	return count > 0, err
@@ -66,11 +75,15 @@ func UserCheckin(userId int) (*Checkin, error) {
 			return err
 		}
 		settings := config.Settings
+		settings.Normalize()
 		expiring = settings.Mode == 2
 		if !settings.Enabled {
 			return errors.New("签到功能未启用")
 		}
 		now = time.Now()
+		if location, locationErr := time.LoadLocation(settings.Pool.Timezone); locationErr == nil {
+			now = now.In(location)
+		}
 		var user User
 		if err := tx.Select("id", "created_at").First(&user, userId).Error; err != nil {
 			return err
@@ -89,12 +102,13 @@ func UserCheckin(userId int) (*Checkin, error) {
 		if !eligibility.Allowed {
 			return &CheckinRestrictedError{Eligibility: eligibility}
 		}
-		base := settings.MinQuota
-		if settings.MaxQuota > base {
-			base += int(rand.Int63n(int64(settings.MaxQuota) - int64(base) + 1))
+		base, draw, err := drawCheckinReward(tx, settings, eligibility, now)
+		if err != nil {
+			return err
 		}
+		draw.BaseQuota = base
 		awarded := checkinReward(base, eligibility)
-		if awarded == 0 {
+		if awarded == 0 && settings.Pool.RewardMode != "tiered" {
 			return &CheckinRestrictedError{Eligibility: eligibility}
 		}
 		policy, err := common.Marshal(CheckinRewardSnapshot{Configuration: config, Eligibility: *eligibility, BaseQuota: base})
@@ -104,6 +118,9 @@ func UserCheckin(userId int) (*Checkin, error) {
 		record = &Checkin{UserId: userId, CheckinDate: eligibility.Today, QuotaAwarded: awarded, CreatedAt: now.Unix(), RewardPercent: int(eligibility.RewardPercent), Policy: string(policy)}
 		record.Mode = max(settings.Mode, 1)
 		if err := tx.Create(record).Error; err != nil {
+			return err
+		}
+		if err := writeCheckinDraw(tx, record, draw); err != nil {
 			return err
 		}
 		if settings.Mode == 2 {

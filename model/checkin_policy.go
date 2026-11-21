@@ -240,6 +240,7 @@ func evaluateCheckin(tx *gorm.DB, user *User, account *CheckinAccount, config Ch
 // are presentation values only: reward amounts use the exact integer fraction.
 func calculateCheckin(user *User, account *CheckinAccount, config CheckinConfiguration, facts checkinFacts, now time.Time) *CheckinEligibility {
 	settings, limits := config.Settings, config.Settings.Limits
+	baseMin, baseMax := activeCheckinRewardRange(settings, now)
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 	start := now.AddDate(0, 0, -limits.ActivityDays).Unix()
 	coverage := config.ObservedSince
@@ -250,7 +251,7 @@ func calculateCheckin(user *User, account *CheckinAccount, config CheckinConfigu
 	result := &CheckinEligibility{
 		Mode: max(settings.Mode, 1), ExpirySeconds: settings.ExpirySeconds,
 		Limited: limits.Enabled, Allowed: settings.Enabled, Reasons: []string{},
-		MinQuota: settings.MinQuota, MaxQuota: settings.MaxQuota, BaseMinQuota: settings.MinQuota, BaseMaxQuota: settings.MaxQuota,
+		MinQuota: baseMin, MaxQuota: baseMax, BaseMinQuota: baseMin, BaseMaxQuota: baseMax,
 		RewardPercent: 100, RewardNumerator: 1, RewardDenominator: 1,
 		GiftRemaining: account.GiftRemaining, MonthlyCap: limits.MonthlyCap, MinimumSpend: limits.MinimumSpend, ActivityDays: limits.ActivityDays,
 		NextMonthAt: monthStart.AddDate(0, 1, 0).Unix(), Today: now.Format("2006-01-02"),
@@ -262,7 +263,7 @@ func calculateCheckin(user *User, account *CheckinAccount, config CheckinConfigu
 	if settings.Mode == 2 {
 		result.Limited = false
 		result.MonthlyCap, result.MonthlyRemaining = 0, 0
-		result.Allowed = settings.Enabled && settings.MaxQuota > 0
+		result.Allowed = settings.Enabled && (baseMax > 0 || settings.Pool.RewardMode == "tiered")
 		if !settings.Enabled {
 			result.Reasons = append(result.Reasons, "checkin_disabled")
 		}
@@ -295,7 +296,7 @@ func calculateCheckin(user *User, account *CheckinAccount, config CheckinConfigu
 		result.Reasons = append(result.Reasons, "history_incomplete")
 	}
 	if !limits.Enabled {
-		result.Allowed = result.Allowed && result.MaxQuota > 0
+		result.Allowed = result.Allowed && (result.MaxQuota > 0 || settings.Pool.RewardMode == "tiered")
 		return result
 	}
 	inGrace := now.Unix() < result.ObservationUntil
@@ -315,9 +316,9 @@ func calculateCheckin(user *User, account *CheckinAccount, config CheckinConfigu
 		}
 		result.RewardPercent = float64(result.RewardNumerator) * 100 / float64(result.RewardDenominator)
 	}
-	result.MinQuota = checkinReward(settings.MinQuota, result)
-	result.MaxQuota = checkinReward(settings.MaxQuota, result)
-	if result.MonthlyRemaining == 0 || result.MonthlyRemaining < int64(settings.MaxQuota)*result.RewardNumerator/result.RewardDenominator {
+	result.MinQuota = checkinReward(baseMin, result)
+	result.MaxQuota = checkinReward(baseMax, result)
+	if result.MonthlyRemaining == 0 || result.MonthlyRemaining < int64(baseMax)*result.RewardNumerator/result.RewardDenominator {
 		result.Reasons = append(result.Reasons, "monthly_cap")
 	}
 	if result.MaxQuota == 0 {
@@ -350,7 +351,11 @@ func GetCheckinEligibility(userID int) (*CheckinEligibility, error) {
 		if err := tx.Select("id", "created_at").First(&user, userID).Error; err != nil {
 			return err
 		}
-		result, err = evaluateCheckin(tx, &user, account, config, time.Now())
+		now = time.Now()
+		if location, locationErr := time.LoadLocation(config.Settings.Pool.Timezone); locationErr == nil {
+			now = now.In(location)
+		}
+		result, err = evaluateCheckin(tx, &user, account, config, now)
 		return err
 	})
 	return result, err

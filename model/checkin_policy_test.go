@@ -19,7 +19,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// Schema from v1.0.0-rc.42:model/checkin.go, retained to exercise upgrades.
+// Schema from v1.0.0-rc.51:model/checkin.go, retained to exercise upgrades.
 type releasedCheckin struct {
 	Id           int    `gorm:"primaryKey;autoIncrement"`
 	UserId       int    `gorm:"not null;uniqueIndex:idx_user_checkin_date"`
@@ -86,7 +86,7 @@ func TestCheckinPolicyDatabaseMatrix(t *testing.T) {
 			for _, upgrade := range []bool{false, true} {
 				name := "fresh"
 				if upgrade {
-					name = "upgrade_rc42"
+					name = "upgrade_rc51"
 				}
 				t.Run(name, func(t *testing.T) {
 					// Each scenario represents a separate application startup. Do not
@@ -98,9 +98,9 @@ func TestCheckinPolicyDatabaseMatrix(t *testing.T) {
 					require.NoError(t, err)
 					sqlDB.SetMaxOpenConns(4)
 					DB = db
-					require.NoError(t, db.Migrator().DropTable(&Task{}, &CheckinGrant{}, &CheckinFunding{}, &CheckinUsageDay{}, &CheckinPolicyState{}, &Option{}, &CheckinUsage{}, &CheckinAccount{}, &Checkin{}, &checkinTestUser{}))
+					require.NoError(t, db.Migrator().DropTable(&Task{}, &CheckinGrant{}, &CheckinFunding{}, &CheckinUsageDay{}, &CheckinPolicyState{}, &CheckinDailyBucket{}, &CheckinDrawLog{}, &CheckinDailyPool{}, &Option{}, &CheckinUsage{}, &CheckinAccount{}, &Checkin{}, &checkinTestUser{}))
 					t.Cleanup(func() {
-						require.NoError(t, db.Migrator().DropTable(&Task{}, &CheckinGrant{}, &CheckinFunding{}, &CheckinUsageDay{}, &CheckinPolicyState{}, &Option{}, &CheckinUsage{}, &CheckinAccount{}, &Checkin{}, &checkinTestUser{}))
+						require.NoError(t, db.Migrator().DropTable(&Task{}, &CheckinGrant{}, &CheckinFunding{}, &CheckinUsageDay{}, &CheckinPolicyState{}, &CheckinDailyBucket{}, &CheckinDrawLog{}, &CheckinDailyPool{}, &Option{}, &CheckinUsage{}, &CheckinAccount{}, &Checkin{}, &checkinTestUser{}))
 					})
 					require.NoError(t, db.AutoMigrate(&checkinTestUser{}, &Option{}))
 					if upgrade {
@@ -113,7 +113,7 @@ func TestCheckinPolicyDatabaseMatrix(t *testing.T) {
 						require.NoError(t, db.Create(&Option{Key: "checkin_setting.min_quota", Value: "1234"}).Error)
 					}
 					for range 2 {
-						require.NoError(t, db.AutoMigrate(&Task{}, &CheckinGrant{}, &CheckinFunding{}, &Checkin{}, &CheckinAccount{}, &CheckinUsage{}, &CheckinUsageDay{}, &CheckinPolicyState{}))
+						require.NoError(t, db.AutoMigrate(&Task{}, &CheckinGrant{}, &CheckinFunding{}, &Checkin{}, &CheckinAccount{}, &CheckinUsage{}, &CheckinUsageDay{}, &CheckinPolicyState{}, &CheckinDailyBucket{}, &CheckinDrawLog{}, &CheckinDailyPool{}))
 						require.NoError(t, InitializeCheckinAccounting())
 					}
 					if upgrade {
@@ -460,6 +460,7 @@ func TestCheckinPolicyDatabaseMatrix(t *testing.T) {
 							})
 						}
 					})
+					t.Run("reward_pool", func(t *testing.T) { verifyCheckinRewardPool(t, db) })
 				})
 			}
 		})
@@ -1055,9 +1056,7 @@ func verifyExpiringCheckinFunding(t *testing.T, db *gorm.DB) {
 		require.NoError(t, db.Create(&checkinTestUser{Id: cachedUser, Quota: 100}).Error)
 		require.NoError(t, db.Create(&CheckinGrant{CheckinID: 900003, UserID: cachedUser, Quota: 20, Remaining: 20, ExpiresAt: now.Unix() + 3600}).Error)
 		// 90 units belong to an outstanding legacy batch; only 10 are spendable.
-		require.NoError(t, common.RDB.HSet(t.Context(), getUserCacheKey(cachedUser), map[string]any{
-			"Id": cachedUser, "Quota": 10, "AuthVersion": 1, "CacheSchema": userCacheSchemaVersion,
-		}).Err())
+		require.NoError(t, writeUserCache(&UserBase{Id: cachedUser, Quota: 10, AuthVersion: 1, CacheSchema: userCacheSchemaVersion}, true))
 		detail, err := GetCheckinUserDetail(cachedUser)
 		require.NoError(t, err)
 		require.NotNil(t, detail.User.Balance)
@@ -1212,4 +1211,170 @@ func verifyIndependentUserActivity(t *testing.T, db *gorm.DB) {
 	require.Error(t, err)
 	_, err = ListUserActivity(UserActivityQuery{Days: 30, Page: 0, PageSize: 10})
 	require.Error(t, err)
+}
+
+func verifyCheckinRewardPool(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	settings := operation_setting.CheckinSetting{Enabled: true, Mode: 2, ExpirySeconds: 3600, MinQuota: 15, MaxQuota: 50}
+	settings.Normalize()
+	settings.Pool.RewardMode = "tiered"
+	settings.Pool.Timezone = "Asia/Shanghai"
+	settings.Pool.Tiers = []operation_setting.CheckinRewardTier{
+		{Key: "base", Name: "Base", MinQuota: 2, MaxQuota: 2, WeightBps: 0},
+		{Key: "lucky", Name: "Lucky", MinQuota: 10, MaxQuota: 10, WeightBps: 10000},
+	}
+	settings.Pool.TimeSlotsEnabled = true
+	settings.Pool.TimeSlots = []operation_setting.CheckinTimeSlot{{Key: "day", Name: "Day", StartMinute: 0, EndMinute: 1440, QuotaBps: 30000}}
+	saveCheckinTestSettings(t, settings)
+	for _, id := range []int{9100, 9101, 9102, 9103, 9104, 9105, 9106} {
+		require.NoError(t, db.Create(&checkinTestUser{Id: id, Username: fmt.Sprintf("private-user-%d", id), DisplayName: fmt.Sprintf("Private User %d", id), CreatedAt: time.Now().Unix()}).Error)
+	}
+	t.Run("time_boundaries_override_weights_and_global_cap", func(t *testing.T) {
+		policy := settings
+		policy.Pool.TimeSlots = []operation_setting.CheckinTimeSlot{{Key: "morning", Name: "Morning", StartMinute: 360, EndMinute: 540, QuotaBps: 5000, OverrideTiers: true, TierWeights: []operation_setting.CheckinTimeSlotWeight{{TierKey: "base", WeightBps: 10000}, {TierKey: "lucky", WeightBps: 0}}}}
+		loc, err := time.LoadLocation(policy.Pool.Timezone)
+		require.NoError(t, err)
+		for _, tc := range []struct {
+			minute, want int
+			tier         string
+		}{{359, 10, "lucky"}, {360, 1, "base"}, {539, 1, "base"}, {540, 10, "lucky"}} {
+			at := time.Date(2026, 11, 1, tc.minute/60, tc.minute%60, 0, 0, loc)
+			require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+				quota, draw, err := drawCheckinReward(tx, policy, &CheckinEligibility{RewardNumerator: 1, RewardDenominator: 1}, at)
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, quota)
+				assert.Equal(t, tc.tier, draw.TierKey)
+				minimum, maximum := activeCheckinRewardRange(policy, at)
+				assert.GreaterOrEqual(t, quota, minimum)
+				assert.LessOrEqual(t, quota, maximum)
+				if tc.tier == "base" {
+					assert.Equal(t, 1, minimum, "eligibility also reflects time discounts below the old minimum")
+					assert.Equal(t, 1, maximum)
+				}
+				return nil
+			}))
+		}
+		policy.Pool.DefaultSlotQuotaBps = 50000
+		policy.MaxQuota = 20
+		require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+			quota, _, err := drawCheckinReward(tx, policy, &CheckinEligibility{RewardNumerator: 1, RewardDenominator: 1}, time.Date(2026, 11, 1, 12, 0, 0, 0, loc))
+			require.NoError(t, err)
+			assert.Equal(t, 20, quota, "time multipliers cannot exceed the global cap")
+			return nil
+		}))
+	})
+	t.Run("scaled_budget_and_duplicate_claim", func(t *testing.T) {
+		settings.Pool.DailyPool = operation_setting.CheckinDailyPoolConfig{Enabled: true, DailyBonusCap: 45}
+		settings.Pool.Leaderboard.Enabled = true
+		saveCheckinTestSettings(t, settings)
+		first, err := UserCheckin(9100)
+		require.NoError(t, err)
+		assert.Equal(t, 30, first.QuotaAwarded)
+		_, err = UserCheckin(9100)
+		require.EqualError(t, err, "今日已签到")
+		second, err := UserCheckin(9101)
+		require.NoError(t, err)
+		assert.Equal(t, 6, second.QuotaAwarded, "scaled high-tier reward cannot exceed the remaining daily budget")
+		var draw CheckinDrawLog
+		require.NoError(t, db.First(&draw, "checkin_id = ?", second.Id).Error)
+		assert.True(t, draw.PoolFallback)
+		assert.Equal(t, "lucky", draw.OriginalTierKey)
+		var budget CheckinDailyPool
+		require.NoError(t, db.First(&budget, "pool_key = ?", "__bonus_quota__").Error)
+		assert.Equal(t, int64(30), budget.UsedQuota, "budget records issued quota rather than the unscaled tier maximum")
+		var wallet int64
+		require.NoError(t, db.Model(&checkinTestUser{}).Where("id = ?", 9100).Pluck("quota", &wallet).Error)
+		assert.Zero(t, wallet, "expiring rewards remain isolated")
+		grants, err := GetCheckinGrants(9100)
+		require.NoError(t, err)
+		assert.Equal(t, int64(30), grants.Available)
+		board, err := GetCheckinLeaderboard(9100)
+		require.NoError(t, err)
+		encoded, err := common.Marshal(board)
+		require.NoError(t, err)
+		assert.NotContains(t, string(encoded), "private-user-")
+		assert.NotContains(t, string(encoded), "Private User")
+		assert.NotContains(t, string(encoded), "user_id")
+		assert.GreaterOrEqual(t, board["my_rank"].(int64), int64(1))
+	})
+	t.Run("concurrent_daily_winner_limit", func(t *testing.T) {
+		settings.Pool.DailyPool.Enabled = false
+		settings.Pool.Tiers[1].DailyMaxCount = 1
+		saveCheckinTestSettings(t, settings)
+		claims := make(chan *Checkin, 2)
+		errs := make(chan error, 2)
+		var wg sync.WaitGroup
+		for _, id := range []int{9102, 9103} {
+			wg.Go(func() { claim, err := UserCheckin(id); claims <- claim; errs <- err })
+		}
+		wg.Wait()
+		close(errs)
+		close(claims)
+		for err := range errs {
+			require.NoError(t, err)
+		}
+		var awards []int
+		for claim := range claims {
+			require.NotNil(t, claim)
+			awards = append(awards, claim.QuotaAwarded)
+		}
+		assert.ElementsMatch(t, []int{30, 6}, awards)
+	})
+	t.Run("wallet_credit_rollback_restores_pool_and_statistics", func(t *testing.T) {
+		settings.Mode = 1
+		settings.Limits = operation_setting.CheckinLimits{ActivityDays: 30, MonthlyCap: 100}
+		settings.Pool.Tiers[1].DailyMaxCount = 0
+		settings.Pool.DailyPool = operation_setting.CheckinDailyPoolConfig{Enabled: true, DailyBonusCap: 100}
+		saveCheckinTestSettings(t, settings)
+		require.NoError(t, db.Model(&checkinTestUser{}).Where("id = ?", 9104).Update("quota", common.MaxWalletQuota).Error)
+		var budget CheckinDailyPool
+		require.NoError(t, db.First(&budget, "pool_key = ?", "__bonus_quota__").Error)
+		_, err := UserCheckin(9104)
+		require.ErrorIs(t, err, ErrWalletQuotaLimitExceeded)
+		var after CheckinDailyPool
+		require.NoError(t, db.First(&after, "pool_key = ?", "__bonus_quota__").Error)
+		assert.Equal(t, budget, after)
+		var count int64
+		require.NoError(t, db.Model(&CheckinDrawLog{}).Where("user_id = ?", 9104).Count(&count).Error)
+		assert.Zero(t, count)
+		require.NoError(t, db.Model(&Checkin{}).Where("user_id = ?", 9104).Count(&count).Error)
+		assert.Zero(t, count)
+	})
+	t.Run("retention_preserves_core_ledger", func(t *testing.T) {
+		settings.Pool.StatsRetentionDays = 1
+		saveCheckinTestSettings(t, settings)
+		loc, err := time.LoadLocation(settings.Pool.Timezone)
+		require.NoError(t, err)
+		today := time.Now().In(loc)
+		yesterday := today.AddDate(0, 0, -1).Format("2006-01-02")
+		old := Checkin{UserId: 9105, CheckinDate: yesterday, QuotaAwarded: 7}
+		require.NoError(t, db.Create(&old).Error)
+		require.NoError(t, db.Create(&CheckinDrawLog{CheckinID: old.Id, UserID: 9105, CheckinDate: yesterday, TierKey: "lucky", TierRank: 1, QuotaAwarded: 7}).Error)
+		require.NoError(t, db.Create(&CheckinDailyBucket{StatDate: yesterday, BucketType: "tier", BucketKey: "retention-test", CheckinCount: 1, TotalQuota: 7}).Error)
+		stats, err := GetCheckinAnalytics(30)
+		require.NoError(t, err)
+		assert.Len(t, stats["daily_series"], 1, "queries clip the retention window before physical cleanup")
+		require.NoError(t, CleanupCheckinStats())
+		require.NoError(t, CleanupCheckinStats())
+		var count int64
+		require.NoError(t, db.Model(&CheckinDrawLog{}).Where("checkin_date < ?", today.Format("2006-01-02")).Count(&count).Error)
+		assert.Zero(t, count)
+		require.NoError(t, db.Model(&CheckinDailyBucket{}).Where("stat_date < ?", today.Format("2006-01-02")).Count(&count).Error)
+		assert.Zero(t, count)
+		require.NoError(t, db.First(&Checkin{}, old.Id).Error, "cleanup never deletes monthly accounting records")
+		grants, err := GetCheckinGrants(9100)
+		require.NoError(t, err)
+		assert.Equal(t, int64(30), grants.Available)
+	})
+	t.Run("zero_reward_cannot_be_retried_for_a_larger_prize", func(t *testing.T) {
+		settings.Mode = 2
+		settings.Pool.Tiers[0].MinQuota, settings.Pool.Tiers[0].MaxQuota = 0, 0
+		settings.Pool.Tiers[0].WeightBps, settings.Pool.Tiers[1].WeightBps = 10000, 0
+		saveCheckinTestSettings(t, settings)
+		claim, err := UserCheckin(9106)
+		require.NoError(t, err)
+		assert.Zero(t, claim.QuotaAwarded)
+		_, err = UserCheckin(9106)
+		require.EqualError(t, err, "今日已签到")
+	})
 }

@@ -162,6 +162,12 @@ export function CheckinCalendarCard({
             `${t('Check-in successful! Received')} ${formatQuotaWithCurrency(res.data.quota_awarded)}`
           )
           void queryClient.invalidateQueries({ queryKey: ['checkin-status'] })
+          void queryClient.invalidateQueries({
+            queryKey: ['checkin-leaderboard'],
+          })
+          void queryClient.invalidateQueries({
+            queryKey: ['checkin-analytics'],
+          })
           void queryClient.invalidateQueries({ queryKey: ['checkin-balance'] })
           setTurnstileModalVisible(false)
         } else {

@@ -21,6 +21,8 @@ import { requireServerSuccess } from '@/lib/server-error-message'
 
 import type {
   CheckinConfiguration,
+  CheckinLeaderboard,
+  CheckinAnalytics,
   CheckinOverview,
   CheckinSettings,
   CheckinUserDetail,
@@ -55,6 +57,21 @@ export async function saveCheckinConfiguration(
 export async function getCheckinOverview() {
   const response = await api.get<Response<CheckinOverview>>(
     '/api/user/checkin/overview'
+  )
+  return requireServerSuccess(response.data).data
+}
+
+export async function getCheckinLeaderboard() {
+  const response = await api.get<Response<CheckinLeaderboard>>(
+    '/api/user/checkin/leaderboard'
+  )
+  return requireServerSuccess(response.data).data
+}
+
+export async function getCheckinAnalytics(days: number) {
+  const response = await api.get<Response<CheckinAnalytics>>(
+    '/api/user/checkin/analytics',
+    { params: { days } }
   )
   return requireServerSuccess(response.data).data
 }

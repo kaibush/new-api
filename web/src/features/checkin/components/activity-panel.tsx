@@ -41,6 +41,7 @@ import { formatNumber } from '@/lib/format'
 import { listCheckinUsers } from '../api'
 import { formatCheckinPercent } from '../format'
 import type { CheckinSettings, CheckinUser, CheckinUserQuery } from '../types'
+import { RewardAnalytics } from './reward-analytics'
 import { CheckinUserDetailDialog } from './user-detail'
 
 const EMPTY_USERS: CheckinUser[] = []
@@ -255,6 +256,7 @@ export function CheckinActivityPanel(props: {
     query.data?.items[0]?.eligibility.activity_days
   return (
     <section className='space-y-5' aria-label={t('Check-in activity')}>
+      {!props.preview && <RewardAnalytics />}
       <div className='flex flex-wrap items-center justify-between gap-2'>
         <h3 className='font-medium'>{t('Check-in and balances')}</h3>
         <Button

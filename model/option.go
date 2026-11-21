@@ -236,6 +236,16 @@ func validateOptionValue(key string, value string) error {
 		}
 		return limits.Validate()
 	}
+	if key == "checkin_setting.pool" {
+		var pool operation_setting.CheckinPoolSetting
+		if err := common.UnmarshalJsonStr(value, &pool); err != nil {
+			return err
+		}
+		settings := *operation_setting.GetCheckinSetting()
+		settings.Pool = pool
+		settings.Normalize()
+		return settings.Pool.Validate(settings)
+	}
 	if key == helpcenter.OptionKey || key == "checkin_setting.limits" {
 		_, err := helpcenter.Parse(value)
 		return err

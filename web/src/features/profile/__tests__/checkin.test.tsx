@@ -310,10 +310,40 @@ test('the limits toggle reveals controls and saves one complete policy', async (
           reduced_percent: 10,
           new_user_days: 5,
         },
+        pool: {
+          reward_mode: 'uniform',
+          timezone: 'Asia/Shanghai',
+          stats_retention_days: 30,
+          tiers: [],
+          time_slots_enabled: false,
+          default_slot_quota_bps: 10000,
+          time_slots: [],
+          daily_pool: { enabled: false, daily_bonus_cap: 0 },
+          leaderboard: {
+            enabled: false,
+            top_n: 20,
+            mask_username: true,
+            show_my_rank: true,
+            show_recent_jackpots: true,
+          },
+        },
       },
     })
   )
   expect(api.put).toHaveBeenCalledTimes(1)
+})
+
+test('selecting the recommended pool preset switches to tiers and fills the reward odds', async () => {
+  await renderSettings()
+  fireEvent.click(screen.getByRole('button', { name: /Preset B/ }))
+  expect(
+    screen.getByRole('combobox', { name: 'Reward distribution' })
+  ).toHaveTextContent('Tiered pool')
+  const probabilities = screen.getAllByRole('spinbutton', {
+    name: 'Probability (%)',
+  })
+  expect(probabilities[0]).toHaveValue(80)
+  expect(probabilities).toHaveLength(4)
 })
 
 test('out-of-range percentages cannot be saved', async () => {

@@ -32,7 +32,12 @@ func GetCheckinStatus(c *gin.Context) {
 	}
 	userId := c.GetInt("id")
 	// 获取月份参数，默认为当前月份
-	month := c.DefaultQuery("month", time.Now().Format("2006-01"))
+	location, err := time.LoadLocation(setting.Pool.Timezone)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	month := c.DefaultQuery("month", time.Now().In(location).Format("2006-01"))
 	if _, err := time.Parse("2006-01", month); err != nil {
 		common.ApiErrorMsg(c, "Invalid month")
 		return
@@ -98,6 +103,15 @@ func DoCheckin(c *gin.Context) {
 	})
 }
 
+func GetCheckinLeaderboard(c *gin.Context) {
+	result, err := model.GetCheckinLeaderboard(c.GetInt("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
+}
+
 // Check-in administration uses the existing root/admin route groups.
 func GetCheckinSettings(c *gin.Context) {
 	config, err := model.CurrentCheckinConfiguration()
@@ -132,6 +146,28 @@ func GetCheckinOverview(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, overview)
+}
+
+func GetCheckinAnalytics(c *gin.Context) {
+	days := 7
+	if value := c.Query("days"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			common.ApiErrorMsg(c, "Invalid days")
+			return
+		}
+		days = parsed
+	}
+	if days < 1 || days > 30 {
+		common.ApiErrorMsg(c, "Invalid days")
+		return
+	}
+	result, err := model.GetCheckinAnalytics(days)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
 }
 
 func ListCheckinUsers(c *gin.Context) {

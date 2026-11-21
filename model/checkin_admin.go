@@ -150,6 +150,9 @@ func checkinUserRows(tx *gorm.DB, users []User, config CheckinConfiguration, now
 	if len(users) == 0 {
 		return rows, nil
 	}
+	if location, err := time.LoadLocation(config.Settings.Pool.Timezone); err == nil {
+		now = now.In(location)
+	}
 	ids := make([]int, len(users))
 	for i := range users {
 		ids[i] = users[i].Id

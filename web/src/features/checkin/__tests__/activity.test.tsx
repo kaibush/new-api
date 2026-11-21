@@ -301,7 +301,9 @@ test('an empty method 2 search keeps the expiry view without activity filters', 
   expect(
     screen.queryByRole('columnheader', { name: 'Monthly rewards / cap' })
   ).not.toBeInTheDocument()
-  expect(api.get).not.toHaveBeenCalled()
+  expect(api.get).toHaveBeenCalledWith('/api/user/checkin/analytics', {
+    params: { days: 7 },
+  })
 })
 
 test.each([1, 2])(
@@ -764,5 +766,146 @@ test('mode 2 keeps the global and per-user statistics available after viewing ba
   ).toBeVisible()
   expect(
     screen.queryByRole('columnheader', { name: 'Monthly rewards / cap' })
+  ).not.toBeInTheDocument()
+})
+
+test('a savings preset scales the saved quota range and saves despite the old minimum', async () => {
+  const save = vi.spyOn(api, 'put').mockImplementation(async (_url, body) => ({
+    data: {
+      success: true,
+      data: { ...(body as object), version: 3, observed_since: 1700000000 },
+    },
+  }))
+  await renderAdmin('/system-settings/billing/checkin', ROLE.SUPER_ADMIN)
+  fireEvent.click(await screen.findByRole('button', { name: /Preset B/ }))
+  expect(
+    screen.queryByRole('spinbutton', { name: 'Minimum check-in quota' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getAllByRole('spinbutton', { name: 'Probability (%)' })[0]
+  ).toHaveValue(80)
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Save check-in settings' })
+  )
+  await waitFor(() =>
+    expect(save).toHaveBeenCalledWith(
+      '/api/option/checkin',
+      expect.objectContaining({
+        settings: expect.objectContaining({
+          min_quota: 34,
+          max_quota: 343,
+          pool: expect.objectContaining({ reward_mode: 'tiered' }),
+        }),
+      })
+    )
+  )
+  await waitFor(() =>
+    expect(
+      within(
+        screen.getByRole('group', { name: 'Estimated savings' })
+      ).getByText('0%')
+    ).toBeVisible()
+  )
+})
+
+test('invalid probabilities and retention prevent saving and display validation feedback', async () => {
+  const save = vi.spyOn(api, 'put')
+  await renderAdmin('/system-settings/billing/checkin', ROLE.SUPER_ADMIN)
+  fireEvent.click(await screen.findByRole('button', { name: /Preset B/ }))
+  fireEvent.change(
+    screen.getAllByRole('spinbutton', { name: 'Probability (%)' })[0],
+    { target: { value: '79.99' } }
+  )
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Save check-in settings' })
+  )
+  await screen.findByText('Check-in reward tier probabilities must total 100%')
+  fireEvent.change(
+    screen.getAllByRole('spinbutton', { name: 'Probability (%)' })[0],
+    { target: { value: '80' } }
+  )
+  fireEvent.change(
+    screen.getByRole('spinbutton', { name: 'Statistics retention (days)' }),
+    { target: { value: '31' } }
+  )
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Save check-in settings' })
+  )
+  await waitFor(() =>
+    expect(
+      screen.getByRole('spinbutton', { name: 'Statistics retention (days)' })
+    ).toHaveAttribute('aria-invalid', 'true')
+  )
+  expect(save).not.toHaveBeenCalled()
+  expect(
+    screen.getByRole('spinbutton', { name: 'Statistics retention (days)' })
+  ).toHaveAttribute('aria-invalid', 'true')
+})
+
+test('custom time-slot probabilities are editable and midnight end times save as 1440', async () => {
+  const user = userEvent.setup()
+  const save = vi.spyOn(api, 'put').mockImplementation(async (_url, body) => ({
+    data: {
+      success: true,
+      data: { ...(body as object), version: 3, observed_since: 1700000000 },
+    },
+  }))
+  await renderAdmin('/system-settings/billing/checkin', ROLE.SUPER_ADMIN)
+  fireEvent.click(await screen.findByRole('button', { name: /Preset B/ }))
+  await user.click(
+    screen.getByRole('switch', { name: 'Enable time-based rules' })
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Add time slot' }))
+  fireEvent.change(screen.getByLabelText('End time'), {
+    target: { value: '00:00' },
+  })
+  await user.click(
+    screen.getByRole('switch', { name: 'Use custom tier probabilities' })
+  )
+  expect(
+    screen.getByRole('spinbutton', { name: 'Daily base · Probability (%)' })
+  ).toHaveValue(80)
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Save check-in settings' })
+  )
+  await waitFor(() =>
+    expect(save).toHaveBeenCalledWith(
+      '/api/option/checkin',
+      expect.objectContaining({
+        settings: expect.objectContaining({
+          pool: expect.objectContaining({
+            time_slots: [
+              expect.objectContaining({
+                end_minute: 1440,
+                override_tiers: true,
+                tier_weights: expect.arrayContaining([
+                  expect.objectContaining({
+                    tier_key: 'base',
+                    weight_bps: 8000,
+                  }),
+                ]),
+              }),
+            ],
+          }),
+        }),
+      })
+    )
+  )
+})
+
+test('selecting tiered distribution initializes valid editable probabilities', async () => {
+  const user = userEvent.setup()
+  await renderAdmin('/system-settings/billing/checkin', ROLE.SUPER_ADMIN)
+  await user.click(
+    await screen.findByRole('combobox', { name: 'Reward distribution' })
+  )
+  await user.click(await screen.findByRole('option', { name: 'Tiered pool' }))
+  expect(
+    screen.getAllByRole('spinbutton', { name: 'Probability (%)' })
+  ).toHaveLength(4)
+  expect(
+    screen.queryByRole('button', {
+      name: 'Fill remaining probability into the base tier',
+    })
   ).not.toBeInTheDocument()
 })

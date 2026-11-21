@@ -67,6 +67,40 @@ export interface CheckinSettings {
     reduced_percent: number
     new_user_days: number
   }
+  pool: CheckinPoolSetting
+}
+
+export interface CheckinPoolSetting {
+  reward_mode: 'uniform' | 'tiered'
+  timezone: string
+  stats_retention_days: number
+  tiers: Array<{
+    key: string
+    name: string
+    min_quota: number
+    max_quota: number
+    weight_bps: number
+    daily_max_count: number
+  }>
+  time_slots_enabled: boolean
+  default_slot_quota_bps: number
+  time_slots: Array<{
+    key: string
+    name: string
+    start_minute: number
+    end_minute: number
+    quota_bps: number
+    override_tiers: boolean
+    tier_weights: Array<{ tier_key: string; weight_bps: number }>
+  }>
+  daily_pool: { enabled: boolean; daily_bonus_cap: number }
+  leaderboard: {
+    enabled: boolean
+    top_n: number
+    mask_username: boolean
+    show_my_rank: boolean
+    show_recent_jackpots: boolean
+  }
 }
 
 export interface CheckinConfiguration {
@@ -165,4 +199,50 @@ export interface CheckinGrantSummary {
   as_of: number
   // Older servers return null when the user has not claimed any rewards.
   records: CheckinGrantStatus[] | null
+}
+
+export interface CheckinLeaderboardEntry {
+  rank: number
+  username: string
+  display_name: string
+  quota_awarded: number
+  tier_name: string
+  checkin_date: string
+}
+export interface CheckinLeaderboard {
+  enabled: boolean
+  today?: string
+  timezone?: string
+  retention_days?: number
+  top?: CheckinLeaderboardEntry[]
+  recent_highlights?: CheckinLeaderboardEntry[]
+  recent_totals?: CheckinLeaderboardEntry[]
+  my_rank?: number
+  my_quota?: number
+  surpassed_bps?: number
+}
+export interface CheckinAnalyticsBucket {
+  bucket_key: string
+  bucket_label: string
+  checkin_count: number
+  total_quota: number
+  max_award_quota: number
+}
+export interface CheckinAnalytics {
+  timezone: string
+  today: string
+  retention_days: number
+  reward_mode: string
+  configured_tiers: CheckinPoolSetting['tiers']
+  daily_pool: CheckinPoolSetting['daily_pool']
+  today_pool_used: number
+  daily_series: Array<{
+    date: string
+    total_checkins: number
+    total_quota: number
+    fallback_count: number
+    tiers: CheckinAnalyticsBucket[]
+    slots: CheckinAnalyticsBucket[]
+    hours: CheckinAnalyticsBucket[]
+  }>
 }

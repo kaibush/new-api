@@ -152,6 +152,7 @@ func SetApiRouter(router *gin.Engine) {
 				// Check-in routes
 				selfRoute.GET("/checkin", controller.GetCheckinStatus)
 				selfRoute.POST("/checkin", middleware.TurnstileCheck(), controller.DoCheckin)
+				selfRoute.GET("/checkin/leaderboard", middleware.DisableCache(), controller.GetCheckinLeaderboard)
 
 				// Custom OAuth bindings
 				selfRoute.GET("/oauth/bindings", controller.GetUserOAuthBindings)
@@ -170,6 +171,7 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.POST("/activity/users", middleware.DisableCache(), controller.ListUserActivity)
 				adminRoute.GET("/:id/activity", middleware.DisableCache(), controller.GetUserActivityDetail)
 				adminRoute.GET("/checkin/overview", middleware.DisableCache(), controller.GetCheckinOverview)
+				adminRoute.GET("/checkin/analytics", middleware.DisableCache(), controller.GetCheckinAnalytics)
 				adminRoute.POST("/checkin/users", middleware.DisableCache(), controller.ListCheckinUsers)
 				adminRoute.GET("/:id/checkin", middleware.DisableCache(), controller.GetCheckinUserDetail)
 				adminRoute.GET("/:id/oauth/bindings", controller.GetUserOAuthBindingsByAdmin)

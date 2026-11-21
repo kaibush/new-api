@@ -50,7 +50,10 @@ import {
   getCheckinConfiguration,
   saveCheckinConfiguration,
 } from '@/features/checkin/api'
-import type { CheckinConfiguration } from '@/features/checkin/types'
+import type {
+  CheckinConfiguration,
+  CheckinPoolSetting,
+} from '@/features/checkin/types'
 import {
   SettingsForm,
   SettingsSwitchContent,
@@ -60,6 +63,9 @@ import { SettingsPageFormActions } from '@/features/system-settings/components/s
 import { SettingsSection } from '@/features/system-settings/components/settings-section'
 import { formatQuotaWithCurrency } from '@/lib/currency'
 import { handleServerError } from '@/lib/handle-server-error'
+
+import { checkinPoolSchema } from '../lib/pool-schema'
+import { RewardPoolSettings } from './reward-pool-settings'
 
 const limitsSchema = z.object({
   enabled: z.boolean(),
@@ -108,6 +114,24 @@ const limitFields = [
   },
 ] as const
 
+const defaultPool: CheckinPoolSetting = {
+  reward_mode: 'uniform',
+  timezone: 'Asia/Shanghai',
+  stats_retention_days: 30,
+  tiers: [],
+  time_slots_enabled: false,
+  default_slot_quota_bps: 10000,
+  time_slots: [],
+  daily_pool: { enabled: false, daily_bonus_cap: 0 },
+  leaderboard: {
+    enabled: false,
+    top_n: 20,
+    mask_username: true,
+    show_my_rank: true,
+    show_recent_jackpots: true,
+  },
+}
+
 const schema = z
   .object({
     limits: z.object({
@@ -123,8 +147,20 @@ const schema = z
     enabled: z.boolean(),
     minQuota: z.coerce.number().int().min(0).max(2147483647),
     maxQuota: z.coerce.number().int().min(0).max(2147483647),
+    pool: checkinPoolSchema,
   })
   .superRefine((values, context) => {
+    if (values.pool.reward_mode === 'tiered') {
+      values.pool.tiers.forEach((tier, index) => {
+        if (tier.max_quota > values.maxQuota) {
+          context.addIssue({
+            code: 'custom',
+            message: 'Tier maximum exceeds the global reward cap',
+            path: ['pool', 'tiers', index, 'max_quota'],
+          })
+        }
+      })
+    }
     if (values.mode === 2) return
     const result = limitsSchema.safeParse(values.limits)
     if (!result.success) {
@@ -140,12 +176,18 @@ const schema = z
       values.limits.monthly_cap > 0,
     { path: ['limits', 'monthly_cap'], message: 'Must be greater than 0' }
   )
-  .refine((values) => values.maxQuota >= values.minQuota, {
-    path: ['maxQuota'],
-    message: 'Maximum must be at least the minimum',
-  })
+  .refine(
+    (values) =>
+      values.pool.reward_mode === 'tiered' ||
+      values.maxQuota >= values.minQuota,
+    {
+      path: ['maxQuota'],
+      message: 'Maximum must be at least the minimum',
+    }
+  )
 
-type Values = z.infer<typeof schema>
+export type CheckinSettingsValues = z.infer<typeof schema>
+type Values = CheckinSettingsValues
 
 export function CheckinSettingsSection() {
   const query = useQuery({
@@ -172,6 +214,7 @@ function CheckinSettingsForm(props: { configuration: CheckinConfiguration }) {
           min_quota: values.minQuota,
           max_quota: values.maxQuota,
           limits: values.limits,
+          pool: values.pool,
         },
         revision
       ),
@@ -182,6 +225,8 @@ function CheckinSettingsForm(props: { configuration: CheckinConfiguration }) {
         ['system-options'],
         ['checkin-status'],
         ['checkin-admin'],
+        ['checkin-analytics'],
+        ['checkin-leaderboard'],
         ['status'],
       ]) {
         void queryClient.invalidateQueries({ queryKey })
@@ -215,6 +260,7 @@ function CheckinSettingsForm(props: { configuration: CheckinConfiguration }) {
       limits,
       minQuota: defaultValues.minQuota,
       maxQuota: defaultValues.maxQuota,
+      pool: config.settings.pool ?? defaultPool,
     },
   })
 
@@ -222,11 +268,19 @@ function CheckinSettingsForm(props: { configuration: CheckinConfiguration }) {
   const enabled = form.watch('enabled')
   const limitsEnabled = form.watch('limits.enabled')
   const mode = form.watch('mode')
+  const rewardMode = form.watch('pool.reward_mode')
 
   async function onSubmit(values: Values) {
     try {
-      await updateOption.mutateAsync(values)
-      form.reset(values)
+      const normalized = {
+        ...values,
+        minQuota:
+          values.pool.reward_mode === 'tiered'
+            ? Math.min(...values.pool.tiers.map((tier) => tier.min_quota))
+            : values.minQuota,
+      }
+      await updateOption.mutateAsync(normalized)
+      form.reset(normalized)
     } catch {
       /* Mutation displays the server error and preserves edits. */
     }
@@ -247,6 +301,7 @@ function CheckinSettingsForm(props: { configuration: CheckinConfiguration }) {
                 minQuota: config.settings.min_quota,
                 maxQuota: config.settings.max_quota,
                 limits: config.settings.limits,
+                pool: config.settings.pool ?? defaultPool,
               })
               setRevision(config.version)
             }}
@@ -355,27 +410,29 @@ function CheckinSettingsForm(props: { configuration: CheckinConfiguration }) {
                 />
               )}
               <div className='grid gap-6 sm:grid-cols-2'>
-                <FormField
-                  control={form.control}
-                  name='minQuota'
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>{t('Minimum check-in quota')}</FormLabel>
-                      <FormControl>
-                        <Input
-                          type='number'
-                          min={0}
-                          placeholder={t('1000')}
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        {t('Minimum quota amount awarded for check-in')}
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                {rewardMode === 'uniform' && (
+                  <FormField
+                    control={form.control}
+                    name='minQuota'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Minimum check-in quota')}</FormLabel>
+                        <FormControl>
+                          <Input
+                            type='number'
+                            min={0}
+                            placeholder={t('1000')}
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          {t('Minimum quota amount awarded for check-in')}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
 
                 <FormField
                   control={form.control}
@@ -392,7 +449,8 @@ function CheckinSettingsForm(props: { configuration: CheckinConfiguration }) {
                         />
                       </FormControl>
                       <FormDescription>
-                        {t('Maximum quota amount awarded for check-in')}
+                        {t('Maximum quota amount awarded for check-in')} ·{' '}
+                        {formatQuotaWithCurrency(Number(field.value) || 0)}
                       </FormDescription>
                       <FormMessage>
                         {form.formState.errors.maxQuota?.type === 'custom'
@@ -403,6 +461,21 @@ function CheckinSettingsForm(props: { configuration: CheckinConfiguration }) {
                   )}
                 />
               </div>
+              <RewardPoolSettings
+                referenceMean={
+                  config.settings.pool?.reward_mode === 'tiered'
+                    ? config.settings.pool.tiers.reduce(
+                        (sum, tier) =>
+                          sum +
+                          (tier.weight_bps *
+                            (tier.min_quota + tier.max_quota)) /
+                            20000,
+                        0
+                      )
+                    : (config.settings.min_quota + config.settings.max_quota) /
+                      2
+                }
+              />
               {mode === 1 && (
                 <FormField
                   control={form.control}

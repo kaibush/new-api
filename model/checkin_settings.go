@@ -34,7 +34,7 @@ func InitializeCheckinAccounting() error {
 		settings := *operation_setting.GetCheckinSetting()
 		common.OptionMapRWMutex.RUnlock()
 		var options []Option
-		if err := tx.Where(map[string]any{"key": []string{"checkin_setting.enabled", "checkin_setting.min_quota", "checkin_setting.max_quota", "checkin_setting.limits", "checkin_setting.mode", "checkin_setting.expiry_seconds"}}).Find(&options).Error; err != nil {
+		if err := tx.Where(map[string]any{"key": []string{"checkin_setting.enabled", "checkin_setting.min_quota", "checkin_setting.max_quota", "checkin_setting.limits", "checkin_setting.mode", "checkin_setting.expiry_seconds", "checkin_setting.pool"}}).Find(&options).Error; err != nil {
 			return err
 		}
 		for _, option := range options {
@@ -42,6 +42,7 @@ func InitializeCheckinAccounting() error {
 				return err
 			}
 		}
+		settings.Normalize()
 		if err := settings.Validate(); err != nil {
 			return err
 		}
@@ -93,6 +94,7 @@ func readCheckinConfiguration(tx *gorm.DB) (CheckinConfiguration, error) {
 	if err := common.UnmarshalJsonStr(state.Settings, &config.Settings); err != nil {
 		return config, err
 	}
+	config.Settings.Normalize()
 	return config, config.Settings.Validate()
 }
 
@@ -138,12 +140,14 @@ func writeCheckinConfiguration(tx *gorm.DB, settings *operation_setting.CheckinS
 			return CheckinConfiguration{}, errors.New("Check-in settings changed. Refresh before saving again.")
 		}
 		current.Settings = *settings
+		current.Settings.Normalize()
 	}
 	for key, value := range values {
 		if err := applyCheckinOption(&current.Settings, key, value); err != nil {
 			return CheckinConfiguration{}, err
 		}
 	}
+	current.Settings.Normalize()
 	if err := current.Settings.Validate(); err != nil {
 		return CheckinConfiguration{}, err
 	}
@@ -156,7 +160,7 @@ func writeCheckinConfiguration(tx *gorm.DB, settings *operation_setting.CheckinS
 		return CheckinConfiguration{}, err
 	}
 	// Keep legacy option exports in sync in the same transaction.
-	fields := map[string]any{"enabled": current.Settings.Enabled, "min_quota": current.Settings.MinQuota, "max_quota": current.Settings.MaxQuota, "limits": current.Settings.Limits, "mode": current.Settings.Mode, "expiry_seconds": current.Settings.ExpirySeconds}
+	fields := map[string]any{"enabled": current.Settings.Enabled, "min_quota": current.Settings.MinQuota, "max_quota": current.Settings.MaxQuota, "limits": current.Settings.Limits, "mode": current.Settings.Mode, "expiry_seconds": current.Settings.ExpirySeconds, "pool": current.Settings.Pool}
 	for field, value := range fields {
 		encoded, err := common.Marshal(value)
 		if err != nil {
@@ -184,6 +188,8 @@ func applyCheckinOption(settings *operation_setting.CheckinSetting, key, value s
 		return common.UnmarshalJsonStr(value, &settings.MaxQuota)
 	case "checkin_setting.limits":
 		return common.UnmarshalJsonStr(value, &settings.Limits)
+	case "checkin_setting.pool":
+		return common.UnmarshalJsonStr(value, &settings.Pool)
 	default:
 		return errors.New("invalid check-in setting: " + strings.TrimPrefix(key, "checkin_setting."))
 	}

@@ -8,6 +8,7 @@ import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { getCheckinLeaderboard } from '@/features/checkin/api'
 import { getCheckinStatus } from '@/features/profile/api'
 import { useStatus } from '@/hooks/use-status'
 import { formatQuotaWithCurrency } from '@/lib/currency'
@@ -21,11 +22,18 @@ const CheckinCalendarCard = lazy(() =>
   )
 )
 
+const Leaderboard = lazy(() =>
+  import('@/features/checkin/components/leaderboard').then((module) => ({
+    default: module.CheckinLeaderboard,
+  }))
+)
+
 export function CommunityCheckin() {
   const { t } = useTranslation()
   const { status, loading, error } = useStatus()
   const client = useQueryClient()
   const [open, setOpen] = useState(false)
+  const [leaderboardOpen, setLeaderboardOpen] = useState(false)
   const month = dayjs().format('YYYY-MM')
   const checkin = useQuery({
     queryKey: ['checkin-status', month],
@@ -34,6 +42,12 @@ export function CommunityCheckin() {
     enabled: status?.checkin_enabled === true,
     staleTime: 30000,
     refetchInterval: 30000,
+  })
+  const leaderboard = useQuery({
+    queryKey: ['checkin-leaderboard'],
+    queryFn: getCheckinLeaderboard,
+    enabled: status?.checkin_enabled === true,
+    staleTime: 30000,
   })
   const checked = checkin.data?.stats?.checked_in_today === true
   const todayAward = checkin.data?.stats?.records.find(
@@ -97,9 +111,48 @@ export function CommunityCheckin() {
             >
               {label}
             </Button>
+            {leaderboard.data?.enabled && (
+              <div className='space-y-2 border-t pt-3'>
+                <p className='text-sm font-medium'>
+                  {t("Today's check-in leaderboard")}
+                </p>
+                {leaderboard.data.top?.slice(0, 5).map((entry, index) => (
+                  <div
+                    key={entry.rank}
+                    className='flex items-center justify-between gap-2 text-xs'
+                  >
+                    <span className='truncate'>
+                      {index + 1}. {entry.display_name || entry.username}
+                    </span>
+                    <span className='shrink-0 font-medium'>
+                      {formatQuotaWithCurrency(entry.quota_awarded)}
+                    </span>
+                  </div>
+                ))}
+                <Button
+                  type='button'
+                  size='sm'
+                  variant='outline'
+                  className='w-full'
+                  onClick={() => setLeaderboardOpen(true)}
+                >
+                  {t('View full leaderboard')}
+                </Button>
+              </div>
+            )}
           </>
         )}
       </CardContent>
+      <Dialog
+        open={leaderboardOpen}
+        onOpenChange={setLeaderboardOpen}
+        title={t('Check-in leaderboard')}
+        contentClassName='w-[calc(100%-2rem)] sm:max-w-3xl'
+      >
+        <Suspense fallback={<LoadingState />}>
+          {leaderboardOpen && <Leaderboard />}
+        </Suspense>
+      </Dialog>
       <Dialog
         open={open}
         onOpenChange={setOpen}
