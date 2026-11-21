@@ -1,4 +1,8 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import {
+  QueryClient,
+  QueryClientProvider,
+  useQuery,
+} from '@tanstack/react-query'
 import {
   act,
   fireEvent,
@@ -20,10 +24,13 @@ import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { CommunityChat } from '..'
+import { getBoard } from '../board/api'
+import { defaultBoard, type BoardDocument } from '../board/schema'
 import { CommunityBotFeedback } from '../bot-feedback'
 import { ChatMessageBubble } from '../message-bubble'
 import { CommunityProvider } from '../provider'
 import { CommunitySettings } from '../settings'
+import { useChat } from '../use-chat'
 
 class FakeSocket {
   static instances: FakeSocket[] = []
@@ -48,10 +55,15 @@ function SettingsHarness() {
     </>
   )
 }
-function show(component: React.ReactNode) {
+function show(
+  component: React.ReactNode,
+  board: BoardDocument = defaultBoard()
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
+  client.setQueryDefaults(['community-board'], { staleTime: Infinity })
+  client.setQueryData(['community-board'], board)
   return render(
     <QueryClientProvider client={client}>
       {component &&
@@ -1489,7 +1501,7 @@ test('settings tabs expose feedback records and preserve the reply draft when re
   expect(
     screen.getByRole('tab', { name: 'Bot feedback records' })
   ).toHaveAttribute('aria-selected', 'true')
-  await user.keyboard('{ArrowLeft}')
+  await user.keyboard('{ArrowLeft}{ArrowLeft}')
   expect(screen.getByRole('tab', { name: 'Settings' })).toHaveFocus()
   await user.keyboard('{Enter}')
   expect(screen.getByRole('tab', { name: 'Settings' })).toHaveAttribute(
@@ -3402,3 +3414,73 @@ test.each(['image', 'sticker'] as const)(
     )
   }
 )
+
+test('a board WebSocket update refreshes the persisted public configuration', async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  let title = 'Original board'
+  vi.mocked(api.get).mockImplementation(async () => ({
+    data: { success: true, data: { ...defaultBoard(), title } },
+  }))
+  const view = renderHook(
+    () => {
+      useChat(true, undefined, true)
+      return useQuery({
+        queryKey: ['community-board'],
+        queryFn: () => getBoard(),
+      })
+    },
+    {
+      wrapper: ({ children }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      ),
+    }
+  )
+  await waitFor(() =>
+    expect(view.result.current.data?.title).toBe('Original board')
+  )
+  title = 'Published board'
+  act(() =>
+    FakeSocket.instances[0].onmessage?.({
+      data: JSON.stringify({ type: 'board', version: 1 }),
+    })
+  )
+  await waitFor(() =>
+    expect(view.result.current.data?.title).toBe('Published board')
+  )
+  view.unmount()
+  client.clear()
+})
+
+test('a mobile board action appends to the draft, closes the board and returns focus without sending', async () => {
+  const user = userEvent.setup()
+  const board = defaultBoard()
+  board.blocks = [
+    {
+      id: 'discuss',
+      type: 'custom.action_card',
+      enabled: true,
+      title: 'Discussion',
+      body: '',
+      image_url: '',
+      actions: [
+        { type: 'chat_prefill', label: 'Add topic', value: 'New topic' },
+      ],
+    },
+  ]
+  show(<CommunityChat />, board)
+  const draft = await screen.findByRole('textbox', { name: 'Message' })
+  await user.type(draft, 'My draft: ')
+  await user.click(screen.getByRole('button', { name: 'Community board' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Community board' })
+  await user.click(within(dialog).getByRole('button', { name: 'Add topic' }))
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('dialog', { name: 'Community board' })
+    ).not.toBeInTheDocument()
+  )
+  expect(draft).toHaveValue('My draft: New topic')
+  await waitFor(() => expect(draft).toHaveFocus())
+  expect(api.post).not.toHaveBeenCalled()
+})

@@ -1,7 +1,13 @@
 import { Attachment01Icon, Image01Icon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useMutation } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import {
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type Ref,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -34,6 +40,10 @@ import { EmojiPicker } from './emoji-picker'
 import { MessageText } from './message-text'
 
 export function ChatComposer(props: {
+  prefillRef?: Ref<{
+    prefill: (value: string) => boolean
+    input: () => HTMLTextAreaElement | null
+  }>
   connected: boolean
   status: ChatStatus
   users: ChatMember[]
@@ -140,6 +150,15 @@ export function ChatComposer(props: {
       inFlight.current = false
     },
   })
+  useImperativeHandle(props.prefillRef, () => ({
+    input: () => editor.current,
+    prefill(value) {
+      if (inFlight.current || (text + value).length > 2000) return false
+      setText(text + value)
+      requestAnimationFrame(() => editor.current?.focus())
+      return true
+    },
+  }))
   function stage(file: File, fileKind: 'image' | 'file') {
     if (pending) {
       toast.error(t('Remove the pending attachment first'))

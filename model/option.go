@@ -227,6 +227,9 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
+	if key == CommunityBoardOptionKey {
+		return errors.New("use the community board publication endpoint")
+	}
 	if key == FrontendReleaseOptionKey {
 		return errors.New("use the frontend release publication endpoint")
 	}

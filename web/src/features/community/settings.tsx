@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -37,6 +37,10 @@ import {
 import { CommunityBotFeedback } from './bot-feedback'
 import { CommunityHistory } from './history'
 
+const BoardStudio = lazy(() =>
+  import('./board/studio').then((m) => ({ default: m.BoardStudio }))
+)
+
 const schema = z.object({
   name: z.string().trim().max(80),
   enabled: z.boolean(),
@@ -57,6 +61,7 @@ const schema = z.object({
 })
 
 export function CommunitySettings() {
+  const [boardLoaded, setBoardLoaded] = useState(false)
   const { t } = useTranslation()
   const client = useQueryClient()
   const verification = useSecureVerification()
@@ -144,7 +149,13 @@ export function CommunitySettings() {
   }
   return (
     <SettingsSection title={t('Community chat')}>
-      <Tabs defaultValue='settings' className='min-w-0 gap-6'>
+      <Tabs
+        defaultValue='settings'
+        onValueChange={(value) => {
+          if (value === 'board') setBoardLoaded(true)
+        }}
+        className='min-w-0 gap-6'
+      >
         <TabsList
           className='max-w-full justify-start overflow-x-auto'
           aria-label={t('Community chat')}
@@ -152,6 +163,7 @@ export function CommunitySettings() {
           <TabsTrigger value='settings' className='flex-none'>
             {t('Settings')}
           </TabsTrigger>
+          <TabsTrigger value='board'>{t('Community board')}</TabsTrigger>
           <TabsTrigger value='feedback' className='flex-none'>
             {t('Bot feedback records')}
           </TabsTrigger>
@@ -426,6 +438,11 @@ export function CommunitySettings() {
               </div>
             </FieldGroup>
           </SettingsForm>
+        </TabsContent>
+        <TabsContent value='board' keepMounted>
+          <Suspense fallback={<LoadingState />}>
+            {boardLoaded && <BoardStudio />}
+          </Suspense>
         </TabsContent>
         <TabsContent value='feedback' className='min-w-0'>
           <CommunityBotFeedback />

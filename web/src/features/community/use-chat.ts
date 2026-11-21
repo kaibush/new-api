@@ -1,4 +1,4 @@
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 
 import { useFrontendRelease } from '@/features/frontend-release/store'
@@ -119,6 +119,7 @@ export function useChat(
   onNewMessages?: (messages: ChatMessage[]) => void,
   systemEvents = false
 ) {
+  const queryClient = useQueryClient()
   const notifyMessages = useEffectEvent((messages: ChatMessage[]) => {
     onNewMessages?.(messages)
   })
@@ -245,6 +246,15 @@ export function useChat(
         if (disposed) return
         try {
           const data = JSON.parse(event.data)
+          if (
+            enabled &&
+            data.type === 'board' &&
+            Number.isSafeInteger(data.version)
+          ) {
+            void queryClient.invalidateQueries({
+              queryKey: ['community-board'],
+            })
+          }
           if (data.type === 'frontend_release' && data.release) {
             useFrontendRelease.getState().receive(data.release)
           }
@@ -331,7 +341,7 @@ export function useChat(
       socket?.close()
       setConnected(false)
     }
-  }, [enabled, token, systemEvents])
+  }, [enabled, token, systemEvents, queryClient])
   const currentHistoryRequest =
     earlier.variables?.day === history.day_start &&
     earlier.variables?.days === history.history_days &&

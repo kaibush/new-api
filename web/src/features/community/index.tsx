@@ -59,6 +59,11 @@ export function CommunityChat() {
     status.data?.enabled === true
   )
   const packetById = new Map(packets.data?.map((packet) => [packet.id, packet]))
+  const composerRef = useRef<{
+    prefill: (value: string) => boolean
+    input: () => HTMLTextAreaElement | null
+  }>(null)
+  const focusComposer = useRef(false)
   const [boardOpen, setBoardOpen] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [packetId, setPacketId] = useState<number | null>(null)
@@ -242,6 +247,7 @@ export function CommunityChat() {
               )}
             </div>
             <ChatComposer
+              prefillRef={composerRef}
               connected={connected}
               currentUser={
                 members.get(user?.id ?? 0) || {
@@ -276,6 +282,18 @@ export function CommunityChat() {
             aria-label={t('Community board')}
           >
             <CommunityBoard
+              onPrefill={(text) => {
+                if (composerRef.current?.prefill(text)) {
+                  focusComposer.current = true
+                  setBoardOpen(false)
+                } else {
+                  toast.error(
+                    t(
+                      'Could not insert text. Check the message length and try again.'
+                    )
+                  )
+                }
+              }}
               retentionMinutes={status.data?.red_packet_retention_minutes}
               packetMessages={packetMessages}
               packets={packets}
@@ -288,6 +306,11 @@ export function CommunityChat() {
         </div>
         <Dialog
           open={boardOpen}
+          finalFocus={() => {
+            if (!focusComposer.current) return true
+            focusComposer.current = false
+            return composerRef.current?.input()
+          }}
           onOpenChange={setBoardOpen}
           title={t('Community board')}
           contentClassName='no-scrollbar sm:max-w-md'
@@ -295,6 +318,18 @@ export function CommunityChat() {
         >
           {boardOpen && (
             <CommunityBoard
+              onPrefill={(text) => {
+                if (composerRef.current?.prefill(text)) {
+                  focusComposer.current = true
+                  setBoardOpen(false)
+                } else {
+                  toast.error(
+                    t(
+                      'Could not insert text. Check the message length and try again.'
+                    )
+                  )
+                }
+              }}
               retentionMinutes={status.data?.red_packet_retention_minutes}
               packetMessages={packetMessages}
               packets={packets}

@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1717,6 +1718,104 @@ func TestFrontendReleaseNotifications(t *testing.T) {
 			require.NoError(t, reconnected.SetReadDeadline(time.Now().Add(8*time.Second)))
 			_, _, err = reconnected.ReadMessage()
 			require.Error(t, err)
+		})
+	}
+}
+
+func TestCommunityBoardPublication(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			if dialect != "sqlite" && os.Getenv("TEST_"+strings.ToUpper(dialect)+"_DSN") == "" {
+				t.Skip("database DSN not configured")
+			}
+			t.Setenv("TEST_SECURITY_DIALECT", dialect)
+			user, _ := setupSecurityEnrollmentTest(t)
+			require.NoError(t, model.DB.AutoMigrate(&model.CommunityConfig{}, &model.CommunityMessage{}, &model.CommunityProfile{}))
+			require.NoError(t, model.SaveCommunityConfig(model.CommunityConfig{Enabled: true}))
+			member, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "board-test")
+			require.NoError(t, err)
+			root := model.User{Username: "board-root", AffCode: "boardroot", Role: common.RoleRootUser, Status: common.UserStatusEnabled, AuthVersion: 1}
+			require.NoError(t, model.DB.Create(&root).Error)
+			admin, err := service.CreateLoginSession(root.Id, "password", "127.0.0.1", "board-test")
+			require.NoError(t, err)
+			router := gin.New()
+			var handlers sync.WaitGroup
+			router.GET("/ws", func(c *gin.Context) {
+				handlers.Add(1)
+				defer handlers.Done()
+				CommunityWebSocket(c)
+			})
+			router.GET("/api/community/board", middleware.UserAuth(), CommunityAccess, GetCommunityBoard)
+			router.GET("/api/option/community/board", middleware.RootAuth(), GetCommunityBoard)
+			router.PUT("/api/option/community/board", middleware.RootAuth(), UpdateCommunityBoard)
+			request := func(method, path, token string, document model.CommunityBoardDocument, status int) model.CommunityBoardDocument {
+				payload, e := common.Marshal(document)
+				require.NoError(t, e)
+				req := httptest.NewRequest(method, path, bytes.NewReader(payload))
+				req.Header.Set("Content-Type", "application/json")
+				if token != "" {
+					req.Header.Set("Authorization", "Bearer "+token)
+				}
+				response := httptest.NewRecorder()
+				router.ServeHTTP(response, req)
+				require.Equal(t, status, response.Code, response.Body.String())
+				var result struct {
+					Data model.CommunityBoardDocument `json:"data"`
+				}
+				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+				return result.Data
+			}
+			d := model.DefaultCommunityBoard()
+			request("PUT", "/api/option/community/board", "", d, 401)
+			request("PUT", "/api/option/community/board", member.AccessToken, d, 403)
+			request("GET", "/api/option/community/board", member.AccessToken, d, 403)
+			assert.Equal(t, d, request("GET", "/api/community/board", member.AccessToken, d, 200))
+			server := httptest.NewServer(router)
+			defer handlers.Wait()
+			defer server.Close()
+			connect := func() *websocket.Conn {
+				conn, _, e := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/ws", http.Header{"Origin": {server.URL}})
+				require.NoError(t, e)
+				payload, e := common.Marshal(map[string]any{"token": member.AccessToken, "system_events": true})
+				require.NoError(t, e)
+				require.NoError(t, conn.WriteMessage(websocket.TextMessage, payload))
+				return conn
+			}
+			readVersion := func(conn *websocket.Conn) int64 {
+				require.NoError(t, conn.SetReadDeadline(time.Now().Add(8*time.Second)))
+				for {
+					_, payload, e := conn.ReadMessage()
+					require.NoError(t, e)
+					var frame struct {
+						Type    string `json:"type"`
+						Version int64  `json:"version"`
+					}
+					require.NoError(t, common.Unmarshal(payload, &frame))
+					if frame.Type == "board" {
+						assert.NotContains(t, string(payload), "blocks")
+						return frame.Version
+					}
+				}
+			}
+			conn := connect()
+			defer conn.Close()
+			assert.Zero(t, readVersion(conn))
+			d.Blocks[0].Enabled = false
+			d.Title = "Community update"
+			saved := request("PUT", "/api/option/community/board", admin.AccessToken, d, 200)
+			assert.EqualValues(t, 1, readVersion(conn))
+			request("PUT", "/api/option/community/board", admin.AccessToken, d, 409)
+			public := request("GET", "/api/community/board", member.AccessToken, d, 200)
+			assert.Len(t, public.Blocks, len(d.Blocks)-1)
+			assert.Equal(t, saved, request("GET", "/api/option/community/board", admin.AccessToken, d, 200))
+			invalid := saved
+			invalid.SchemaVersion = 99
+			request("PUT", "/api/option/community/board", admin.AccessToken, invalid, 400)
+			assert.Equal(t, saved, request("GET", "/api/option/community/board", admin.AccessToken, d, 200))
+			require.Error(t, model.UpdateOption(model.CommunityBoardOptionKey, `{}`))
+			reconnected := connect()
+			defer reconnected.Close()
+			assert.Equal(t, saved.Version, readVersion(reconnected))
 		})
 	}
 }

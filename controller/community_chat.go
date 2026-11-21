@@ -450,6 +450,7 @@ func CommunityWebSocket(c *gin.Context) {
 	var previous []byte
 	var previousPresence []byte
 	var previousRelease int64 = -1
+	var previousBoard int64 = -1
 	for {
 		// Revalidate all sockets, including notification-only clients, on every tick.
 		config, e := model.GetCommunityConfig()
@@ -460,6 +461,20 @@ func CommunityWebSocket(c *gin.Context) {
 			return
 		}
 		if config.Enabled {
+			if auth.SystemEvents {
+				board, err := model.GetCommunityBoard()
+				if err == nil && board.Version != previousBoard {
+					payload, err := common.Marshal(gin.H{"type": "board", "version": board.Version})
+					if err != nil {
+						return
+					}
+					_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+					if conn.WriteMessage(websocket.TextMessage, payload) != nil {
+						return
+					}
+					previousBoard = board.Version
+				}
+			}
 			page, e := model.CommunityMessageHistory(0, 50, false)
 			if e != nil {
 				return

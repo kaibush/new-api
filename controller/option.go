@@ -203,6 +203,10 @@ func UpdateOption(c *gin.Context) {
 		})
 		return
 	}
+	if option.Key == model.CommunityBoardOptionKey {
+		common.ApiErrorMsg(c, "Use the community board editor")
+		return
+	}
 	if option.Key == "request_plugin_setting.instances" || option.Key == "request_plugin_setting.allowlist" {
 		common.ApiErrorT(c, "Request plugin instances cannot be changed through the general settings API")
 		return

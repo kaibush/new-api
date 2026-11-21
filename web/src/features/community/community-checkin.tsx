@@ -27,7 +27,7 @@ const Leaderboard = lazy(() =>
   }))
 )
 
-export function CommunityCheckin() {
+export function CommunityCheckin(props: { showLeaderboard?: boolean } = {}) {
   const { t } = useTranslation()
   const { status, loading, error } = useStatus()
   const client = useQueryClient()
@@ -43,7 +43,8 @@ export function CommunityCheckin() {
   const leaderboard = useQuery({
     queryKey: ['checkin-leaderboard'],
     queryFn: getCheckinLeaderboard,
-    enabled: status?.checkin_enabled === true,
+    enabled:
+      status?.checkin_enabled === true && props.showLeaderboard !== false,
     staleTime: 30000,
   })
   const checked = checkin.data?.stats?.checked_in_today === true
@@ -108,7 +109,7 @@ export function CommunityCheckin() {
             >
               {label}
             </Button>
-            {leaderboard.data?.enabled && (
+            {props.showLeaderboard !== false && leaderboard.data?.enabled && (
               <div className='space-y-2 border-t pt-3'>
                 <p className='text-sm font-medium'>
                   {t("Today's check-in leaderboard")}

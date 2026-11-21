@@ -14,6 +14,7 @@ import '@/features/profile/components/checkin-calendar-card'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { defaultBoard } from '../board/schema'
 import { CommunityBoard } from '../community-board'
 import { CommunityCheckin } from '../community-checkin'
 import type { CommunityEvent, CommunityEventInput } from '../event-api'
@@ -79,6 +80,7 @@ beforeEach(() => {
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
     let data: unknown = {}
     if (url === '/api/status') data = { checkin_enabled: checkinEnabled }
+    else if (url === '/api/community/board') data = defaultBoard()
     else if (url === '/api/community/events') data = events
     else if (url === '/api/community/events/80') data = events[0]
     else if (url === '/api/community/red-packets') data = []
@@ -152,7 +154,7 @@ test('members can expand event previews and open details without publication con
   }))
   const open = vi.fn()
   show(<BoardHarness onOpenEvent={open} onCreateEvent={vi.fn()} />)
-  const section = screen.getByRole('region', { name: 'Upcoming events' })
+  const section = await screen.findByRole('region', { name: 'Upcoming events' })
   await within(section).findByRole('button', { name: /Event 1/ })
   expect(
     within(section).queryByRole('button', { name: /Event 4/ })
