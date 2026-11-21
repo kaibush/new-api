@@ -589,3 +589,84 @@ export function formatResetCountdownClock(
     .map((part) => String(part).padStart(2, '0'))
     .join(':')
 }
+
+export type CheckinRollTone = 'jackpot' | 'lucky' | 'steady'
+
+export interface CheckinRollEvaluation {
+  tone: CheckinRollTone
+  luckPercent: number | null
+  hasRange: boolean
+}
+
+export function evaluateCheckinRoll(
+  quotaAwarded: number,
+  minQuota?: number,
+  maxQuota?: number
+): CheckinRollEvaluation {
+  if (
+    minQuota !== undefined &&
+    maxQuota !== undefined &&
+    maxQuota > minQuota &&
+    Number.isFinite(quotaAwarded)
+  ) {
+    const ratio = Math.max(
+      0,
+      Math.min(1, (quotaAwarded - minQuota) / (maxQuota - minQuota))
+    )
+    const luckPercent = Math.round(ratio * 100)
+    let tone: CheckinRollTone = 'steady'
+    if (ratio >= 0.8) {
+      tone = 'jackpot'
+    } else if (ratio >= 0.45) {
+      tone = 'lucky'
+    }
+    return { tone, luckPercent, hasRange: true }
+  }
+  return { tone: 'lucky', luckPercent: null, hasRange: false }
+}
+
+function parseUtcDayMs(dateStr: string): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr.trim())
+  if (!match) return null
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  return Date.UTC(year, month - 1, day)
+}
+
+function formatUtcDayMs(timestampMs: number): string {
+  const date = new Date(timestampMs)
+  const year = date.getUTCFullYear()
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(date.getUTCDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+export function computeCheckinStreak(
+  dates: Iterable<string>,
+  today: string
+): number {
+  const todayMs = parseUtcDayMs(today)
+  if (todayMs === null) return 0
+  const dateSet = new Set<string>()
+  for (const item of dates) {
+    if (item) dateSet.add(item.trim())
+  }
+  if (dateSet.size === 0) return 0
+
+  const dayMs = 86_400_000
+  let cursorMs = todayMs
+  if (!dateSet.has(formatUtcDayMs(cursorMs))) {
+    cursorMs -= dayMs
+    if (!dateSet.has(formatUtcDayMs(cursorMs))) {
+      return 0
+    }
+  }
+
+  let streak = 0
+  while (dateSet.has(formatUtcDayMs(cursorMs))) {
+    streak += 1
+    cursorMs -= dayMs
+  }
+  return streak
+}

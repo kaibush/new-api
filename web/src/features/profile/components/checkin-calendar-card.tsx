@@ -23,6 +23,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  Flame,
   Sparkles,
 } from 'lucide-react'
 import { useEffect, useState, useMemo, useCallback } from 'react'
@@ -45,9 +46,20 @@ import {
   TooltipProvider,
 } from '@/components/ui/tooltip'
 import { CheckinGrantStatus } from '@/features/checkin/components/grant-status'
+import {
+  CheckinConfettiBurst,
+  CheckinRewardRevealBanner,
+  type CheckinSuccessPayload,
+} from '@/features/checkin/components/reward-celebration'
 import { CheckinRewardDetails } from '@/features/checkin/components/reward-details'
+import {
+  computeCheckinStreak,
+  evaluateCheckinRoll,
+} from '@/features/checkin/lib/leaderboard-utils'
+import { toIntlLocale } from '@/i18n/languages'
 import { formatQuotaWithCurrency } from '@/lib/currency'
 import dayjs from '@/lib/dayjs'
+import { formatNumber } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import { createServerError } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
@@ -60,6 +72,9 @@ interface CheckinCalendarCardProps {
   checkinEnabled: boolean
   turnstileEnabled: boolean
   turnstileSiteKey: string
+  onCheckinSuccess?: (payload: CheckinSuccessPayload) => void
+  onViewLeaderboard?: () => void
+  leaderboardActionLabel?: string
 }
 
 export function CheckinCalendarCard({
@@ -67,8 +82,12 @@ export function CheckinCalendarCard({
   checkinEnabled,
   turnstileEnabled,
   turnstileSiteKey,
+  onCheckinSuccess,
+  onViewLeaderboard,
+  leaderboardActionLabel,
 }: CheckinCalendarCardProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const queryClient = useQueryClient()
   const [selectedMonth, setSelectedMonth] = useState<string>()
   const [checkinLoading, setCheckinLoading] = useState(false)
@@ -77,6 +96,10 @@ export function CheckinCalendarCard({
   const [turnstileWidgetKey, setTurnstileWidgetKey] = useState(0)
   const [initialLoaded, setInitialLoaded] = useState(false)
   const [collapsed, setCollapsed] = useState<boolean>(false)
+  const [celebration, setCelebration] = useState<CheckinSuccessPayload | null>(
+    null
+  )
+  const [confettiBurstKey, setConfettiBurstKey] = useState(0)
 
   // Fetch checkin status
   /* eslint-disable @tanstack/query/exhaustive-deps */
@@ -127,6 +150,16 @@ export function CheckinCalendarCard({
   const checkedToday = checkinData?.stats?.checked_in_today === true
   const todayAward = checkinRecordsMap[eligibility?.today || todayString]
 
+  const streakDays = useMemo(() => {
+    const dates = (checkinData?.stats?.records || []).map(
+      (record: CheckinRecord) => record.checkin_date
+    )
+    if (celebration !== null) {
+      dates.push(todayString)
+    }
+    return computeCheckinStreak(dates, todayString)
+  }, [celebration, checkinData?.stats?.records, todayString])
+
   useEffect(() => {
     if (initialLoaded) return
     if (isLoading) return
@@ -150,9 +183,17 @@ export function CheckinCalendarCard({
       try {
         const res = await performCheckin(token)
         if (res.success && res.data) {
+          const payload: CheckinSuccessPayload = {
+            quotaAwarded: res.data.quota_awarded,
+            minQuota: eligibility?.min_quota,
+            maxQuota: eligibility?.max_quota,
+          }
           toast.success(
             `${t('Check-in successful! Received')} ${formatQuotaWithCurrency(res.data.quota_awarded)}`
           )
+          setCelebration(payload)
+          setConfettiBurstKey((key) => key + 1)
+          onCheckinSuccess?.(payload)
           void queryClient.invalidateQueries({ queryKey: ['checkin-status'] })
           void queryClient.invalidateQueries({
             queryKey: ['checkin-leaderboard'],
@@ -183,7 +224,16 @@ export function CheckinCalendarCard({
         setCheckinLoading(false)
       }
     },
-    [queryClient, refetch, shouldTriggerTurnstile, t, turnstileSiteKey]
+    [
+      eligibility?.max_quota,
+      eligibility?.min_quota,
+      onCheckinSuccess,
+      queryClient,
+      refetch,
+      shouldTriggerTurnstile,
+      t,
+      turnstileSiteKey,
+    ]
   )
 
   const handlePrevMonth = () => {
@@ -261,8 +311,28 @@ export function CheckinCalendarCard({
     checkinButtonLabel = t('Check-in reward details')
   }
 
+  const celebrationRoll = celebration
+    ? evaluateCheckinRoll(
+        celebration.quotaAwarded,
+        celebration.minQuota,
+        celebration.maxQuota
+      )
+    : null
+  const confettiIntensity =
+    celebrationRoll?.tone === 'jackpot' ? 'jackpot' : 'standard'
+
+  let subtitleText = t('Check in daily to receive random quota rewards')
+  if (checkedToday && todayAward !== undefined) {
+    const prefix = embedded ? t('Reward') : t('Today')
+    subtitleText = `${prefix} +${formatQuotaWithCurrency(todayAward)}`
+  }
+
   return (
     <TooltipProvider delay={100}>
+      <CheckinConfettiBurst
+        burstKey={confettiBurstKey}
+        intensity={confettiIntensity}
+      />
       {eligibility && (
         <ConfirmDialog
           open={rewardDialogOpen}
@@ -337,6 +407,21 @@ export function CheckinCalendarCard({
                       {t('Checked in')}
                     </Badge>
                   )}
+                  {streakDays >= 2 && !embedded && (
+                    <Badge
+                      variant='outline'
+                      className='border-orange-500/30 bg-orange-500/10 text-orange-800 tabular-nums dark:text-orange-300'
+                    >
+                      <Flame
+                        data-icon='inline-start'
+                        aria-hidden='true'
+                        className='size-3 text-orange-500'
+                      />
+                      {t('{{count}}-day streak', {
+                        count: formatNumber(streakDays, locale),
+                      })}
+                    </Badge>
+                  )}
                   <span className='text-muted-foreground inline-flex items-center'>
                     {collapsed ? (
                       <ChevronDown className='h-4 w-4' />
@@ -346,9 +431,7 @@ export function CheckinCalendarCard({
                   </span>
                 </div>
                 <p className='text-muted-foreground mt-1 line-clamp-2 text-xs sm:text-sm'>
-                  {checkedToday && todayAward !== undefined
-                    ? `${embedded ? t('Reward') : t('Today')} +${formatQuotaWithCurrency(todayAward)}`
-                    : t('Check in daily to receive random quota rewards')}
+                  {subtitleText}
                 </p>
               </div>
             </Button>
@@ -362,6 +445,25 @@ export function CheckinCalendarCard({
             </Button>
           </div>
         </div>
+
+        {celebration && (
+          <div className='border-b p-3.5 sm:p-4'>
+            <CheckinRewardRevealBanner
+              quotaAwarded={celebration.quotaAwarded}
+              minQuota={celebration.minQuota}
+              maxQuota={celebration.maxQuota}
+              streakDays={streakDays}
+              actionLabel={
+                onViewLeaderboard
+                  ? (leaderboardActionLabel ?? t('View full leaderboard'))
+                  : undefined
+              }
+              onAction={onViewLeaderboard}
+              onReplayConfetti={() => setConfettiBurstKey((key) => key + 1)}
+              onDismiss={() => setCelebration(null)}
+            />
+          </div>
+        )}
 
         {isError && (
           <div className='px-4 pb-4 sm:px-6'>
@@ -483,6 +585,10 @@ export function CheckinCalendarCard({
                     const quotaAwarded = checkinRecordsMap[dateStr]
                     const isCheckedIn = quotaAwarded !== undefined
                     const dayNum = dayObj.date.getDate()
+                    const stampedPastDay =
+                      !isToday && isCheckedIn && dayObj.isCurrentMonth
+                    const stampedToday =
+                      isToday && (isCheckedIn || celebration !== null)
 
                     const dayButton = (
                       <Button
@@ -494,12 +600,17 @@ export function CheckinCalendarCard({
                           'relative flex h-9 w-full flex-col items-center justify-center rounded-lg px-0 text-xs font-medium sm:h-10 sm:text-sm',
                           !dayObj.isCurrentMonth &&
                             'text-muted-foreground/40 cursor-default',
-                          !isToday && isCheckedIn && 'font-semibold'
+                          stampedPastDay &&
+                            'bg-emerald-500/10 font-semibold text-emerald-800 ring-1 ring-emerald-500/20 hover:bg-emerald-500/18 dark:text-emerald-300',
+                          stampedToday && 'ring-2 ring-amber-400/60'
                         )}
                       >
                         <span className='tabular-nums'>{dayNum}</span>
-                        {isCheckedIn && !isToday && (
-                          <span className='bg-success absolute bottom-0.5 size-1 rounded-full sm:bottom-1' />
+                        {stampedPastDay && (
+                          <span
+                            aria-hidden='true'
+                            className='bg-success absolute bottom-0.5 size-1 rounded-full sm:bottom-1'
+                          />
                         )}
                       </Button>
                     )

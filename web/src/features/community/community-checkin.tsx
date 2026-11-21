@@ -38,6 +38,7 @@ export function CommunityCheckin(props: { showLeaderboard?: boolean } = {}) {
   const client = useQueryClient()
   const [open, setOpen] = useState(false)
   const [leaderboardOpen, setLeaderboardOpen] = useState(false)
+  const [justClaimed, setJustClaimed] = useState(false)
   const checkin = useQuery({
     queryKey: ['checkin-status', 'current'],
     queryFn: async () => requireServerSuccess(await getCheckinStatus()).data,
@@ -174,6 +175,7 @@ export function CommunityCheckin(props: { showLeaderboard?: boolean } = {}) {
             <Leaderboard
               mode='dialog'
               checkinPrompt={checkinPrompt}
+              justClaimed={justClaimed}
               onOpenCheckin={
                 checkin.data
                   ? () => {
@@ -207,6 +209,15 @@ export function CommunityCheckin(props: { showLeaderboard?: boolean } = {}) {
                   !!(status?.turnstile_check && status?.turnstile_site_key)
                 }
                 turnstileSiteKey={status?.turnstile_site_key || ''}
+                onCheckinSuccess={() => setJustClaimed(true)}
+                onViewLeaderboard={
+                  props.showLeaderboard !== false && leaderboard.data?.enabled
+                    ? () => {
+                        setOpen(false)
+                        setLeaderboardOpen(true)
+                      }
+                    : undefined
+                }
               />
             </div>
           </Suspense>

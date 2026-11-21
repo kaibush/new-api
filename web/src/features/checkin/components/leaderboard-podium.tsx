@@ -173,9 +173,10 @@ export function LeaderboardPodium(props: LeaderboardPodiumProps) {
       />
 
       <div className='relative mb-3 flex items-center justify-center sm:mb-4'>
-        <span className='inline-flex items-center gap-1.5 rounded-full border border-amber-500/25 bg-amber-500/10 px-3 py-0.5 text-[11px] font-semibold tracking-wide text-amber-800 dark:text-amber-300'>
+        <span className='inline-flex items-center gap-1.5 rounded-full border border-amber-500/25 bg-amber-500/10 px-3 py-0.5 text-[11px] font-semibold tracking-wide text-amber-800 shadow-2xs dark:text-amber-300'>
           <Crown className='size-3 text-amber-500' aria-hidden='true' />
-          {t('Hall of fortune')}
+          <span>{t('Hall of fortune')}</span>
+          <Sparkles className='size-2.5 text-amber-500/80' aria-hidden='true' />
         </span>
       </div>
 
@@ -255,6 +256,10 @@ export function LeaderboardPodium(props: LeaderboardPodiumProps) {
                     className='leaderboard-champion-border pointer-events-none absolute inset-0 z-10'
                   />
                 )}
+                <div
+                  aria-hidden='true'
+                  className='leaderboard-podium-sheen pointer-events-none absolute inset-0 z-10'
+                />
                 <div
                   aria-hidden='true'
                   className={cn(

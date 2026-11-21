@@ -42,6 +42,8 @@ export function CheckinLeaderboardPage() {
   const { t } = useTranslation()
   const { status } = useStatus()
   const [checkinOpen, setCheckinOpen] = useState(false)
+  const [justClaimed, setJustClaimed] = useState(false)
+  const [locateSignal, setLocateSignal] = useState(0)
   const checkinEnabled = status?.checkin_enabled === true
 
   const checkin = useQuery({
@@ -75,38 +77,42 @@ export function CheckinLeaderboardPage() {
   }
 
   return (
-    <SectionPageLayout>
-      <SectionPageLayout.Title>
-        {t('Check-in leaderboard')}
-      </SectionPageLayout.Title>
-      {checkinAvailable && checkin.data && (
-        <SectionPageLayout.Actions>
-          <Button
-            type='button'
-            size='sm'
-            variant='outline'
-            onClick={() => setCheckinOpen(true)}
-          >
-            {checkedIn ? (
-              <CalendarCheck data-icon='inline-start' aria-hidden='true' />
-            ) : (
-              <Sparkles data-icon='inline-start' aria-hidden='true' />
-            )}
-            {actionLabel}
-          </Button>
-        </SectionPageLayout.Actions>
-      )}
-      <SectionPageLayout.Content>
-        <div className='mx-auto w-full max-w-5xl pb-6'>
-          <CheckinLeaderboard
-            mode='page'
-            checkinPrompt={checkinPrompt}
-            onOpenCheckin={
-              checkinAvailable ? () => setCheckinOpen(true) : undefined
-            }
-          />
-        </div>
-      </SectionPageLayout.Content>
+    <>
+      <SectionPageLayout>
+        <SectionPageLayout.Title>
+          {t('Check-in leaderboard')}
+        </SectionPageLayout.Title>
+        {checkinAvailable && checkin.data && (
+          <SectionPageLayout.Actions>
+            <Button
+              type='button'
+              size='sm'
+              variant='outline'
+              onClick={() => setCheckinOpen(true)}
+            >
+              {checkedIn ? (
+                <CalendarCheck data-icon='inline-start' aria-hidden='true' />
+              ) : (
+                <Sparkles data-icon='inline-start' aria-hidden='true' />
+              )}
+              {actionLabel}
+            </Button>
+          </SectionPageLayout.Actions>
+        )}
+        <SectionPageLayout.Content>
+          <div className='mx-auto w-full max-w-5xl pb-6'>
+            <CheckinLeaderboard
+              mode='page'
+              checkinPrompt={checkinPrompt}
+              justClaimed={justClaimed}
+              locateSignal={locateSignal}
+              onOpenCheckin={
+                checkinAvailable ? () => setCheckinOpen(true) : undefined
+              }
+            />
+          </div>
+        </SectionPageLayout.Content>
+      </SectionPageLayout>
       <Dialog
         open={checkinOpen}
         onOpenChange={setCheckinOpen}
@@ -128,11 +134,17 @@ export function CheckinLeaderboardPage() {
                   !!(status?.turnstile_check && status?.turnstile_site_key)
                 }
                 turnstileSiteKey={status?.turnstile_site_key || ''}
+                leaderboardActionLabel={t('See my rank')}
+                onCheckinSuccess={() => setJustClaimed(true)}
+                onViewLeaderboard={() => {
+                  setCheckinOpen(false)
+                  setLocateSignal((count) => count + 1)
+                }}
               />
             </div>
           </Suspense>
         )}
       </Dialog>
-    </SectionPageLayout>
+    </>
   )
 }

@@ -71,11 +71,14 @@ import {
   type LeaderboardCheckinPrompt,
 } from './leaderboard-my-rank'
 import { LeaderboardPodium } from './leaderboard-podium'
+import { CheckinConfettiBurst } from './reward-celebration'
 
 export interface CheckinLeaderboardProps {
   mode?: 'page' | 'dialog'
   initialTab?: LeaderboardTab
   checkinPrompt?: LeaderboardCheckinPrompt
+  justClaimed?: boolean
+  locateSignal?: number
   onOpenCheckin?: () => void
 }
 
@@ -220,9 +223,11 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
     'me' | string | null
   >(null)
   const [nowTick, setNowTick] = useState(() => Date.now())
+  const [confettiBurstKey, setConfettiBurstKey] = useState(0)
   const myRowRef = useRef<HTMLLIElement | null>(null)
   const rowElementsRef = useRef<Map<string, HTMLLIElement>>(new Map())
   const highlightTimerRef = useRef<number | null>(null)
+  const lastLocateSignalRef = useRef(props.locateSignal ?? 0)
 
   const query = useQuery({
     queryKey: ['checkin-leaderboard'],
@@ -252,6 +257,25 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
       }
     }
   }, [])
+
+  useEffect(() => {
+    const nextSignal = props.locateSignal ?? 0
+    if (nextSignal <= 0 || nextSignal === lastLocateSignalRef.current) return
+    lastLocateSignalRef.current = nextSignal
+    setTab('today')
+    setSearchQuery('')
+    setTierFilter('')
+    setHighlightedMe(true)
+    setHighlightedEntryId(null)
+    setPendingLocateTarget('me')
+    setConfettiBurstKey((key) => key + 1)
+    if (highlightTimerRef.current !== null) {
+      window.clearTimeout(highlightTimerRef.current)
+    }
+    highlightTimerRef.current = window.setTimeout(() => {
+      setHighlightedMe(false)
+    }, 2600)
+  }, [props.locateSignal])
 
   useEffect(() => {
     if (!pendingLocateTarget) return
@@ -624,6 +648,13 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
         </Button>
       </div>
 
+      <CheckinConfettiBurst
+        burstKey={confettiBurstKey}
+        intensity={
+          myRankInsight?.status === 'champion' ? 'jackpot' : 'standard'
+        }
+      />
+
       <LeaderboardMarquee items={marqueeItems} />
 
       <LeaderboardMyRank
@@ -632,8 +663,10 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
         checkinPrompt={props.checkinPrompt}
         todayTopQuota={todayTopQuota}
         showRecordsAction={isDialog}
+        justClaimed={props.justClaimed}
         onLocateMe={handleLocateMe}
         onOpenCheckin={props.onOpenCheckin}
+        onCelebrate={() => setConfettiBurstKey((key) => key + 1)}
       />
 
       <Tabs value={activeTab} onValueChange={handleTabChange}>
@@ -788,6 +821,7 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
 
               <LeaderboardList
                 entries={displayEntries}
+                topQuota={metrics.topQuota}
                 totalCount={
                   activeTab === 'highlights' && highlightView === 'winners'
                     ? metrics.uniqueWinners

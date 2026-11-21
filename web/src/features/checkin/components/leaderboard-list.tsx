@@ -9,7 +9,7 @@ import {
   X,
 } from 'lucide-react'
 import { LayoutGroup, motion, useReducedMotion } from 'motion/react'
-import type { RefObject } from 'react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/empty-state'
@@ -22,6 +22,7 @@ import {
   InputGroupButton,
   InputGroupInput,
 } from '@/components/ui/input-group'
+import { Kbd } from '@/components/ui/kbd'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
   Tooltip,
@@ -49,6 +50,7 @@ import {
 interface LeaderboardListProps {
   entries: DisplayLeaderboardEntry[]
   totalCount: number
+  topQuota?: number
   tab: LeaderboardTab
   retentionDays: number
   locale?: string
@@ -70,6 +72,10 @@ interface LeaderboardListProps {
 export function LeaderboardList(props: LeaderboardListProps) {
   const { t } = useTranslation()
   const shouldReduce = useReducedMotion()
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const [searchFocused, setSearchFocused] = useState(false)
+
   const hasActiveFilter =
     props.searchQuery.trim() !== '' || props.tierFilter.trim() !== ''
   const showTierDistribution = props.tierSummaries.length >= 2
@@ -78,13 +84,52 @@ export function LeaderboardList(props: LeaderboardListProps) {
     hasActiveFilter ||
     (props.tab === 'highlights' && props.totalCount > 0)
 
+  useEffect(() => {
+    if (!showToolbar) return
+    const handleWindowKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) {
+        return
+      }
+      const activeEl = document.activeElement as HTMLElement | null
+      if (activeEl) {
+        const tagName = activeEl.tagName
+        if (
+          tagName === 'INPUT' ||
+          tagName === 'TEXTAREA' ||
+          tagName === 'SELECT' ||
+          activeEl.isContentEditable
+        ) {
+          return
+        }
+      }
+      const openDialogs = document.querySelectorAll(
+        '[role="dialog"], [role="alertdialog"]'
+      )
+      if (openDialogs.length > 0) {
+        const topmostDialog = [...openDialogs].at(-1)
+        if (
+          !containerRef.current ||
+          !topmostDialog?.contains(containerRef.current)
+        ) {
+          return
+        }
+      }
+      if (!searchInputRef.current) return
+      event.preventDefault()
+      searchInputRef.current.focus()
+    }
+
+    window.addEventListener('keydown', handleWindowKeyDown)
+    return () => window.removeEventListener('keydown', handleWindowKeyDown)
+  }, [showToolbar])
+
   const handleResetFilters = () => {
     props.onSearchQueryChange('')
     props.onTierFilterChange('')
   }
 
   return (
-    <div className='flex flex-col gap-3'>
+    <div ref={containerRef} className='flex flex-col gap-3'>
       {showTierDistribution && (
         <div className='bg-card/85 ring-foreground/10 flex flex-col gap-3 rounded-2xl p-4 ring-1'>
           <div className='flex items-center justify-between gap-2'>
@@ -213,7 +258,21 @@ export function LeaderboardList(props: LeaderboardListProps) {
               <Search aria-hidden='true' className='size-3.5' />
             </InputGroupAddon>
             <InputGroupInput
+              ref={searchInputRef}
               value={props.searchQuery}
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => setSearchFocused(false)}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  if (props.searchQuery !== '') {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    props.onSearchQueryChange('')
+                  } else {
+                    searchInputRef.current?.blur()
+                  }
+                }
+              }}
               onChange={(event) =>
                 props.onSearchQueryChange(event.target.value)
               }
@@ -221,7 +280,7 @@ export function LeaderboardList(props: LeaderboardListProps) {
               aria-label={t('Search leaderboard')}
               className='text-xs sm:text-sm'
             />
-            {props.searchQuery && (
+            {props.searchQuery ? (
               <InputGroupAddon align='inline-end'>
                 <InputGroupButton
                   size='icon-xs'
@@ -231,6 +290,15 @@ export function LeaderboardList(props: LeaderboardListProps) {
                   <X className='size-3.5' />
                 </InputGroupButton>
               </InputGroupAddon>
+            ) : (
+              !searchFocused && (
+                <InputGroupAddon
+                  align='inline-end'
+                  title={t('Press / to search')}
+                >
+                  <Kbd aria-hidden='true'>/</Kbd>
+                </InputGroupAddon>
+              )
             )}
           </InputGroup>
 
@@ -325,265 +393,305 @@ export function LeaderboardList(props: LeaderboardListProps) {
             </div>
           </div>
 
-          <LayoutGroup id={`leaderboard-list-${props.tab}`}>
-            <ol className='divide-border/70 divide-y'>
-              {props.entries.map((entry, rowIndex) => {
-                const rank = entry.displayRank
-                const medal = getRankMedalStyles(rank)
-                const tierStyle = getTierToneStyles(entry.tierTone)
-                const name = getEntryDisplayName(entry)
-                const initial = getEntryInitial(entry)
-                const isTopThree = rank >= 1 && rank <= 3
-                const isSpotlight =
-                  (entry.isMe && props.highlightedMe) ||
-                  (Boolean(props.highlightedEntryId) &&
-                    props.highlightedEntryId === entry.id)
-                let barTone = 'bg-primary/70'
-                if (entry.tier_name && entry.tierTone !== 'base') {
-                  barTone = tierStyle.bar
-                } else if (rank === 1) {
-                  barTone = 'bg-amber-500/85 dark:bg-amber-400/85'
-                }
-                const showCumulative =
-                  entry.totalQuota !== undefined &&
-                  entry.hitCount !== undefined &&
-                  entry.hitCount > 1
-                const hasMeta = Boolean(
-                  entry.tier_name ||
-                  entry.checkin_date ||
-                  props.tab === 'total' ||
-                  showCumulative
-                )
-
-                const attachRef = (node: HTMLLIElement | null) => {
-                  if (entry.isMe && props.myRowRef) {
-                    props.myRowRef.current = node
+          <TooltipProvider delay={160}>
+            <LayoutGroup id={`leaderboard-list-${props.tab}`}>
+              <ol className='divide-border/70 divide-y'>
+                {props.entries.map((entry, rowIndex) => {
+                  const rank = entry.displayRank
+                  const medal = getRankMedalStyles(rank)
+                  const tierStyle = getTierToneStyles(entry.tierTone)
+                  const name = getEntryDisplayName(entry)
+                  const initial = getEntryInitial(entry)
+                  const isTopThree = rank >= 1 && rank <= 3
+                  const isSpotlight =
+                    (entry.isMe && props.highlightedMe) ||
+                    (Boolean(props.highlightedEntryId) &&
+                      props.highlightedEntryId === entry.id)
+                  let barTone = 'bg-primary/70'
+                  if (entry.tier_name && entry.tierTone !== 'base') {
+                    barTone = tierStyle.bar
+                  } else if (rank === 1) {
+                    barTone = 'bg-amber-500/85 dark:bg-amber-400/85'
                   }
-                  props.onRowElement?.(entry.id, node)
-                }
+                  const showCumulative =
+                    entry.totalQuota !== undefined &&
+                    entry.hitCount !== undefined &&
+                    entry.hitCount > 1
+                  const hasMeta = Boolean(
+                    entry.tier_name ||
+                    entry.checkin_date ||
+                    props.tab === 'total' ||
+                    showCumulative
+                  )
 
-                const rowClassName = cn(
-                  'group/row hover:bg-muted/40 relative flex items-center justify-between gap-3 px-4 py-3 transition-colors',
-                  entry.isMe && 'bg-primary/6 hover:bg-primary/10',
-                  isSpotlight &&
-                    'bg-amber-500/10 ring-2 ring-amber-500/55 ring-inset dark:bg-amber-500/12'
-                )
-                let rowIndicatorClass =
-                  'bg-primary/70 opacity-0 group-hover/row:opacity-100'
-                if (entry.isMe) {
-                  rowIndicatorClass = 'bg-primary w-1 opacity-100'
-                } else if (rank === 1) {
-                  rowIndicatorClass =
-                    'bg-amber-500 opacity-0 group-hover/row:opacity-100'
-                }
+                  const attachRef = (node: HTMLLIElement | null) => {
+                    if (entry.isMe && props.myRowRef) {
+                      props.myRowRef.current = node
+                    }
+                    props.onRowElement?.(entry.id, node)
+                  }
 
-                const rowInner = (
-                  <>
-                    <span
+                  const rowClassName = cn(
+                    'group/row hover:bg-muted/40 relative flex items-center justify-between gap-3 px-4 py-3 transition-colors',
+                    entry.isMe && 'bg-primary/6 hover:bg-primary/10',
+                    isSpotlight &&
+                      'bg-amber-500/10 ring-2 ring-amber-500/55 ring-inset dark:bg-amber-500/12'
+                  )
+                  let rowIndicatorClass =
+                    'bg-primary/70 opacity-0 group-hover/row:opacity-100'
+                  if (entry.isMe) {
+                    rowIndicatorClass = 'bg-primary w-1 opacity-100'
+                  } else if (rank === 1) {
+                    rowIndicatorClass =
+                      'bg-amber-500/85 opacity-85 group-hover/row:opacity-100'
+                  } else if (rank === 2) {
+                    rowIndicatorClass =
+                      'bg-slate-400/80 opacity-75 group-hover/row:opacity-100'
+                  } else if (rank === 3) {
+                    rowIndicatorClass =
+                      'bg-orange-400/80 opacity-75 group-hover/row:opacity-100'
+                  }
+
+                  const gapFromTop =
+                    props.topQuota !== undefined &&
+                    props.topQuota > entry.quota_awarded
+                      ? props.topQuota - entry.quota_awarded
+                      : 0
+                  let shareTooltip = ''
+                  if (rank === 1) {
+                    shareTooltip = t('Leading today')
+                  } else if (gapFromTop > 0) {
+                    shareTooltip = t('{{amount}} behind #1', {
+                      amount: formatQuotaWithCurrency(gapFromTop),
+                    })
+                  }
+
+                  const avatarToneClass =
+                    medal?.avatar ?? 'bg-muted text-muted-foreground'
+
+                  const shareIndicator = (
+                    <div
                       aria-hidden='true'
-                      className={cn(
-                        'pointer-events-none absolute inset-y-1.5 left-0 w-0.5 rounded-r-full transition-opacity duration-200',
-                        rowIndicatorClass
-                      )}
-                    />
-                    <div className='flex min-w-0 flex-1 items-center gap-3'>
-                      <div className='flex w-7 shrink-0 items-center justify-center'>
-                        {isTopThree && medal ? (
-                          <span
-                            className={cn(
-                              'inline-flex size-7 items-center justify-center rounded-full text-xs font-bold shadow-2xs tabular-nums',
-                              medal.badge
-                            )}
-                          >
-                            {rank === 1 ? (
-                              <Crown className='size-3.5' aria-hidden='true' />
-                            ) : (
-                              formatNumber(rank, props.locale)
-                            )}
-                            {rank === 1 && (
-                              <span className='sr-only'>
-                                {formatNumber(rank, props.locale)}
-                              </span>
-                            )}
-                          </span>
+                      className='hidden items-center gap-2 sm:flex'
+                    >
+                      <div className='bg-muted/85 h-2 w-24 overflow-hidden rounded-full md:w-32'>
+                        {shouldReduce ? (
+                          <div
+                            className={cn('h-full rounded-full', barTone)}
+                            style={{ width: `${entry.shareOfTop}%` }}
+                          />
                         ) : (
-                          <span className='bg-muted/60 text-muted-foreground group-hover/row:bg-muted group-hover/row:text-foreground inline-flex h-6 min-w-6 items-center justify-center rounded-md px-1.5 text-xs font-medium tabular-nums transition-colors'>
-                            {formatNumber(rank, props.locale)}
-                          </span>
+                          <motion.div
+                            initial={{ width: 0 }}
+                            animate={{ width: `${entry.shareOfTop}%` }}
+                            transition={{
+                              type: 'spring',
+                              stiffness: 220,
+                              damping: 28,
+                              delay: Math.min(rowIndex * 0.02, 0.24),
+                            }}
+                            className={cn('h-full rounded-full', barTone)}
+                          />
                         )}
                       </div>
+                      <span className='text-muted-foreground hidden w-9 text-right text-[11px] tabular-nums lg:inline-block'>
+                        {Math.round(entry.shareOfTop)}%
+                      </span>
+                    </div>
+                  )
 
-                      <Avatar
-                        size='sm'
+                  const rowInner = (
+                    <>
+                      <span
                         aria-hidden='true'
-                        className='hidden size-8 sm:flex'
-                      >
-                        <AvatarFallback
-                          className={cn(
-                            'text-xs font-semibold',
-                            entry.isMe
-                              ? 'bg-primary/15 text-primary ring-primary/30 ring-1'
-                              : (medal?.avatar ??
-                                  'bg-muted text-muted-foreground')
-                          )}
-                        >
-                          {initial}
-                        </AvatarFallback>
-                      </Avatar>
-
-                      <div className='min-w-0 flex-1'>
-                        <div className='flex flex-wrap items-center gap-1.5'>
-                          <p
-                            className='truncate text-sm font-medium'
-                            title={name}
-                          >
-                            {name}
-                          </p>
-                          {entry.isMe && (
-                            <Badge
-                              variant='default'
-                              className='h-4 px-1.5 text-[10px]'
+                        className={cn(
+                          'pointer-events-none absolute inset-y-1.5 left-0 w-0.5 rounded-r-full transition-opacity duration-200',
+                          rowIndicatorClass
+                        )}
+                      />
+                      <div className='flex min-w-0 flex-1 items-center gap-3'>
+                        <div className='flex w-7 shrink-0 items-center justify-center'>
+                          {isTopThree && medal ? (
+                            <span
+                              className={cn(
+                                'inline-flex size-7 items-center justify-center rounded-full text-xs font-bold shadow-2xs tabular-nums',
+                                medal.badge
+                              )}
                             >
-                              {t('You')}
-                            </Badge>
-                          )}
-                          {entry.hitCount !== undefined &&
-                            entry.hitCount > 1 && (
-                              <Badge
-                                variant='secondary'
-                                className='h-4 px-1.5 text-[10px] tabular-nums'
-                              >
-                                ×{formatNumber(entry.hitCount, props.locale)}
-                              </Badge>
-                            )}
-                        </div>
-
-                        {hasMeta && (
-                          <div className='text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs'>
-                            {entry.tier_name && (
-                              <Badge
-                                variant='outline'
-                                className={cn(
-                                  'h-4.5 px-1.5 text-[11px]',
-                                  tierStyle.badge
-                                )}
-                              >
-                                {entry.tierTone === 'jackpot' && (
-                                  <Sparkles
-                                    data-icon='inline-start'
-                                    aria-hidden='true'
-                                    className='size-2.5'
-                                  />
-                                )}
-                                {entry.tier_name}
-                              </Badge>
-                            )}
-                            {entry.checkin_date && (
-                              <span className='tabular-nums'>
-                                {entry.checkin_date}
-                              </span>
-                            )}
-                            {props.tab === 'total' && (
-                              <span className='tabular-nums'>
-                                {t('Last {{count}} days', {
-                                  count: props.retentionDays,
-                                })}{' '}
-                                ·{' '}
-                                {formatCheckinPercent(
-                                  entry.shareOfTotal,
-                                  props.locale
-                                )}
-                              </span>
-                            )}
-                            {showCumulative &&
-                              entry.totalQuota !== undefined && (
-                                <span className='tabular-nums'>
-                                  {t('Cumulative')}:{' '}
-                                  {formatQuotaWithCurrency(entry.totalQuota)}
+                              {rank === 1 ? (
+                                <Crown
+                                  className='size-3.5'
+                                  aria-hidden='true'
+                                />
+                              ) : (
+                                formatNumber(rank, props.locale)
+                              )}
+                              {rank === 1 && (
+                                <span className='sr-only'>
+                                  {formatNumber(rank, props.locale)}
                                 </span>
                               )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className='flex shrink-0 items-center gap-3 sm:gap-4'>
-                      <div
-                        aria-hidden='true'
-                        className='hidden items-center gap-2 sm:flex'
-                      >
-                        <div className='bg-muted/85 h-2 w-24 overflow-hidden rounded-full md:w-32'>
-                          {shouldReduce ? (
-                            <div
-                              className={cn('h-full rounded-full', barTone)}
-                              style={{ width: `${entry.shareOfTop}%` }}
-                            />
+                            </span>
                           ) : (
-                            <motion.div
-                              initial={{ width: 0 }}
-                              animate={{ width: `${entry.shareOfTop}%` }}
-                              transition={{
-                                type: 'spring',
-                                stiffness: 220,
-                                damping: 28,
-                                delay: Math.min(rowIndex * 0.02, 0.24),
-                              }}
-                              className={cn('h-full rounded-full', barTone)}
-                            />
+                            <span className='bg-muted/60 text-muted-foreground group-hover/row:bg-muted group-hover/row:text-foreground inline-flex h-6 min-w-6 items-center justify-center rounded-md px-1.5 text-xs font-medium tabular-nums transition-colors'>
+                              {formatNumber(rank, props.locale)}
+                            </span>
                           )}
                         </div>
-                        <span className='text-muted-foreground hidden w-9 text-right text-[11px] tabular-nums lg:inline-block'>
-                          {Math.round(entry.shareOfTop)}%
-                        </span>
-                      </div>
-                      <div className='min-w-16 text-right'>
-                        <span
-                          className={cn(
-                            'text-sm font-bold tabular-nums',
-                            rank === 1 && medal?.amount
-                          )}
-                        >
-                          {formatQuotaWithCurrency(entry.quota_awarded)}
-                        </span>
-                      </div>
-                    </div>
-                  </>
-                )
 
-                if (shouldReduce) {
+                        <Avatar
+                          size='sm'
+                          aria-hidden='true'
+                          className='hidden size-8 sm:flex'
+                        >
+                          <AvatarFallback
+                            className={cn(
+                              'text-xs font-semibold',
+                              entry.isMe
+                                ? 'bg-primary/15 text-primary ring-primary/30 ring-1'
+                                : avatarToneClass
+                            )}
+                          >
+                            {initial}
+                          </AvatarFallback>
+                        </Avatar>
+
+                        <div className='min-w-0 flex-1'>
+                          <div className='flex flex-wrap items-center gap-1.5'>
+                            <p
+                              className='truncate text-sm font-medium'
+                              title={name}
+                            >
+                              {name}
+                            </p>
+                            {entry.isMe && (
+                              <Badge
+                                variant='default'
+                                className='h-4 px-1.5 text-[10px]'
+                              >
+                                {t('You')}
+                              </Badge>
+                            )}
+                            {entry.hitCount !== undefined &&
+                              entry.hitCount > 1 && (
+                                <Badge
+                                  variant='secondary'
+                                  className='h-4 px-1.5 text-[10px] tabular-nums'
+                                >
+                                  ×{formatNumber(entry.hitCount, props.locale)}
+                                </Badge>
+                              )}
+                          </div>
+
+                          {hasMeta && (
+                            <div className='text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs'>
+                              {entry.tier_name && (
+                                <Badge
+                                  variant='outline'
+                                  className={cn(
+                                    'h-4.5 px-1.5 text-[11px]',
+                                    tierStyle.badge
+                                  )}
+                                >
+                                  {entry.tierTone === 'jackpot' && (
+                                    <Sparkles
+                                      data-icon='inline-start'
+                                      aria-hidden='true'
+                                      className='size-2.5'
+                                    />
+                                  )}
+                                  {entry.tier_name}
+                                </Badge>
+                              )}
+                              {entry.checkin_date && (
+                                <span className='tabular-nums'>
+                                  {entry.checkin_date}
+                                </span>
+                              )}
+                              {props.tab === 'total' && (
+                                <span className='tabular-nums'>
+                                  {t('Last {{count}} days', {
+                                    count: props.retentionDays,
+                                  })}{' '}
+                                  ·{' '}
+                                  {formatCheckinPercent(
+                                    entry.shareOfTotal,
+                                    props.locale
+                                  )}
+                                </span>
+                              )}
+                              {showCumulative &&
+                                entry.totalQuota !== undefined && (
+                                  <span className='tabular-nums'>
+                                    {t('Cumulative')}:{' '}
+                                    {formatQuotaWithCurrency(entry.totalQuota)}
+                                  </span>
+                                )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className='flex shrink-0 items-center gap-3 sm:gap-4'>
+                        {shareTooltip ? (
+                          <Tooltip>
+                            <TooltipTrigger render={shareIndicator} />
+                            <TooltipContent className='tabular-nums'>
+                              {shareTooltip}
+                            </TooltipContent>
+                          </Tooltip>
+                        ) : (
+                          shareIndicator
+                        )}
+                        <div className='min-w-16 text-right'>
+                          <span
+                            className={cn(
+                              'text-sm font-bold tabular-nums',
+                              rank === 1 && medal?.amount
+                            )}
+                          >
+                            {formatQuotaWithCurrency(entry.quota_awarded)}
+                          </span>
+                        </div>
+                      </div>
+                    </>
+                  )
+
+                  if (shouldReduce) {
+                    return (
+                      <li
+                        key={entry.id}
+                        ref={attachRef}
+                        data-my-rank-row={entry.isMe ? 'true' : undefined}
+                        className={rowClassName}
+                      >
+                        {rowInner}
+                      </li>
+                    )
+                  }
+
                   return (
-                    <li
+                    <motion.li
                       key={entry.id}
+                      layout='position'
                       ref={attachRef}
                       data-my-rank-row={entry.isMe ? 'true' : undefined}
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{
+                        layout: { type: 'spring', stiffness: 360, damping: 32 },
+                        opacity: { duration: 0.18 },
+                        y: { duration: 0.18 },
+                      }}
                       className={rowClassName}
                     >
                       {rowInner}
-                    </li>
+                    </motion.li>
                   )
-                }
-
-                return (
-                  <motion.li
-                    key={entry.id}
-                    layout='position'
-                    ref={attachRef}
-                    data-my-rank-row={entry.isMe ? 'true' : undefined}
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{
-                      layout: { type: 'spring', stiffness: 360, damping: 32 },
-                      opacity: { duration: 0.18 },
-                      y: { duration: 0.18 },
-                    }}
-                    className={rowClassName}
-                  >
-                    {rowInner}
-                  </motion.li>
-                )
-              })}
-            </ol>
-          </LayoutGroup>
+                })}
+              </ol>
+            </LayoutGroup>
+          </TooltipProvider>
         </div>
       )}
     </div>

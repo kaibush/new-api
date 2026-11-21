@@ -3,6 +3,7 @@ import {
   CalendarCheck,
   Crosshair,
   Crown,
+  PartyPopper,
   Sparkles,
   TrendingUp,
   Trophy,
@@ -14,6 +15,12 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { IconBadge } from '@/components/ui/icon-badge'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { formatQuotaWithCurrency } from '@/lib/currency'
 import { formatNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -35,8 +42,10 @@ interface LeaderboardMyRankProps {
   checkinPrompt?: LeaderboardCheckinPrompt
   todayTopQuota?: number
   showRecordsAction?: boolean
+  justClaimed?: boolean
   onLocateMe?: () => void
   onOpenCheckin?: () => void
+  onCelebrate?: () => void
 }
 
 const MILESTONE_TICKS = [25, 50, 75] as const
@@ -157,6 +166,7 @@ export function LeaderboardMyRank(props: LeaderboardMyRankProps) {
   const showRecordsButton =
     props.showRecordsAction !== false && Boolean(props.onOpenCheckin)
   const showLocateButton = insight.inTopList && Boolean(props.onLocateMe)
+  const showCelebrateButton = Boolean(props.onCelebrate)
   const clampedPercent = Math.max(0, Math.min(100, insight.surpassedPercent))
 
   return (
@@ -166,7 +176,8 @@ export function LeaderboardMyRank(props: LeaderboardMyRankProps) {
         'relative overflow-hidden py-0',
         isChampion
           ? 'border-amber-500/40 bg-gradient-to-r from-amber-500/14 via-amber-500/5 to-card ring-amber-500/25'
-          : 'border-primary/30 from-primary/12 via-primary/4 to-card bg-gradient-to-r ring-primary/15'
+          : 'border-primary/30 from-primary/12 via-primary/4 to-card bg-gradient-to-r ring-primary/15',
+        props.justClaimed && 'ring-2 ring-emerald-500/50'
       )}
     >
       <div
@@ -213,6 +224,19 @@ export function LeaderboardMyRank(props: LeaderboardMyRankProps) {
                   )}
                 >
                   {statusLabel}
+                </Badge>
+              )}
+              {props.justClaimed && (
+                <Badge
+                  variant='outline'
+                  className='h-4.5 border-emerald-500/35 bg-emerald-500/12 px-1.5 text-[11px] text-emerald-800 dark:text-emerald-300'
+                >
+                  <Sparkles
+                    data-icon='inline-start'
+                    aria-hidden='true'
+                    className='size-2.5'
+                  />
+                  {t('Just claimed')}
                 </Badge>
               )}
             </div>
@@ -281,8 +305,29 @@ export function LeaderboardMyRank(props: LeaderboardMyRankProps) {
           </div>
         </div>
 
-        {(showLocateButton || showRecordsButton) && (
+        {(showCelebrateButton || showLocateButton || showRecordsButton) && (
           <div className='flex shrink-0 flex-wrap items-center gap-2 lg:justify-end'>
+            {showCelebrateButton && props.onCelebrate && (
+              <TooltipProvider delay={120}>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        type='button'
+                        size='icon-sm'
+                        variant='outline'
+                        aria-label={t('Replay confetti')}
+                        className='bg-background/80 text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300'
+                        onClick={props.onCelebrate}
+                      >
+                        <PartyPopper className='size-4' />
+                      </Button>
+                    }
+                  />
+                  <TooltipContent>{t('Replay confetti')}</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
             {showLocateButton && props.onLocateMe && (
               <Button
                 type='button'

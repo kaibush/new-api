@@ -8,9 +8,12 @@ import { api } from '@/lib/api'
 
 import { CheckinLeaderboard } from '../components/leaderboard'
 import { CheckinLeaderboardPage } from '../components/leaderboard-page'
+import { CheckinRewardRevealBanner } from '../components/reward-celebration'
 import {
   buildTierToneMap,
+  computeCheckinStreak,
   computeMyRankInsight,
+  evaluateCheckinRoll,
   extractTierSummaries,
   formatResetCountdownClock,
   getTimeUntilNextReset,
@@ -18,23 +21,38 @@ import {
 } from '../lib/leaderboard-utils'
 import type { CheckinLeaderboard as CheckinLeaderboardData } from '../types'
 
-vi.mock('@/components/layout', () => {
+vi.mock('@/components/layout', async () => {
+  const React = await import('react')
+  function Title(_props: { children?: ReactNode }) {
+    return null
+  }
+  function Actions(_props: { children?: ReactNode }) {
+    return null
+  }
+  function Content(_props: { children?: ReactNode }) {
+    return null
+  }
   function SectionPageLayout(props: { children: ReactNode }) {
-    return <div>{props.children}</div>
+    let title: ReactNode = null
+    let actions: ReactNode = null
+    let content: ReactNode = null
+    React.Children.forEach(props.children, (child) => {
+      if (!React.isValidElement<{ children?: ReactNode }>(child)) return
+      if (child.type === Title) title = child.props.children
+      else if (child.type === Actions) actions = child.props.children
+      else if (child.type === Content) content = child.props.children
+    })
+    return (
+      <div>
+        <h1>{title}</h1>
+        <div>{actions}</div>
+        <div>{content}</div>
+      </div>
+    )
   }
-  SectionPageLayout.Title = function Title(props: { children?: ReactNode }) {
-    return <h1>{props.children}</h1>
-  }
-  SectionPageLayout.Actions = function Actions(props: {
-    children?: ReactNode
-  }) {
-    return <div>{props.children}</div>
-  }
-  SectionPageLayout.Content = function Content(props: {
-    children?: ReactNode
-  }) {
-    return <div>{props.children}</div>
-  }
+  SectionPageLayout.Title = Title
+  SectionPageLayout.Actions = Actions
+  SectionPageLayout.Content = Content
   return { SectionPageLayout }
 })
 
@@ -248,6 +266,43 @@ describe('leaderboard-utils', () => {
     expect(getTimeUntilNextReset('Invalid/Zone', now)).toBeNull()
     expect(formatResetCountdownClock('Invalid/Zone', now)).toBeNull()
   })
+
+  test('evaluateCheckinRoll and computeCheckinStreak classify luck and consecutive days', () => {
+    expect(evaluateCheckinRoll(950000, 100000, 1000000)).toEqual({
+      tone: 'jackpot',
+      luckPercent: 94,
+      hasRange: true,
+    })
+    expect(evaluateCheckinRoll(600000, 100000, 1000000)).toEqual({
+      tone: 'lucky',
+      luckPercent: 56,
+      hasRange: true,
+    })
+    expect(evaluateCheckinRoll(150000, 100000, 1000000)).toEqual({
+      tone: 'steady',
+      luckPercent: 6,
+      hasRange: true,
+    })
+    expect(evaluateCheckinRoll(100000, 100000, 100000)).toEqual({
+      tone: 'lucky',
+      luckPercent: null,
+      hasRange: false,
+    })
+
+    expect(
+      computeCheckinStreak(
+        ['2030-05-12', '2030-05-14', '2030-05-15'],
+        '2030-05-15'
+      )
+    ).toBe(2)
+    expect(
+      computeCheckinStreak(
+        ['2030-05-12', '2030-05-13', '2030-05-14'],
+        '2030-05-15'
+      )
+    ).toBe(3)
+    expect(computeCheckinStreak(['2030-05-12'], '2030-05-15')).toBe(0)
+  })
 })
 
 describe('CheckinLeaderboard', () => {
@@ -278,6 +333,10 @@ describe('CheckinLeaderboard', () => {
     const searchInput = screen.getByRole('textbox', {
       name: 'Search leaderboard',
     })
+    await user.keyboard('/')
+    expect(searchInput).toHaveFocus()
+    await user.keyboard('Bob{Escape}')
+    expect(searchInput).toHaveValue('')
     await user.type(searchInput, 'nobody-here')
     expect(screen.getByText('No results found')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Clear filters' }))
@@ -428,5 +487,40 @@ describe('CheckinLeaderboardPage', () => {
     expect(
       await screen.findByTestId('mock-checkin-calendar')
     ).toBeInTheDocument()
+  })
+})
+
+describe('CheckinRewardRevealBanner', () => {
+  test('renders jackpot roll reveal, luck meter, streak badge, and celebration actions', async () => {
+    const onAction = vi.fn()
+    const onReplay = vi.fn()
+    const onDismiss = vi.fn()
+    const user = userEvent.setup()
+
+    renderWithQuery(
+      <CheckinRewardRevealBanner
+        quotaAwarded={4500000}
+        minQuota={100000}
+        maxQuota={5000000}
+        streakDays={5}
+        actionLabel='See my rank'
+        onAction={onAction}
+        onReplayConfetti={onReplay}
+        onDismiss={onDismiss}
+      />
+    )
+
+    expect(screen.getByText('Jackpot roll')).toBeInTheDocument()
+    expect(screen.getByText('5-day streak')).toBeInTheDocument()
+    expect(screen.getByText('Luck 90%')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'See my rank' }))
+    expect(onAction).toHaveBeenCalledTimes(1)
+
+    await user.click(screen.getByRole('button', { name: 'Replay confetti' }))
+    expect(onReplay).toHaveBeenCalledTimes(1)
+
+    await user.click(screen.getByRole('button', { name: 'Close' }))
+    expect(onDismiss).toHaveBeenCalledTimes(1)
   })
 })
