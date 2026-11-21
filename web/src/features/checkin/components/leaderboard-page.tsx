@@ -16,24 +16,123 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
+import { CalendarCheck, Sparkles } from 'lucide-react'
+import { lazy, Suspense, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Dialog } from '@/components/dialog'
 import { SectionPageLayout } from '@/components/layout'
+import { LoadingState } from '@/components/loading-state'
+import { Button } from '@/components/ui/button'
+import { getCheckinStatus } from '@/features/profile/api'
+import { useStatus } from '@/hooks/use-status'
+import { requireServerSuccess } from '@/lib/server-error-message'
 
 import { CheckinLeaderboard } from './leaderboard'
+import type { LeaderboardCheckinPrompt } from './leaderboard-my-rank'
+
+const CheckinCalendarCard = lazy(() =>
+  import('@/features/profile/components/checkin-calendar-card').then(
+    (module) => ({ default: module.CheckinCalendarCard })
+  )
+)
 
 export function CheckinLeaderboardPage() {
   const { t } = useTranslation()
+  const { status } = useStatus()
+  const [checkinOpen, setCheckinOpen] = useState(false)
+  const checkinEnabled = status?.checkin_enabled === true
+
+  const checkin = useQuery({
+    queryKey: ['checkin-status', 'current'],
+    queryFn: async () => requireServerSuccess(await getCheckinStatus()).data,
+    enabled: checkinEnabled,
+    staleTime: 30000,
+  })
+
+  const checkinAvailable = checkinEnabled && checkin.data?.enabled !== false
+  const checkedIn = checkin.data?.stats?.checked_in_today === true
+  const todayAward = checkin.data?.stats?.records.find(
+    (record) => record.checkin_date === checkin.data?.eligibility?.today
+  )?.quota_awarded
+
+  const checkinPrompt: LeaderboardCheckinPrompt | undefined =
+    checkinAvailable && checkin.data
+      ? {
+          checkedIn,
+          minQuota: checkin.data.eligibility?.min_quota,
+          maxQuota: checkin.data.eligibility?.max_quota,
+          todayAward,
+          allowed: checkin.data.eligibility?.allowed,
+        }
+      : undefined
+
+  let actionLabel = t('Check in now')
+  if (checkedIn) actionLabel = t('View check-in records')
+  else if (checkin.data?.eligibility?.allowed === false) {
+    actionLabel = t('Check-in reward details')
+  }
+
   return (
     <SectionPageLayout>
       <SectionPageLayout.Title>
         {t('Check-in leaderboard')}
       </SectionPageLayout.Title>
+      {checkinAvailable && checkin.data && (
+        <SectionPageLayout.Actions>
+          <Button
+            type='button'
+            size='sm'
+            variant='outline'
+            onClick={() => setCheckinOpen(true)}
+          >
+            {checkedIn ? (
+              <CalendarCheck data-icon='inline-start' aria-hidden='true' />
+            ) : (
+              <Sparkles data-icon='inline-start' aria-hidden='true' />
+            )}
+            {actionLabel}
+          </Button>
+        </SectionPageLayout.Actions>
+      )}
       <SectionPageLayout.Content>
         <div className='mx-auto w-full max-w-5xl pb-6'>
-          <CheckinLeaderboard />
+          <CheckinLeaderboard
+            mode='page'
+            checkinPrompt={checkinPrompt}
+            onOpenCheckin={
+              checkinAvailable ? () => setCheckinOpen(true) : undefined
+            }
+          />
         </div>
       </SectionPageLayout.Content>
+      <Dialog
+        open={checkinOpen}
+        onOpenChange={setCheckinOpen}
+        title={t('Daily Check-in')}
+        contentClassName='w-[calc(100%-2rem)] sm:max-w-4xl'
+        bodyClassName='flex flex-col gap-4'
+      >
+        {checkinOpen && (
+          <Suspense fallback={<LoadingState />}>
+            <div
+              role='region'
+              aria-label={t('Check-in reward details')}
+              className='flex min-w-0 flex-col gap-4'
+            >
+              <CheckinCalendarCard
+                embedded
+                checkinEnabled={checkinEnabled}
+                turnstileEnabled={
+                  !!(status?.turnstile_check && status?.turnstile_site_key)
+                }
+                turnstileSiteKey={status?.turnstile_site_key || ''}
+              />
+            </div>
+          </Suspense>
+        )}
+      </Dialog>
     </SectionPageLayout>
   )
 }

@@ -1,17 +1,21 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { CalendarCheck } from 'lucide-react'
+import { CalendarCheck, Trophy } from 'lucide-react'
 import { lazy, Suspense, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
 import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { getCheckinLeaderboard } from '@/features/checkin/api'
+import { CheckinLeaderboardPreview } from '@/features/checkin/components/leaderboard-preview'
 import { getCheckinStatus } from '@/features/profile/api'
 import { useStatus } from '@/hooks/use-status'
+import { toIntlLocale } from '@/i18n/languages'
 import { formatQuotaWithCurrency } from '@/lib/currency'
+import { formatNumber } from '@/lib/format'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { statusQueryOptions } from '@/lib/status-query'
 
@@ -28,7 +32,8 @@ const Leaderboard = lazy(() =>
 )
 
 export function CommunityCheckin(props: { showLeaderboard?: boolean } = {}) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const { status, loading, error } = useStatus()
   const client = useQueryClient()
   const [open, setOpen] = useState(false)
@@ -51,6 +56,15 @@ export function CommunityCheckin(props: { showLeaderboard?: boolean } = {}) {
   const todayAward = checkin.data?.stats?.records.find(
     (record) => record.checkin_date === checkin.data?.eligibility?.today
   )?.quota_awarded
+  const checkinPrompt = checkin.data
+    ? {
+        checkedIn: checked,
+        minQuota: checkin.data.eligibility?.min_quota,
+        maxQuota: checkin.data.eligibility?.max_quota,
+        todayAward,
+        allowed: checkin.data.eligibility?.allowed,
+      }
+    : undefined
   let label = t('Open check-in')
   if (checked) label = t('View check-in records')
   else if (checkin.data?.eligibility?.allowed === false) {
@@ -110,23 +124,31 @@ export function CommunityCheckin(props: { showLeaderboard?: boolean } = {}) {
               {label}
             </Button>
             {props.showLeaderboard !== false && leaderboard.data?.enabled && (
-              <div className='space-y-2 border-t pt-3'>
-                <p className='text-sm font-medium'>
-                  {t("Today's check-in leaderboard")}
-                </p>
-                {leaderboard.data.top?.slice(0, 5).map((entry, index) => (
-                  <div
-                    key={entry.rank}
-                    className='flex items-center justify-between gap-2 text-xs'
-                  >
+              <div className='space-y-2.5 border-t pt-3'>
+                <div className='flex items-center justify-between gap-2'>
+                  <p className='flex min-w-0 items-center gap-1.5 text-sm font-medium'>
+                    <Trophy
+                      className='size-3.5 shrink-0 text-amber-600 dark:text-amber-400'
+                      aria-hidden='true'
+                    />
                     <span className='truncate'>
-                      {index + 1}. {entry.display_name || entry.username}
+                      {t("Today's check-in leaderboard")}
                     </span>
-                    <span className='shrink-0 font-medium'>
-                      {formatQuotaWithCurrency(entry.quota_awarded)}
-                    </span>
-                  </div>
-                ))}
+                  </p>
+                  {leaderboard.data.my_rank !== undefined && (
+                    <Badge
+                      variant='secondary'
+                      className='h-5 shrink-0 px-1.5 text-[11px] tabular-nums'
+                    >
+                      #{formatNumber(leaderboard.data.my_rank, locale)}
+                    </Badge>
+                  )}
+                </div>
+                <CheckinLeaderboardPreview
+                  entries={leaderboard.data.top ?? []}
+                  locale={locale}
+                  limit={5}
+                />
                 <Button
                   type='button'
                   size='sm'
@@ -145,10 +167,23 @@ export function CommunityCheckin(props: { showLeaderboard?: boolean } = {}) {
         open={leaderboardOpen}
         onOpenChange={setLeaderboardOpen}
         title={t('Check-in leaderboard')}
-        contentClassName='w-[calc(100%-2rem)] sm:max-w-3xl'
+        contentClassName='w-[calc(100%-2rem)] sm:max-w-4xl'
       >
         <Suspense fallback={<LoadingState />}>
-          {leaderboardOpen && <Leaderboard />}
+          {leaderboardOpen && (
+            <Leaderboard
+              mode='dialog'
+              checkinPrompt={checkinPrompt}
+              onOpenCheckin={
+                checkin.data
+                  ? () => {
+                      setLeaderboardOpen(false)
+                      setOpen(true)
+                    }
+                  : undefined
+              }
+            />
+          )}
         </Suspense>
       </Dialog>
       <Dialog
