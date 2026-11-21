@@ -1,12 +1,16 @@
-import { Crown } from 'lucide-react'
+import { Crown, Sparkles } from 'lucide-react'
+import { motion, useReducedMotion } from 'motion/react'
 
 import { formatQuotaWithCurrency } from '@/lib/currency'
 import { formatNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import {
+  buildTierToneMap,
+  extractTierSummaries,
   getEntryDisplayName,
   getRankMedalStyles,
+  getTierToneStyles,
 } from '../lib/leaderboard-utils'
 import type { CheckinLeaderboardEntry } from '../types'
 
@@ -19,6 +23,7 @@ interface CheckinLeaderboardPreviewProps {
 export function CheckinLeaderboardPreview(
   props: CheckinLeaderboardPreviewProps
 ) {
+  const shouldReduce = useReducedMotion()
   const limit = props.limit ?? 5
   const visible = props.entries.slice(0, limit)
   if (visible.length === 0) return null
@@ -26,6 +31,7 @@ export function CheckinLeaderboardPreview(
     (highest, entry) => Math.max(highest, entry.quota_awarded),
     0
   )
+  const tierToneMap = buildTierToneMap(extractTierSummaries(visible))
   const seenKeys = new Map<string, number>()
   const keyedEntries = visible.map((entry, idx) => {
     const rank = entry.rank || idx + 1
@@ -38,17 +44,32 @@ export function CheckinLeaderboardPreview(
 
   return (
     <ol className='flex flex-col gap-1.5'>
-      {keyedEntries.map(({ entry, rank, name, key }) => {
+      {keyedEntries.map(({ entry, rank, name, key }, index) => {
         const medal = getRankMedalStyles(rank)
+        const tierName = (entry.tier_name || '').trim()
+        const tierTone = tierName
+          ? (tierToneMap.get(tierName) ?? 'base')
+          : 'base'
         const widthPercent =
           maxQuota > 0
             ? Math.max(8, Math.min(100, (entry.quota_awarded * 100) / maxQuota))
             : 0
+        let barClass = 'bg-primary/60'
+        if (rank === 1) {
+          barClass = 'bg-gradient-to-r from-amber-500 to-yellow-400'
+        } else if (tierName && tierTone !== 'base') {
+          barClass = getTierToneStyles(tierTone).bar
+        }
 
         return (
           <li
             key={key}
-            className='bg-background/70 flex flex-col gap-1 rounded-lg border px-2.5 py-1.5'
+            className={cn(
+              'flex flex-col gap-1.5 rounded-lg border px-2.5 py-1.5 transition-colors',
+              rank === 1
+                ? 'border-amber-500/30 bg-gradient-to-r from-amber-500/10 via-amber-500/4 to-background/80'
+                : 'bg-background/75 hover:bg-background'
+            )}
           >
             <div className='flex items-center justify-between gap-2 text-xs'>
               <div className='flex min-w-0 items-center gap-2'>
@@ -78,10 +99,16 @@ export function CheckinLeaderboardPreview(
                 <span className='truncate font-medium' title={name}>
                   {name}
                 </span>
+                {tierName && tierTone === 'jackpot' && (
+                  <Sparkles
+                    aria-hidden='true'
+                    className='size-3 shrink-0 text-amber-500'
+                  />
+                )}
               </div>
               <span
                 className={cn(
-                  'shrink-0 font-semibold tabular-nums',
+                  'shrink-0 font-bold tabular-nums',
                   rank === 1 && medal?.amount
                 )}
               >
@@ -92,13 +119,24 @@ export function CheckinLeaderboardPreview(
               aria-hidden='true'
               className='bg-muted/80 h-1 w-full overflow-hidden rounded-full'
             >
-              <div
-                className={cn(
-                  'h-full rounded-full transition-all',
-                  rank === 1 ? 'bg-amber-500/80' : 'bg-primary/55'
-                )}
-                style={{ width: `${widthPercent}%` }}
-              />
+              {shouldReduce ? (
+                <div
+                  className={cn('h-full rounded-full', barClass)}
+                  style={{ width: `${widthPercent}%` }}
+                />
+              ) : (
+                <motion.div
+                  initial={{ width: 0 }}
+                  animate={{ width: `${widthPercent}%` }}
+                  transition={{
+                    type: 'spring',
+                    stiffness: 240,
+                    damping: 28,
+                    delay: index * 0.04,
+                  }}
+                  className={cn('h-full rounded-full', barClass)}
+                />
+              )}
             </div>
           </li>
         )

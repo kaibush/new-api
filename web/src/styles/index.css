@@ -746,3 +746,75 @@ For commercial licensing, please contact support@quantumnous.com
     display: none;
   }
 }
+
+/* ── Check-in leaderboard arena & marquee ── */
+@keyframes leaderboard-marquee {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+.leaderboard-marquee-track {
+  display: flex;
+  width: max-content;
+  animation: leaderboard-marquee var(--marquee-duration, 30s) linear infinite;
+  will-change: transform;
+}
+
+.leaderboard-marquee:hover .leaderboard-marquee-track,
+.leaderboard-marquee:focus-within .leaderboard-marquee-track {
+  animation-play-state: paused;
+}
+
+.leaderboard-champion-border {
+  padding: 1.5px;
+  border-radius: inherit;
+  background: conic-gradient(
+    from var(--auto-group-flow-angle),
+    transparent 0deg,
+    transparent 215deg,
+    rgba(251, 191, 36, 0.35) 275deg,
+    rgba(253, 224, 71, 0.95) 332deg,
+    rgba(245, 158, 11, 0.55) 352deg,
+    transparent 360deg
+  );
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: auto-group-flow-border-travel 4.2s linear infinite;
+}
+
+.leaderboard-stage-grid {
+  background-image: radial-gradient(
+    color-mix(in oklch, var(--foreground) 12%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 18px 18px;
+  mask-image: radial-gradient(
+    ellipse 80% 75% at 50% 35%,
+    #000 25%,
+    transparent 100%
+  );
+  -webkit-mask-image: radial-gradient(
+    ellipse 80% 75% at 50% 35%,
+    #000 25%,
+    transparent 100%
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .leaderboard-marquee-track {
+    animation: none !important;
+  }
+  .leaderboard-champion-border {
+    display: none;
+  }
+}

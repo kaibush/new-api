@@ -29,7 +29,9 @@ import {
   Trophy,
   Users,
   Wallet,
+  Zap,
 } from 'lucide-react'
+import { LayoutGroup, motion, useReducedMotion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -53,9 +55,12 @@ import {
   computeBoardMetrics,
   computeMyRankInsight,
   extractTierSummaries,
-  getTimeUntilNextReset,
+  formatResetCountdownClock,
+  getEntryDisplayName,
+  getTierToneStyles,
   groupHighlightWinners,
   selectPodiumEntries,
+  type DisplayLeaderboardEntry,
   type HighlightSortMode,
   type HighlightViewMode,
   type LeaderboardTab,
@@ -128,8 +133,77 @@ function LeaderboardSkeleton() {
   )
 }
 
+interface MarqueeFeedItem {
+  id: string
+  name: string
+  quota: number
+  tierName: string
+  date?: string
+  dotClass: string
+}
+
+function LeaderboardMarquee(props: { items: MarqueeFeedItem[] }) {
+  const { t } = useTranslation()
+  const shouldReduce = useReducedMotion()
+  if (props.items.length < 2) return null
+
+  const renderChip = (item: MarqueeFeedItem, suffix: string) => (
+    <span
+      key={`${item.id}-${suffix}`}
+      className='bg-background/80 inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs shadow-2xs'
+    >
+      <span
+        aria-hidden='true'
+        className={cn('size-1.5 shrink-0 rounded-full', item.dotClass)}
+      />
+      <span className='max-w-28 truncate font-medium'>{item.name}</span>
+      <span className='font-bold text-amber-700 tabular-nums dark:text-amber-300'>
+        +{formatQuotaWithCurrency(item.quota)}
+      </span>
+      {item.tierName && (
+        <span className='text-muted-foreground hidden text-[11px] sm:inline'>
+          · {item.tierName}
+        </span>
+      )}
+    </span>
+  )
+
+  return (
+    <div className='leaderboard-marquee bg-muted/35 ring-foreground/8 flex items-center gap-2.5 overflow-hidden rounded-xl px-3 py-1.5 ring-1'>
+      <span className='inline-flex shrink-0 items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/12 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:text-amber-300'>
+        <span className='relative flex size-1.5' aria-hidden='true'>
+          {!shouldReduce && (
+            <span className='absolute inline-flex size-full animate-ping rounded-full bg-amber-500 opacity-75' />
+          )}
+          <span className='relative inline-flex size-1.5 rounded-full bg-amber-500' />
+        </span>
+        <Zap className='size-3' aria-hidden='true' />
+        <span>{t('Live lucky feed')}</span>
+      </span>
+
+      <div className='relative min-w-0 flex-1 overflow-hidden mask-[linear-gradient(90deg,transparent,black_4%,black_96%,transparent)]'>
+        {shouldReduce ? (
+          <div className='flex [scrollbar-width:none] items-center gap-2 overflow-x-auto [&::-webkit-scrollbar]:hidden'>
+            {props.items.slice(0, 6).map((item) => renderChip(item, 'static'))}
+          </div>
+        ) : (
+          <div className='leaderboard-marquee-track'>
+            <div className='flex items-center gap-2 pr-2'>
+              {props.items.map((item) => renderChip(item, 'a'))}
+            </div>
+            <div aria-hidden='true' className='flex items-center gap-2 pr-2'>
+              {props.items.map((item) => renderChip(item, 'b'))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
   const { t, i18n } = useTranslation()
+  const shouldReduce = useReducedMotion()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const isDialog = props.mode === 'dialog'
   const [tab, setTab] = useState<LeaderboardTab>(props.initialTab ?? 'today')
@@ -139,9 +213,15 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
   const [highlightSort, setHighlightSort] =
     useState<HighlightSortMode>('reward')
   const [highlightedMe, setHighlightedMe] = useState(false)
-  const [pendingLocate, setPendingLocate] = useState(false)
+  const [highlightedEntryId, setHighlightedEntryId] = useState<string | null>(
+    null
+  )
+  const [pendingLocateTarget, setPendingLocateTarget] = useState<
+    'me' | string | null
+  >(null)
   const [nowTick, setNowTick] = useState(() => Date.now())
   const myRowRef = useRef<HTMLLIElement | null>(null)
+  const rowElementsRef = useRef<Map<string, HTMLLIElement>>(new Map())
   const highlightTimerRef = useRef<number | null>(null)
 
   const query = useQuery({
@@ -158,11 +238,12 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
 
   useEffect(() => {
     if (!board?.timezone) return
+    if (shouldReduce) return
     const interval = window.setInterval(() => {
       setNowTick(Date.now())
-    }, 60000)
+    }, 1000)
     return () => window.clearInterval(interval)
-  }, [board?.timezone])
+  }, [board?.timezone, shouldReduce])
 
   useEffect(() => {
     return () => {
@@ -173,16 +254,27 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
   }, [])
 
   useEffect(() => {
-    if (!pendingLocate) return
-    setPendingLocate(false)
+    if (!pendingLocateTarget) return
+    const target = pendingLocateTarget
+    setPendingLocateTarget(null)
     const frame = window.requestAnimationFrame(() => {
-      const element = myRowRef.current
+      const element =
+        target === 'me'
+          ? myRowRef.current
+          : (rowElementsRef.current.get(target) ?? null)
       if (element && typeof element.scrollIntoView === 'function') {
         element.scrollIntoView({ behavior: 'smooth', block: 'center' })
       }
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [pendingLocate, activeTab, searchQuery, tierFilter])
+  }, [
+    pendingLocateTarget,
+    activeTab,
+    searchQuery,
+    tierFilter,
+    highlightView,
+    highlightSort,
+  ])
 
   const rawEntries = useMemo(() => {
     if (!board?.enabled) return []
@@ -251,10 +343,31 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
     () => (board?.enabled ? computeMyRankInsight(board) : null),
     [board]
   )
-  const resetCountdown = useMemo(
-    () => getTimeUntilNextReset(board?.timezone, new Date(nowTick)),
+  const resetClock = useMemo(
+    () => formatResetCountdownClock(board?.timezone, new Date(nowTick)),
     [board?.timezone, nowTick]
   )
+  const marqueeItems = useMemo<MarqueeFeedItem[]>(() => {
+    if (!board?.enabled) return []
+    const source =
+      board.recent_highlights && board.recent_highlights.length >= 2
+        ? board.recent_highlights
+        : (board.top ?? [])
+    if (source.length < 2) return []
+    const toneMap = buildTierToneMap(extractTierSummaries(source))
+    return source.slice(0, 8).map((entry, idx) => {
+      const tierName = (entry.tier_name || '').trim()
+      const tone = tierName ? (toneMap.get(tierName) ?? 'jackpot') : 'jackpot'
+      return {
+        id: `${entry.rank}-${entry.checkin_date || ''}-${idx}`,
+        name: getEntryDisplayName(entry),
+        quota: entry.quota_awarded,
+        tierName,
+        date: entry.checkin_date,
+        dotClass: getTierToneStyles(tone).dot,
+      }
+    })
+  }, [board])
 
   if (query.isPending) return <LeaderboardSkeleton />
   if (query.isError) return <ErrorState onRetry={() => void query.refetch()} />
@@ -285,7 +398,8 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
     setSearchQuery('')
     setTierFilter('')
     setHighlightedMe(true)
-    setPendingLocate(true)
+    setHighlightedEntryId(null)
+    setPendingLocateTarget('me')
     if (highlightTimerRef.current !== null) {
       window.clearTimeout(highlightTimerRef.current)
     }
@@ -294,6 +408,33 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
     }, 2400)
   }
 
+  const handleSelectPodiumEntry = (entry: DisplayLeaderboardEntry) => {
+    setSearchQuery('')
+    setTierFilter('')
+    if (activeTab === 'highlights') {
+      setHighlightView('winners')
+      setHighlightSort('reward')
+    }
+    setHighlightedMe(false)
+    setHighlightedEntryId(entry.id)
+    setPendingLocateTarget(entry.id)
+    if (highlightTimerRef.current !== null) {
+      window.clearTimeout(highlightTimerRef.current)
+    }
+    highlightTimerRef.current = window.setTimeout(() => {
+      setHighlightedEntryId(null)
+    }, 2400)
+  }
+
+  const handleRowElement = (id: string, element: HTMLLIElement | null) => {
+    if (element) {
+      rowElementsRef.current.set(id, element)
+    } else {
+      rowElementsRef.current.delete(id)
+    }
+  }
+
+  const todayTopQuota = board.top?.[0]?.quota_awarded
   const canOfferCheckinAction =
     Boolean(props.onOpenCheckin) &&
     props.checkinPrompt?.checkedIn !== true &&
@@ -316,6 +457,7 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
     subtext?: string
     tone: IconBadgeTone
     icon: typeof Trophy
+    glowClass: string
   }> =
     activeTab === 'highlights'
       ? [
@@ -326,6 +468,7 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
             subtext: metrics.topTierName || undefined,
             tone: 'warning',
             icon: Trophy,
+            glowClass: 'from-amber-400/20 to-transparent',
           },
           {
             id: 'hits',
@@ -336,6 +479,7 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
             }),
             tone: 'primary',
             icon: Sparkles,
+            glowClass: 'from-primary/18 to-transparent',
           },
           {
             id: 'total',
@@ -344,6 +488,7 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
             subtext: t('Last {{count}} days', { count: retentionDays }),
             tone: 'success',
             icon: Wallet,
+            glowClass: 'from-emerald-400/18 to-transparent',
           },
           {
             id: 'median',
@@ -352,6 +497,7 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
             subtext: avgSubtext,
             tone: 'info',
             icon: BarChart3,
+            glowClass: 'from-sky-400/18 to-transparent',
           },
         ]
       : [
@@ -365,6 +511,7 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
                 : undefined,
             tone: 'warning',
             icon: Trophy,
+            glowClass: 'from-amber-400/20 to-transparent',
           },
           {
             id: 'total',
@@ -376,6 +523,7 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
                 : undefined,
             tone: 'success',
             icon: Wallet,
+            glowClass: 'from-emerald-400/18 to-transparent',
           },
           {
             id: 'winners',
@@ -384,6 +532,7 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
             subtext: winnersSubtext,
             tone: 'primary',
             icon: Users,
+            glowClass: 'from-primary/18 to-transparent',
           },
           {
             id: 'median',
@@ -392,8 +541,39 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
             subtext: avgSubtext,
             tone: 'info',
             icon: BarChart3,
+            glowClass: 'from-sky-400/18 to-transparent',
           },
         ]
+
+  const tabDefinitions: Array<{
+    value: LeaderboardTab
+    label: string
+    icon: typeof Trophy
+    count: number
+  }> = [
+    {
+      value: 'today',
+      label: t('Today’s lucky winners'),
+      icon: Trophy,
+      count: board.top?.length ?? 0,
+    },
+    ...(hasHighlights
+      ? [
+          {
+            value: 'highlights' as const,
+            label: t('Recent jackpots'),
+            icon: Sparkles,
+            count: board.recent_highlights?.length ?? 0,
+          },
+        ]
+      : []),
+    {
+      value: 'total',
+      label: t('Recent total rewards'),
+      icon: Award,
+      count: board.recent_totals?.length ?? 0,
+    },
+  ]
 
   return (
     <section
@@ -403,27 +583,26 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
       <div className='flex items-start justify-between gap-2.5 sm:items-center'>
         <div className='text-muted-foreground flex min-w-0 flex-1 flex-wrap items-center gap-1.5 text-xs'>
           {board.today && (
-            <span className='bg-muted/60 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 tabular-nums'>
+            <span className='bg-muted/55 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 tabular-nums'>
               <Calendar className='size-3.5 shrink-0' aria-hidden='true' />
               {board.today}
             </span>
           )}
           {board.timezone && (
-            <span className='bg-muted/60 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1'>
+            <span className='bg-muted/55 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1'>
               <Globe className='size-3.5 shrink-0' aria-hidden='true' />
               {board.timezone}
             </span>
           )}
-          <span className='bg-muted/60 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 tabular-nums'>
+          <span className='bg-muted/55 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 tabular-nums'>
             <History className='size-3.5 shrink-0' aria-hidden='true' />
             {t('Last {{count}} days', { count: retentionDays })}
           </span>
-          {resetCountdown && (
-            <span className='bg-primary/8 text-primary border-primary/20 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-medium tabular-nums'>
+          {resetClock && (
+            <span className='bg-primary/8 text-primary border-primary/25 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-medium tabular-nums'>
               <Clock className='size-3.5 shrink-0' aria-hidden='true' />
-              {t('Resets in {{hours}}h {{minutes}}m', {
-                hours: resetCountdown.hours,
-                minutes: resetCountdown.minutes,
+              {t('Resets in {{countdown}}', {
+                countdown: resetClock,
               })}
             </span>
           )}
@@ -445,10 +624,13 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
         </Button>
       </div>
 
+      <LeaderboardMarquee items={marqueeItems} />
+
       <LeaderboardMyRank
         insight={myRankInsight}
         locale={locale}
         checkinPrompt={props.checkinPrompt}
+        todayTopQuota={todayTopQuota}
         showRecordsAction={isDialog}
         onLocateMe={handleLocateMe}
         onOpenCheckin={props.onOpenCheckin}
@@ -456,40 +638,79 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
 
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         <div className='-mx-1 [scrollbar-width:none] overflow-x-auto px-1 [&::-webkit-scrollbar]:hidden'>
-          <TabsList className='inline-flex w-max min-w-full flex-nowrap sm:w-fit sm:min-w-0'>
-            <TabsTrigger
-              value='today'
-              className='shrink-0 gap-1 px-1.5 text-[11px] sm:gap-1.5 sm:px-3 sm:text-sm'
+          <LayoutGroup
+            id={
+              isDialog
+                ? 'checkin-leaderboard-tabs-dialog'
+                : 'checkin-leaderboard-tabs'
+            }
+          >
+            <TabsList
+              className={cn(
+                'inline-flex h-9 w-max min-w-full flex-nowrap p-1 sm:w-fit sm:min-w-0',
+                !shouldReduce &&
+                  '[&_[data-slot=tabs-trigger]]:data-active:bg-transparent [&_[data-slot=tabs-trigger]]:data-active:shadow-none dark:[&_[data-slot=tabs-trigger]]:data-active:border-transparent dark:[&_[data-slot=tabs-trigger]]:data-active:bg-transparent'
+              )}
             >
-              <Trophy
-                className='hidden size-3.5 shrink-0 sm:inline-block'
-                aria-hidden='true'
-              />
-              {t('Today’s lucky winners')}
-            </TabsTrigger>
-            {hasHighlights && (
-              <TabsTrigger
-                value='highlights'
-                className='shrink-0 gap-1 px-1.5 text-[11px] sm:gap-1.5 sm:px-3 sm:text-sm'
-              >
-                <Sparkles
-                  className='hidden size-3.5 shrink-0 sm:inline-block'
-                  aria-hidden='true'
-                />
-                {t('Recent jackpots')}
-              </TabsTrigger>
-            )}
-            <TabsTrigger
-              value='total'
-              className='shrink-0 gap-1 px-1.5 text-[11px] sm:gap-1.5 sm:px-3 sm:text-sm'
-            >
-              <Award
-                className='hidden size-3.5 shrink-0 sm:inline-block'
-                aria-hidden='true'
-              />
-              {t('Recent total rewards')}
-            </TabsTrigger>
-          </TabsList>
+              {tabDefinitions.map((item) => {
+                const TabIcon = item.icon
+                const isActive = activeTab === item.value
+                return (
+                  <TabsTrigger
+                    key={item.value}
+                    value={item.value}
+                    className='relative shrink-0 gap-1 px-2 text-[11px] sm:gap-1.5 sm:px-3.5 sm:text-sm'
+                  >
+                    {!shouldReduce && isActive && (
+                      <motion.span
+                        layoutId={
+                          isDialog
+                            ? 'checkin-leaderboard-tab-pill-dialog'
+                            : 'checkin-leaderboard-tab-pill'
+                        }
+                        aria-hidden='true'
+                        transition={{
+                          type: 'spring',
+                          stiffness: 420,
+                          damping: 32,
+                        }}
+                        className='bg-background dark:border-input dark:bg-input/40 absolute inset-0 rounded-md shadow-xs dark:border'
+                      />
+                    )}
+                    <span className='relative z-10 inline-flex items-center gap-1.5'>
+                      <TabIcon
+                        className={cn(
+                          'hidden size-3.5 shrink-0 sm:inline-block',
+                          isActive &&
+                            item.value === 'today' &&
+                            'text-amber-600 dark:text-amber-400',
+                          isActive &&
+                            item.value === 'highlights' &&
+                            'text-amber-500 dark:text-amber-300',
+                          isActive && item.value === 'total' && 'text-primary'
+                        )}
+                        aria-hidden='true'
+                      />
+                      <span>{item.label}</span>
+                      {item.count > 0 && (
+                        <span
+                          aria-hidden='true'
+                          className={cn(
+                            'hidden rounded-full px-1.5 py-0 text-[10px] font-semibold tabular-nums md:inline-block',
+                            isActive
+                              ? 'bg-primary/12 text-primary'
+                              : 'bg-background/70 text-muted-foreground'
+                          )}
+                        >
+                          {formatNumber(item.count, locale)}
+                        </span>
+                      )}
+                    </span>
+                  </TabsTrigger>
+                )
+              })}
+            </TabsList>
+          </LayoutGroup>
         </div>
 
         <TabsContent value={activeTab} className='space-y-4 pt-3'>
@@ -519,11 +740,18 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
                       <Card
                         key={item.id}
                         data-card-hover='false'
-                        className='py-0'
+                        className='group/kpi relative overflow-hidden py-0 transition-transform duration-200 hover:-translate-y-0.5'
                       >
+                        <div
+                          aria-hidden='true'
+                          className={cn(
+                            'pointer-events-none absolute -top-8 -right-8 size-24 rounded-full bg-radial opacity-75 blur-xl transition-opacity group-hover/kpi:opacity-100',
+                            item.glowClass
+                          )}
+                        />
                         <CardContent
                           className={cn(
-                            'flex items-start justify-between gap-2',
+                            'relative flex items-start justify-between gap-2',
                             isDialog ? 'p-3' : 'p-3.5'
                           )}
                         >
@@ -531,7 +759,7 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
                             <p className='text-muted-foreground truncate text-xs'>
                               {item.label}
                             </p>
-                            <p className='mt-1 truncate text-base font-semibold tracking-tight tabular-nums sm:text-lg'>
+                            <p className='mt-1 truncate text-lg font-bold tracking-tight tabular-nums sm:text-xl'>
                               {item.value}
                             </p>
                             {item.subtext && (
@@ -555,6 +783,7 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
                 tab={activeTab}
                 retentionDays={retentionDays}
                 locale={locale}
+                onSelectEntry={handleSelectPodiumEntry}
               />
 
               <LeaderboardList
@@ -577,7 +806,9 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
                 highlightSort={highlightSort}
                 onHighlightSortChange={setHighlightSort}
                 highlightedMe={highlightedMe}
+                highlightedEntryId={highlightedEntryId}
                 myRowRef={myRowRef}
+                onRowElement={handleRowElement}
               />
             </>
           )}

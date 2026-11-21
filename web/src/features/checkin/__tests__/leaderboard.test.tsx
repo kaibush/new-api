@@ -12,6 +12,7 @@ import {
   buildTierToneMap,
   computeMyRankInsight,
   extractTierSummaries,
+  formatResetCountdownClock,
   getTimeUntilNextReset,
   selectPodiumEntries,
 } from '../lib/leaderboard-utils'
@@ -238,12 +239,14 @@ describe('leaderboard-utils', () => {
   })
 
   test('getTimeUntilNextReset computes remaining time in target timezone', () => {
-    const now = new Date('2030-05-15T14:30:00Z')
+    const now = new Date('2030-05-15T14:30:15Z')
     expect(getTimeUntilNextReset('Asia/Shanghai', now)).toEqual({
       hours: 1,
       minutes: 30,
     })
+    expect(formatResetCountdownClock('Asia/Shanghai', now)).toBe('01:29:45')
     expect(getTimeUntilNextReset('Invalid/Zone', now)).toBeNull()
+    expect(formatResetCountdownClock('Invalid/Zone', now)).toBeNull()
   })
 })
 
@@ -257,11 +260,20 @@ describe('CheckinLeaderboard', () => {
 
     expect(await screen.findByText('#4')).toBeInTheDocument()
     expect(screen.getByText('You')).toBeInTheDocument()
+    expect(screen.getByText('Live lucky feed')).toBeInTheDocument()
+    expect(screen.getByText('Hall of fortune')).toBeInTheDocument()
     expect(screen.getByText('Tier distribution')).toBeInTheDocument()
 
     const filterGroup = screen.getByRole('group', { name: 'Filter by tier' })
     await user.click(within(filterGroup).getByRole('button', { name: /Lucky/ }))
     expect(screen.getByText('Showing 2 of 4')).toBeInTheDocument()
+
+    const championCard = document.querySelector(
+      '[data-podium-rank="1"] [role="button"]'
+    )
+    expect(championCard).not.toBeNull()
+    await user.click(championCard as HTMLElement)
+    expect(screen.queryByText('Showing 2 of 4')).not.toBeInTheDocument()
 
     const searchInput = screen.getByRole('textbox', {
       name: 'Search leaderboard',

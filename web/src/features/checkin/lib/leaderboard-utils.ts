@@ -67,6 +67,11 @@ export interface RankMedalStyle {
   accent: string
   avatar: string
   amount: string
+  wreath: string
+  glow: string
+  pedestal: string
+  pedestalLedge: string
+  pedestalNumber: string
 }
 
 const TIER_TONE_STYLES: Record<TierTone, TierToneStyle> = {
@@ -102,29 +107,54 @@ const RANK_MEDAL_STYLES: Record<1 | 2 | 3, RankMedalStyle> = {
   1: {
     badge:
       'border border-amber-500/40 bg-amber-500/15 text-amber-800 dark:text-amber-300',
-    card: 'border-amber-500/35 bg-gradient-to-b from-amber-500/12 via-amber-500/4 to-card ring-amber-500/25',
+    card: 'border-amber-500/40 bg-gradient-to-b from-amber-500/16 via-amber-500/5 to-card/95 ring-amber-500/30 shadow-[0_12px_36px_-14px_rgba(245,158,11,0.35)]',
     accent: 'bg-gradient-to-r from-amber-400 via-amber-500 to-yellow-400',
     avatar:
-      'bg-amber-500/15 text-amber-800 ring-2 ring-amber-500/35 dark:text-amber-200',
-    amount: 'text-amber-800 dark:text-amber-300',
+      'bg-gradient-to-br from-amber-200/80 via-amber-400/25 to-amber-500/20 text-amber-900 ring-2 ring-amber-500/45 dark:from-amber-400/25 dark:via-amber-500/20 dark:to-amber-600/15 dark:text-amber-200',
+    amount:
+      'bg-gradient-to-b from-amber-700 via-amber-800 to-amber-950 bg-clip-text text-transparent dark:from-yellow-200 dark:via-amber-300 dark:to-amber-500',
+    wreath: 'text-amber-500/85 dark:text-amber-400/90',
+    glow: 'from-amber-400/30 via-yellow-400/10 to-transparent dark:from-amber-400/28',
+    pedestal:
+      'border-amber-500/30 bg-gradient-to-b from-amber-500/22 via-amber-500/10 to-amber-500/4 dark:from-amber-500/24 dark:via-amber-500/10 dark:to-transparent',
+    pedestalLedge:
+      'bg-gradient-to-r from-amber-400/45 via-yellow-300/85 to-amber-500/45 dark:from-amber-500/40 dark:via-yellow-300/65 dark:to-amber-500/40',
+    pedestalNumber:
+      'bg-gradient-to-b from-amber-600/45 to-amber-600/10 bg-clip-text text-transparent dark:from-amber-300/45 dark:to-amber-400/8',
   },
   2: {
     badge:
       'border border-slate-400/40 bg-slate-500/12 text-slate-700 dark:text-slate-300',
-    card: 'border-slate-400/30 bg-gradient-to-b from-slate-400/10 via-slate-400/3 to-card ring-slate-400/20',
+    card: 'border-slate-400/35 bg-gradient-to-b from-slate-400/14 via-slate-400/4 to-card/95 ring-slate-400/25 shadow-[0_10px_28px_-14px_rgba(100,116,139,0.28)]',
     accent: 'bg-gradient-to-r from-slate-300 via-slate-400 to-slate-300',
     avatar:
-      'bg-slate-500/12 text-slate-700 ring-2 ring-slate-400/30 dark:text-slate-200',
+      'bg-gradient-to-br from-slate-200/80 via-slate-400/20 to-slate-500/15 text-slate-800 ring-2 ring-slate-400/40 dark:from-slate-300/20 dark:via-slate-400/15 dark:to-slate-500/10 dark:text-slate-200',
     amount: 'text-foreground',
+    wreath: 'text-slate-400 dark:text-slate-300/85',
+    glow: 'from-slate-400/22 via-slate-400/6 to-transparent dark:from-slate-300/18',
+    pedestal:
+      'border-slate-400/25 bg-gradient-to-b from-slate-400/18 via-slate-400/8 to-slate-400/3 dark:from-slate-400/20 dark:via-slate-400/8 dark:to-transparent',
+    pedestalLedge:
+      'bg-gradient-to-r from-slate-300/45 via-slate-200/90 to-slate-400/45 dark:from-slate-400/35 dark:via-slate-200/55 dark:to-slate-400/35',
+    pedestalNumber:
+      'bg-gradient-to-b from-slate-500/40 to-slate-500/8 bg-clip-text text-transparent dark:from-slate-300/40 dark:to-slate-400/8',
   },
   3: {
     badge:
       'border border-orange-300 bg-orange-100 text-orange-800 dark:border-orange-400/35 dark:bg-orange-500/15 dark:text-orange-300',
-    card: 'border-orange-500/25 bg-gradient-to-b from-orange-500/10 via-orange-500/3 to-card ring-orange-500/20',
+    card: 'border-orange-400/35 bg-gradient-to-b from-orange-500/14 via-orange-500/4 to-card/95 ring-orange-500/25 shadow-[0_10px_28px_-14px_rgba(234,88,12,0.25)]',
     accent: 'bg-gradient-to-r from-orange-400 via-amber-600 to-orange-400',
     avatar:
       'bg-orange-100 text-orange-800 ring-2 ring-orange-300 dark:bg-orange-500/15 dark:text-orange-200 dark:ring-orange-400/35',
     amount: 'text-foreground',
+    wreath: 'text-orange-500/80 dark:text-orange-400/85',
+    glow: 'from-orange-400/22 via-orange-400/6 to-transparent dark:from-orange-400/20',
+    pedestal:
+      'border-orange-400/25 bg-gradient-to-b from-orange-500/18 via-orange-500/8 to-orange-500/3 dark:from-orange-500/20 dark:via-orange-500/8 dark:to-transparent',
+    pedestalLedge:
+      'bg-gradient-to-r from-orange-400/45 via-amber-300/80 to-orange-500/45 dark:from-orange-500/35 dark:via-amber-300/55 dark:to-orange-500/35',
+    pedestalNumber:
+      'bg-gradient-to-b from-orange-600/40 to-orange-600/8 bg-clip-text text-transparent dark:from-orange-300/40 dark:to-orange-400/8',
   },
 }
 
@@ -496,10 +526,10 @@ export function computeMyRankInsight(
   }
 }
 
-export function getTimeUntilNextReset(
+function getRemainingSecondsInTimezone(
   timezone?: string,
   now: Date = new Date()
-): ResetCountdown | null {
+): number | null {
   if (!timezone) return null
   try {
     const formatter = new Intl.DateTimeFormat('en-US', {
@@ -528,12 +558,34 @@ export function getTimeUntilNextReset(
     }
     const normalizedHour = hourPart === 24 ? 0 : hourPart
     const elapsedSeconds = normalizedHour * 3600 + minutePart * 60 + secondPart
-    const remainingSeconds = Math.max(0, 86400 - elapsedSeconds)
-    const totalRemainingMinutes = Math.ceil(remainingSeconds / 60)
-    const hours = Math.floor(totalRemainingMinutes / 60)
-    const minutes = totalRemainingMinutes % 60
-    return { hours, minutes }
+    return Math.max(0, 86400 - elapsedSeconds)
   } catch {
     return null
   }
+}
+
+export function getTimeUntilNextReset(
+  timezone?: string,
+  now: Date = new Date()
+): ResetCountdown | null {
+  const remainingSeconds = getRemainingSecondsInTimezone(timezone, now)
+  if (remainingSeconds === null) return null
+  const totalRemainingMinutes = Math.ceil(remainingSeconds / 60)
+  const hours = Math.floor(totalRemainingMinutes / 60)
+  const minutes = totalRemainingMinutes % 60
+  return { hours, minutes }
+}
+
+export function formatResetCountdownClock(
+  timezone?: string,
+  now: Date = new Date()
+): string | null {
+  const remainingSeconds = getRemainingSecondsInTimezone(timezone, now)
+  if (remainingSeconds === null) return null
+  const hours = Math.floor(remainingSeconds / 3600)
+  const minutes = Math.floor((remainingSeconds % 3600) / 60)
+  const seconds = remainingSeconds % 60
+  return [hours, minutes, seconds]
+    .map((part) => String(part).padStart(2, '0'))
+    .join(':')
 }
