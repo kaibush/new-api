@@ -26,6 +26,10 @@ import { Hero } from '../components/sections/hero'
 import { ProtocolWorkbench } from '../components/sections/protocol-workbench'
 import { ProviderConstellation } from '../components/sections/provider-constellation'
 import type { HomeMood, ProtocolId } from '../constants'
+import {
+  COSMIC_CAMERA_PRESETS,
+  computeCosmicCameraLayout,
+} from '../lib/cosmic-singularity-engine'
 
 vi.mock('@tanstack/react-router', () => ({
   Link: ({
@@ -245,6 +249,8 @@ describe('CosmicSingularityStage', () => {
     const viewport = container.querySelector('.cosmic-imax-viewport')
     const viewGroup = screen.getByRole('group', { name: 'Camera view' })
 
+    expect(viewport).not.toContainElement(viewGroup)
+
     for (const view of [
       {
         label: 'Inside the Pod',
@@ -272,6 +278,53 @@ describe('CosmicSingularityStage', () => {
       expect(message).toHaveClass('break-words')
       expect(message).not.toHaveClass('truncate')
     }
+  })
+
+  it('pulls the cabin camera back on narrow mobile viewports so the black hole stays framed inside the canopy', () => {
+    const desktop = computeCosmicCameraLayout({
+      width: 1360,
+      height: 500,
+      timeSec: 12,
+      yaw: COSMIC_CAMERA_PRESETS.cabin.yaw,
+      pitch: COSMIC_CAMERA_PRESETS.cabin.pitch,
+      mood: 'work',
+      stormActive: false,
+      warpEnergy: 0,
+      activeRelayId: 'openai',
+      activeAccent: '#38bdf8',
+      pointerNormX: 0.5,
+      pointerNormY: 0.5,
+      pointerInside: false,
+      pulseWaves: [],
+      camDist: COSMIC_CAMERA_PRESETS.cabin.camDist,
+      cabinBlend: 1,
+      galaxyBlend: 0,
+      hereLabel: 'You are here',
+    })
+    const mobile = computeCosmicCameraLayout({
+      width: 358,
+      height: 320,
+      timeSec: 12,
+      yaw: COSMIC_CAMERA_PRESETS.cabin.yaw,
+      pitch: COSMIC_CAMERA_PRESETS.cabin.pitch,
+      mood: 'work',
+      stormActive: false,
+      warpEnergy: 0,
+      activeRelayId: 'openai',
+      activeAccent: '#38bdf8',
+      pointerNormX: 0.5,
+      pointerNormY: 0.5,
+      pointerInside: false,
+      pulseWaves: [],
+      camDist: COSMIC_CAMERA_PRESETS.cabin.camDist,
+      cabinBlend: 1,
+      galaxyBlend: 0,
+      hereLabel: 'You are here',
+    })
+
+    expect(mobile.isCompact).toBe(true)
+    expect(mobile.camDist).toBeGreaterThan(desktop.camDist)
+    expect((mobile.horizonScreenR * 2) / mobile.width).toBeLessThan(0.42)
   })
 })
 

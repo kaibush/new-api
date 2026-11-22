@@ -58,12 +58,18 @@ import {
   COSMIC_CAMERA_PRESETS,
   COSMIC_CAM_DIST_MAX,
   COSMIC_CAM_DIST_MIN,
+  computeCosmicCameraLayout,
   computeCosmicViewBlends,
   createCosmicUniverseField,
+  renderCosmicHudOverlay,
   renderCosmicSingularityFrame,
   resolveCosmicCameraView,
   type CosmicCameraView,
 } from '../lib/cosmic-singularity-engine'
+import {
+  createCosmicWebGLRenderer,
+  hexToNormalizedRgb,
+} from '../lib/cosmic-singularity-webgl'
 
 interface CosmicSingularityStageProps {
   className?: string
@@ -185,6 +191,7 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
 
   const chassisRef = useRef<HTMLDivElement | null>(null)
   const viewportRef = useRef<HTMLDivElement | null>(null)
+  const glCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const burstSeqRef = useRef(1)
 
@@ -248,6 +255,28 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
     TIDAL_UPSTREAMS.find((item) => item.id === effectiveBuoyId) ??
     TIDAL_UPSTREAMS[0]
   const activeAccent = activeBuoy.accentDark
+  const accentRgb = useMemo(
+    () => hexToNormalizedRgb(activeAccent),
+    [activeAccent]
+  )
+
+  const renderConfigRef = useRef({
+    mood: props.mood,
+    stormActive,
+    activeRelayId: activeBuoy.id,
+    activeAccent,
+    accentRgb,
+    hereLabel,
+  })
+  renderConfigRef.current = {
+    mood: props.mood,
+    stormActive,
+    activeRelayId: activeBuoy.id,
+    activeAccent,
+    accentRgb,
+    hereLabel,
+  }
+  const staticRenderRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     if (!warpBoosted) return
@@ -265,6 +294,7 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
 
   useEffect(() => {
     const canvas = canvasRef.current
+    const glCanvas = glCanvasRef.current
     const viewport = viewportRef.current
     if (!canvas || !viewport) return
 
@@ -276,21 +306,111 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
     }
     if (!ctx) return
 
-    let width = Math.max(viewport.clientWidth, 320)
-    let height = Math.max(viewport.clientHeight, 260)
+    let glRenderer = glCanvas ? createCosmicWebGLRenderer(glCanvas) : null
+    if (glCanvas) {
+      glCanvas.style.display = glRenderer ? '' : 'none'
+    }
+
+    let width = Math.max(Math.round(viewport.clientWidth), 1)
+    let height = Math.max(Math.round(viewport.clientHeight), 1)
 
     const syncCanvasSize = (): void => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2)
-      width = Math.max(viewport.clientWidth, 320)
-      height = Math.max(viewport.clientHeight, 260)
-      canvas.width = Math.floor(width * dpr)
-      canvas.height = Math.floor(height * dpr)
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      const rect = viewport.getBoundingClientRect()
+      width = Math.max(Math.round(rect.width || viewport.clientWidth), 1)
+      height = Math.max(Math.round(rect.height || viewport.clientHeight), 1)
+      const isCompact = width < 640
+      const dpr2d = Math.min(window.devicePixelRatio || 1, isCompact ? 1.5 : 2)
+      canvas.width = Math.max(1, Math.floor(width * dpr2d))
+      canvas.height = Math.max(1, Math.floor(height * dpr2d))
+      ctx.setTransform(dpr2d, 0, 0, dpr2d, 0, 0)
+
+      if (glRenderer && !glRenderer.isContextLost()) {
+        const dprGl = Math.min(
+          window.devicePixelRatio || 1,
+          isCompact ? 1.25 : 1.75
+        )
+        glRenderer.resize(
+          Math.max(1, Math.floor(width * dprGl)),
+          Math.max(1, Math.floor(height * dprGl))
+        )
+      }
+    }
+
+    const drawScene = (
+      timeSec: number,
+      yaw: number,
+      pitch: number,
+      camDist: number,
+      warpEnergy: number,
+      pointerNormX: number,
+      pointerNormY: number,
+      pointerInside: boolean,
+      pulseWaves: readonly number[]
+    ): void => {
+      const cfg = renderConfigRef.current
+      const sceneInput = {
+        width,
+        height,
+        timeSec,
+        yaw,
+        pitch,
+        mood: cfg.mood,
+        stormActive: cfg.stormActive,
+        warpEnergy,
+        activeRelayId: cfg.activeRelayId,
+        activeAccent: cfg.activeAccent,
+        pointerNormX,
+        pointerNormY,
+        pointerInside,
+        pulseWaves,
+        camDist,
+        ...computeCosmicViewBlends(camDist),
+        hereLabel: cfg.hereLabel,
+      }
+      const layout = computeCosmicCameraLayout(sceneInput)
+
+      if (glRenderer && !glRenderer.isContextLost()) {
+        glRenderer.render({
+          width: layout.width,
+          height: layout.height,
+          timeSec,
+          simTime: layout.simTime,
+          yaw,
+          pitch,
+          roll: layout.roll,
+          camDist: layout.camDist,
+          fov: layout.fov,
+          cx: layout.cx,
+          cy: layout.cy,
+          isLoaf: layout.isLoaf,
+          stormActive: cfg.stormActive,
+          warpEnergy: layout.warp,
+          cabinBlend: layout.cabin,
+          galaxyBlend: layout.galaxy,
+          pointerNormX,
+          pointerNormY,
+          pointerInside,
+          pulseWaves,
+          accentRgb: cfg.accentRgb,
+        })
+        renderCosmicHudOverlay(ctx, universeField, sceneInput, layout, true)
+      } else {
+        if (glCanvas) glCanvas.style.display = 'none'
+        renderCosmicSingularityFrame(ctx, universeField, sceneInput)
+      }
     }
 
     syncCanvasSize()
+    const handleContextLost = (event: Event): void => {
+      event.preventDefault()
+      glRenderer = null
+      if (glCanvas) glCanvas.style.display = 'none'
+    }
+    glCanvas?.addEventListener('webglcontextlost', handleContextLost)
+
     const resizeObserver = new ResizeObserver(() => {
       syncCanvasSize()
+      staticRenderRef.current?.()
     })
     resizeObserver.observe(viewport)
 
@@ -299,27 +419,26 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
     ).matches
 
     if (reducedMotion) {
-      renderCosmicSingularityFrame(ctx, universeField, {
-        width,
-        height,
-        timeSec: 12.4,
-        yaw: simRef.current.targetYaw,
-        pitch: simRef.current.targetPitch,
-        mood: props.mood,
-        stormActive,
-        warpEnergy: 0,
-        activeRelayId: activeBuoy.id,
-        activeAccent,
-        pointerNormX: 0.5,
-        pointerNormY: 0.5,
-        pointerInside: false,
-        pulseWaves: [],
-        camDist: simRef.current.targetCamDist,
-        ...computeCosmicViewBlends(simRef.current.targetCamDist),
-        hereLabel,
-      })
+      const renderStatic = (): void => {
+        drawScene(
+          12.4,
+          simRef.current.targetYaw,
+          simRef.current.targetPitch,
+          simRef.current.targetCamDist,
+          0,
+          0.5,
+          0.5,
+          false,
+          []
+        )
+      }
+      staticRenderRef.current = renderStatic
+      renderStatic()
       return () => {
+        staticRenderRef.current = null
         resizeObserver.disconnect()
+        glCanvas?.removeEventListener('webglcontextlost', handleContextLost)
+        glRenderer?.dispose()
       }
     }
 
@@ -381,25 +500,17 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
       }
       sim.pulseStartTimes = keptStarts
 
-      renderCosmicSingularityFrame(ctx, universeField, {
-        width,
-        height,
+      drawScene(
         timeSec,
-        yaw: sim.yaw,
-        pitch: sim.pitch,
-        mood: props.mood,
-        stormActive,
-        warpEnergy: sim.warpEnergy,
-        activeRelayId: activeBuoy.id,
-        activeAccent,
-        pointerNormX: sim.pointerNormX,
-        pointerNormY: sim.pointerNormY,
-        pointerInside: sim.pointerInside,
-        pulseWaves: activeWaves,
-        camDist: sim.camDist,
-        ...computeCosmicViewBlends(sim.camDist),
-        hereLabel,
-      })
+        sim.yaw,
+        sim.pitch,
+        sim.camDist,
+        sim.warpEnergy,
+        sim.pointerNormX,
+        sim.pointerNormY,
+        sim.pointerInside,
+        activeWaves
+      )
 
       if (viewportRef.current) {
         const rxDeg = (-sim.pitch * 36).toFixed(2)
@@ -425,14 +536,20 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
     return () => {
       window.cancelAnimationFrame(frameId)
       resizeObserver.disconnect()
+      glCanvas?.removeEventListener('webglcontextlost', handleContextLost)
+      glRenderer?.dispose()
     }
+  }, [universeField])
+
+  useEffect(() => {
+    staticRenderRef.current?.()
   }, [
-    universeField,
     props.mood,
     stormActive,
     activeBuoy.id,
     activeAccent,
     hereLabel,
+    cameraView,
   ])
 
   // Google-Earth style wheel zoom; at either end the page scrolls normally
@@ -878,6 +995,54 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
         </div>
       </div>
 
+      {/* Camera view switcher & scale contrast bar stays above the viewport so the canopy is never occluded */}
+      <div className='cosmic-hud-divider flex flex-wrap items-center justify-between gap-2 border-b bg-slate-950/72 px-3 py-2 text-slate-100 sm:px-6'>
+        <div className='flex flex-wrap items-center gap-2'>
+          <div
+            role='group'
+            aria-label={t('Camera view')}
+            className='flex max-w-full flex-wrap items-center gap-0.5 rounded-2xl border border-white/14 bg-slate-950/80 p-0.5 sm:flex-nowrap sm:rounded-full'
+          >
+            {CAMERA_VIEW_OPTIONS.map((option) => {
+              const Icon = option.icon
+              const active = option.id === cameraView
+              return (
+                <Button
+                  key={option.id}
+                  type='button'
+                  variant='ghost'
+                  size='xs'
+                  aria-pressed={active}
+                  onClick={() => flyToView(option.id)}
+                  className={cn(
+                    'flex cursor-pointer items-center gap-1 rounded-full px-2 py-1 font-mono text-[10px] font-medium tracking-wide whitespace-nowrap transition-all duration-300 outline-none focus-visible:ring-2 focus-visible:ring-sky-400 sm:px-2.5',
+                    active
+                      ? 'bg-sky-400 text-slate-950 shadow-[0_0_16px_rgba(56,189,248,0.4)]'
+                      : 'text-slate-300 hover:bg-white/10 hover:text-white'
+                  )}
+                >
+                  <Icon aria-hidden='true' className='size-3 shrink-0' />
+                  {t(option.labelKey)}
+                </Button>
+              )
+            })}
+          </div>
+          <div className='hidden items-center font-mono text-[10px] tracking-[0.14em] text-slate-300/90 uppercase md:flex'>
+            <span className='text-sky-300'>93B LY</span>
+            <span className='mx-1.5 text-slate-500'>vs</span>
+            <span className='text-amber-300'>
+              {t(activeViewOption.captionKey)}
+            </span>
+          </div>
+        </div>
+
+        {stormActive && (
+          <span className='rounded-full border border-emerald-400/35 bg-emerald-950/75 px-2.5 py-0.5 font-mono text-[10px] font-medium text-emerald-200'>
+            {t('Flares Outside · Zero-G Peace Inside')}
+          </span>
+        )}
+      </div>
+
       {/* =====================================================================
        * PANORAMIC 21:9 3D COSMIC SINGULARITY × PALE BLUE DOT OBSERVATORY
        * ===================================================================== */}
@@ -893,8 +1058,13 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
         data-dragging={isDragging}
         data-view={cameraView}
         data-flight={inFlight}
-        className='cosmic-imax-viewport relative h-[350px] w-full overflow-hidden select-none sm:h-[430px] lg:h-[500px]'
+        className='cosmic-imax-viewport relative h-[320px] w-full overflow-hidden select-none sm:h-[430px] lg:h-[500px]'
       >
+        <canvas
+          ref={glCanvasRef}
+          aria-hidden='true'
+          className='pointer-events-none absolute inset-0 size-full'
+        />
         <canvas
           ref={canvasRef}
           aria-hidden='true'
@@ -907,58 +1077,9 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
           className='cosmic-gyro-scene pointer-events-none absolute inset-0 flex items-center justify-center'
         >
           <div className='cosmic-gyro-assembly relative size-[340px] sm:size-[460px] lg:size-[580px]'>
-            <div className='cosmic-gyro-ring-primary absolute inset-0 rounded-full border border-sky-300/14' />
-            <div className='cosmic-gyro-ring-secondary absolute inset-8 rounded-full border border-dashed border-amber-300/14' />
+            <div className='cosmic-gyro-ring-primary absolute inset-0 rounded-full border border-sky-300/8' />
+            <div className='cosmic-gyro-ring-secondary absolute inset-8 rounded-full border border-dashed border-amber-300/8' />
           </div>
-        </div>
-
-        {/* Top-Left Macroscopic Scale Contrast Telemetry */}
-        <div className='pointer-events-none absolute top-3.5 right-3.5 left-3.5 z-20 flex flex-wrap items-start justify-between gap-2 sm:right-5 sm:left-5'>
-          <div className='flex flex-col gap-2'>
-            <div
-              role='group'
-              aria-label={t('Camera view')}
-              className='pointer-events-auto flex items-center gap-0.5 rounded-full border border-white/14 bg-slate-950/70 p-0.5 backdrop-blur-md'
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={(event) => event.stopPropagation()}
-              onDoubleClick={(event) => event.stopPropagation()}
-            >
-              {CAMERA_VIEW_OPTIONS.map((option) => {
-                const Icon = option.icon
-                const active = option.id === cameraView
-                return (
-                  <button
-                    key={option.id}
-                    type='button'
-                    aria-pressed={active}
-                    onClick={() => flyToView(option.id)}
-                    className={cn(
-                      'flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-1 font-mono text-[10px] font-medium tracking-wide transition-all duration-300 outline-none focus-visible:ring-2 focus-visible:ring-sky-400',
-                      active
-                        ? 'bg-sky-400 text-slate-950 shadow-[0_0_18px_rgba(56,189,248,0.45)]'
-                        : 'text-slate-300 hover:bg-white/10 hover:text-white'
-                    )}
-                  >
-                    <Icon aria-hidden='true' className='size-3' />
-                    {t(option.labelKey)}
-                  </button>
-                )
-              })}
-            </div>
-            <div className='rounded-xl border border-white/12 bg-slate-950/62 px-3 py-1.5 font-mono text-[10px] tracking-[0.14em] text-slate-200/90 uppercase backdrop-blur-md'>
-              <span className='text-sky-300'>93B LY</span>
-              <span className='mx-1.5 text-slate-500'>vs</span>
-              <span className='text-amber-300'>
-                {t(activeViewOption.captionKey)}
-              </span>
-            </div>
-          </div>
-
-          {stormActive && (
-            <span className='rounded-full border border-emerald-400/35 bg-emerald-950/75 px-3 py-1 font-mono text-[10px] font-medium text-emerald-200 backdrop-blur-md'>
-              {t('Flares Outside · Zero-G Peace Inside')}
-            </span>
-          )}
         </div>
 
         {/* 4 Interactive Accessible Deep-Space Scale Landmarks */}

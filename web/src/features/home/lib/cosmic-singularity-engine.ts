@@ -37,7 +37,7 @@ export const COSMIC_CAMERA_PRESETS: Record<
   CosmicCameraView,
   CosmicCameraPreset
 > = {
-  cabin: { camDist: 3.05, yaw: -0.42, pitch: 0.24 },
+  cabin: { camDist: 3.15, yaw: -0.26, pitch: 0.21 },
   orbit: { camDist: 6.2, yaw: 0.08, pitch: 0.31 },
   galaxy: { camDist: 36, yaw: 0.34, pitch: 0.92 },
 }
@@ -64,6 +64,88 @@ export function computeCosmicViewBlends(camDist: number): {
   return {
     cabinBlend: 1 - smooth(3.3, 4.6, camDist),
     galaxyBlend: smooth(9, 26, camDist),
+  }
+}
+
+export interface CosmicCameraLayout {
+  width: number
+  height: number
+  minDim: number
+  isCompact: boolean
+  isLoaf: boolean
+  simTime: number
+  warp: number
+  cabin: number
+  galaxy: number
+  outside: number
+  local: number
+  cx: number
+  cy: number
+  fov: number
+  camDist: number
+  refScale: number
+  roll: number
+  rsWorld: number
+  horizonScreenR: number
+}
+
+export function computeCosmicCameraLayout(
+  input: CosmicSceneInput
+): CosmicCameraLayout {
+  const { width, height, timeSec } = input
+  const isLoaf = input.mood === 'loaf'
+  const speedFactor = isLoaf ? 0.56 : 1.04
+  const warp = Math.max(0, Math.min(1.5, input.warpEnergy))
+  const simTime = timeSec * speedFactor
+
+  const cabin = Math.max(0, Math.min(1, input.cabinBlend))
+  const galaxy = Math.max(0, Math.min(1, input.galaxyBlend))
+  const outside = 1 - cabin
+  const local = 1 - galaxy
+
+  const isCompact = width < 640
+  const aspect = height > 0 ? width / height : 1.6
+  const narrowFactor = Math.max(0, Math.min(1, (1.45 - aspect) / 0.65))
+
+  const orbitCenterX = isCompact ? 0.5 : 0.42
+  const cx =
+    width * (orbitCenterX + (0.5 - orbitCenterX) * Math.max(cabin, galaxy))
+  const cy = height * (0.5 - 0.075 * cabin - 0.01 * galaxy)
+
+  const minDim = Math.min(width, height)
+  const fov = minDim * 1.18
+  const baseCamDist = Math.max(COSMIC_CAM_DIST_MIN * 0.9, input.camDist)
+  const camDist =
+    baseCamDist +
+    cabin * (0.72 + narrowFactor * 1.65) +
+    outside * local * narrowFactor * 0.65
+
+  const refScale = fov / 6.2
+  const roll =
+    -0.135 * outside * local + Math.sin(timeSec * 0.34) * 0.018 * cabin
+  const rsWorld = 0.72
+  const horizonScreenR = (rsWorld * fov) / camDist
+
+  return {
+    width,
+    height,
+    minDim,
+    isCompact,
+    isLoaf,
+    simTime,
+    warp,
+    cabin,
+    galaxy,
+    outside,
+    local,
+    cx,
+    cy,
+    fov,
+    camDist,
+    refScale,
+    roll,
+    rsWorld,
+    horizonScreenR,
   }
 }
 
@@ -441,26 +523,36 @@ function pickFilamentStroke(
   isLoaf: boolean,
   alpha: number
 ): string {
-  const clampedAlpha = Math.max(0.03, Math.min(0.96, alpha))
-  if (doppler > 0.28 && heat > 0.48) {
-    if (isLoaf) {
-      return `rgba(254, 243, 199, ${clampedAlpha.toFixed(3)})`
-    }
-    return `rgba(224, 242, 254, ${clampedAlpha.toFixed(3)})`
+  const clampedAlpha = Math.max(0.02, Math.min(0.62, alpha))
+  const temp = Math.max(0, Math.min(1, heat * 0.78 + (doppler + 1) * 0.22))
+  const lerp = (a: number, b: number, t: number): number =>
+    Math.round(a + (b - a) * t)
+
+  const low: readonly [number, number, number] = isLoaf
+    ? [168, 72, 28]
+    : [36, 94, 178]
+  const mid: readonly [number, number, number] = isLoaf
+    ? [246, 173, 62]
+    : [76, 188, 248]
+  const high: readonly [number, number, number] = isLoaf
+    ? [255, 243, 214]
+    : [238, 248, 255]
+
+  let r = 0
+  let g = 0
+  let b = 0
+  if (temp < 0.55) {
+    const blend = temp / 0.55
+    r = lerp(low[0], mid[0], blend)
+    g = lerp(low[1], mid[1], blend)
+    b = lerp(low[2], mid[2], blend)
+  } else {
+    const blend = (temp - 0.55) / 0.45
+    r = lerp(mid[0], high[0], blend)
+    g = lerp(mid[1], high[1], blend)
+    b = lerp(mid[2], high[2], blend)
   }
-  if (doppler > -0.1) {
-    if (isLoaf) {
-      return `rgba(251, 191, 36, ${clampedAlpha.toFixed(3)})`
-    }
-    return `rgba(56, 189, 248, ${clampedAlpha.toFixed(3)})`
-  }
-  if (heat > 0.4) {
-    return `rgba(245, 158, 11, ${clampedAlpha.toFixed(3)})`
-  }
-  if (isLoaf) {
-    return `rgba(167, 139, 250, ${clampedAlpha.toFixed(3)})`
-  }
-  return `rgba(251, 113, 133, ${clampedAlpha.toFixed(3)})`
+  return `rgba(${r}, ${g}, ${b}, ${clampedAlpha.toFixed(3)})`
 }
 
 function drawPaleBlueDotAndAstronaut(
@@ -476,16 +568,18 @@ function drawPaleBlueDotAndAstronaut(
   ctx.save()
   ctx.translate(obsX, obsY)
   ctx.rotate(-0.46)
-  const beamGrad = ctx.createLinearGradient(0, -210, 0, 170)
-  beamGrad.addColorStop(0, 'rgba(186, 230, 253, 0)')
+  ctx.scale(1, 5.2)
+  const beamGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, 26)
   beamGrad.addColorStop(
-    0.45,
-    isLoaf ? 'rgba(253, 230, 138, 0.085)' : 'rgba(125, 211, 252, 0.075)'
+    0,
+    isLoaf ? 'rgba(253, 230, 138, 0.09)' : 'rgba(186, 230, 253, 0.085)'
   )
-  beamGrad.addColorStop(0.55, 'rgba(255, 255, 255, 0.11)')
+  beamGrad.addColorStop(0.45, 'rgba(125, 211, 252, 0.03)')
   beamGrad.addColorStop(1, 'rgba(56, 189, 248, 0)')
   ctx.fillStyle = beamGrad
-  ctx.fillRect(-18, -210, 36, 380)
+  ctx.beginPath()
+  ctx.arc(0, 0, 26, 0, Math.PI * 2)
+  ctx.fill()
   ctx.restore()
 
   if (isLoaf || stormActive) {
@@ -708,12 +802,14 @@ function drawGalacticMacroLayers(
     if (proj.sx < -20 || proj.sx > width + 20) continue
     if (proj.sy < -20 || proj.sy > height + 20) continue
     const rPx = Math.min(
-      3.6,
-      Math.max(1, p.radius * (proj.scale / view.refScale) * 4.2)
+      2.4,
+      Math.max(0.65, p.radius * (proj.scale / view.refScale) * 2.8)
     )
-    ctx.globalAlpha = Math.min(1, p.alpha * 1.7) * galaxy
+    ctx.globalAlpha = Math.min(0.82, p.alpha * 1.15) * galaxy
     ctx.fillStyle = p.color
-    ctx.fillRect(proj.sx - rPx * 0.5, proj.sy - rPx * 0.5, rPx, rPx)
+    ctx.beginPath()
+    ctx.arc(proj.sx, proj.sy, rPx * 0.65, 0, Math.PI * 2)
+    ctx.fill()
   }
   ctx.globalAlpha = 1
   ctx.restore()
@@ -721,6 +817,7 @@ function drawGalacticMacroLayers(
 
 function drawYouAreHerePin(
   ctx: CanvasRenderingContext2D,
+  width: number,
   x: number,
   y: number,
   timeSec: number,
@@ -742,26 +839,33 @@ function drawYouAreHerePin(
   ctx.arc(x, y, 2.6, 0, Math.PI * 2)
   ctx.fill()
 
-  ctx.strokeStyle = 'rgba(186, 230, 253, 0.7)'
-  ctx.lineWidth = 1
-  ctx.beginPath()
-  ctx.moveTo(x, y - 4)
-  ctx.lineTo(x + 18, y - 30)
-  ctx.lineTo(x + 34, y - 30)
-  ctx.stroke()
-
   if (label) {
     ctx.font = '600 11px ui-monospace, SFMono-Regular, Menlo, monospace'
     const textW = ctx.measureText(label).width
+    const pillW = textW + 16
+    const flipLeft = x + 36 + pillW > width - 10
+    const dir = flipLeft ? -1 : 1
+    const elbowX = x + dir * 16
+    const endX = x + dir * 30
+    const pillX = flipLeft ? endX - pillW - 2 : endX + 2
+
+    ctx.strokeStyle = 'rgba(186, 230, 253, 0.65)'
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(x, y - 4)
+    ctx.lineTo(elbowX, y - 28)
+    ctx.lineTo(endX, y - 28)
+    ctx.stroke()
+
     ctx.fillStyle = 'rgba(2, 6, 23, 0.78)'
     ctx.strokeStyle = 'rgba(125, 211, 252, 0.55)'
     ctx.beginPath()
-    ctx.roundRect(x + 36, y - 41, textW + 16, 22, 11)
+    ctx.roundRect(pillX, y - 39, pillW, 22, 11)
     ctx.fill()
     ctx.stroke()
     ctx.fillStyle = '#e0f2fe'
     ctx.textBaseline = 'middle'
-    ctx.fillText(label, x + 44, y - 30)
+    ctx.fillText(label, pillX + 8, y - 28)
   }
   ctx.restore()
 }
@@ -772,21 +876,23 @@ function traceCanopyPath(
   width: number,
   height: number
 ): void {
-  const left = width * 0.06
-  const right = width * 0.94
-  const top = height * 0.07
-  const bottom = height * 0.76
-  const shoulder = height * 0.2
-  ctx.moveTo(left + width * 0.05, bottom)
+  const isCompact = width < 640
+  const left = width * (isCompact ? 0.032 : 0.048)
+  const right = width * (isCompact ? 0.968 : 0.952)
+  const top = height * (isCompact ? 0.048 : 0.056)
+  const bottom = height * (isCompact ? 0.8 : 0.79)
+  const shoulder = height * (isCompact ? 0.13 : 0.16)
+  const inset = width * (isCompact ? 0.03 : 0.045)
+  ctx.moveTo(left + inset, bottom)
   ctx.lineTo(left, top + shoulder)
-  ctx.quadraticCurveTo(left + width * 0.02, top, left + width * 0.16, top)
-  ctx.lineTo(right - width * 0.16, top)
-  ctx.quadraticCurveTo(right - width * 0.02, top, right, top + shoulder)
-  ctx.lineTo(right - width * 0.05, bottom)
+  ctx.quadraticCurveTo(left + width * 0.018, top, left + width * 0.13, top)
+  ctx.lineTo(right - width * 0.13, top)
+  ctx.quadraticCurveTo(right - width * 0.018, top, right, top + shoulder)
+  ctx.lineTo(right - inset, bottom)
   ctx.quadraticCurveTo(
     width * 0.5,
-    bottom + height * 0.05,
-    left + width * 0.05,
+    bottom + height * 0.038,
+    left + inset,
     bottom
   )
   ctx.closePath()
@@ -807,12 +913,13 @@ function drawCabinCockpit(
   }
 ): void {
   const { width, height, timeSec, cabin } = view
+  const isCompact = width < 640
   // Pulling back out of the pod: the canopy frame balloons past the screen edge
   const expand = 1 + Math.pow(1 - cabin, 1.6) * 1.9
   // Interior parallax: the hull shifts against the pointer for a head-tracking depth cue
-  const parX = (view.pointerNormX - 0.5) * -26
-  const parY = (view.pointerNormY - 0.5) * -16
-  const bobY = Math.sin(timeSec * 0.9) * 2.4
+  const parX = (view.pointerNormX - 0.5) * (isCompact ? -8 : -18)
+  const parY = (view.pointerNormY - 0.5) * (isCompact ? -6 : -12)
+  const bobY = Math.sin(timeSec * 0.85) * 1.6
 
   ctx.save()
   ctx.globalAlpha = Math.min(1, cabin * 1.25)
@@ -825,41 +932,36 @@ function drawCabinCockpit(
   ctx.beginPath()
   traceCanopyPath(ctx, width, height)
   ctx.clip()
-  const sheen = ctx.createLinearGradient(width * 0.1, 0, width * 0.55, height)
+  const sheen = ctx.createLinearGradient(width * 0.08, 0, width * 0.52, height)
   sheen.addColorStop(0, 'rgba(255, 255, 255, 0)')
-  sheen.addColorStop(0.42, 'rgba(255, 255, 255, 0)')
-  sheen.addColorStop(0.47, 'rgba(186, 230, 253, 0.07)')
-  sheen.addColorStop(0.5, 'rgba(255, 255, 255, 0.025)')
-  sheen.addColorStop(0.56, 'rgba(255, 255, 255, 0)')
+  sheen.addColorStop(0.44, 'rgba(255, 255, 255, 0)')
+  sheen.addColorStop(0.48, 'rgba(186, 230, 253, 0.032)')
+  sheen.addColorStop(0.53, 'rgba(255, 255, 255, 0)')
   ctx.fillStyle = sheen
   ctx.fillRect(0, 0, width, height)
 
-  // Helmet-style targeting reticle etched on the glass
-  const retX = width * 0.5
-  const retY = height * 0.42
-  const retR = Math.min(width, height) * 0.16
-  ctx.strokeStyle = view.isLoaf
-    ? 'rgba(253, 230, 138, 0.28)'
-    : 'rgba(125, 211, 252, 0.3)'
-  ctx.lineWidth = 1
-  ctx.setLineDash([2, 6])
-  ctx.lineDashOffset = -timeSec * 6
-  ctx.beginPath()
-  ctx.arc(retX, retY, retR, 0, Math.PI * 2)
-  ctx.stroke()
-  ctx.setLineDash([])
-  for (let k = 0; k < 4; k += 1) {
-    const a = (k * Math.PI) / 2 + timeSec * 0.12
-    ctx.beginPath()
-    ctx.moveTo(
-      retX + Math.cos(a) * retR * 1.08,
-      retY + Math.sin(a) * retR * 1.08
-    )
-    ctx.lineTo(
-      retX + Math.cos(a) * retR * 1.24,
-      retY + Math.sin(a) * retR * 1.24
-    )
-    ctx.stroke()
+  if (!isCompact) {
+    const tickInsetX = width * 0.12
+    const tickTopY = height * 0.13
+    const tickBottomY = height * 0.71
+    const tickLen = 14
+    ctx.strokeStyle = view.isLoaf
+      ? 'rgba(253, 230, 138, 0.16)'
+      : 'rgba(148, 214, 255, 0.16)'
+    ctx.lineWidth = 1
+    const brackets: readonly [number, number, number, number][] = [
+      [tickInsetX, tickTopY, 1, 1],
+      [width - tickInsetX, tickTopY, -1, 1],
+      [tickInsetX, tickBottomY, 1, -1],
+      [width - tickInsetX, tickBottomY, -1, -1],
+    ]
+    for (const [bx, by, sxSign, sySign] of brackets) {
+      ctx.beginPath()
+      ctx.moveTo(bx + sxSign * tickLen, by)
+      ctx.lineTo(bx, by)
+      ctx.lineTo(bx, by + sySign * tickLen)
+      ctx.stroke()
+    }
   }
   ctx.restore()
 
@@ -868,9 +970,9 @@ function drawCabinCockpit(
   ctx.rect(-width, -height, width * 3, height * 3)
   traceCanopyPath(ctx, width, height)
   const hull = ctx.createLinearGradient(0, 0, 0, height)
-  hull.addColorStop(0, '#0d1424')
-  hull.addColorStop(0.55, '#111a2e')
-  hull.addColorStop(1, view.isLoaf ? '#2a1d12' : '#0f1a2c')
+  hull.addColorStop(0, '#070c17')
+  hull.addColorStop(0.55, '#0b1222')
+  hull.addColorStop(1, view.isLoaf ? '#1c140e' : '#0a1220')
   ctx.fillStyle = hull
   ctx.fill('evenodd')
   ctx.save()
@@ -883,11 +985,11 @@ function drawCabinCockpit(
     10,
     width * 0.5,
     height * 1.05,
-    width * 0.6
+    width * 0.58
   )
   warm.addColorStop(
     0,
-    view.isLoaf ? 'rgba(251, 191, 36, 0.28)' : 'rgba(56, 189, 248, 0.16)'
+    view.isLoaf ? 'rgba(251, 191, 36, 0.18)' : 'rgba(56, 189, 248, 0.12)'
   )
   warm.addColorStop(1, 'rgba(0, 0, 0, 0)')
   ctx.fillStyle = warm
@@ -895,102 +997,142 @@ function drawCabinCockpit(
   ctx.restore()
 
   // Canopy frame: brushed metal rim + mullions converging to a vanishing point
+  const rimWidth = Math.max(5, Math.min(11, width * 0.01))
   ctx.beginPath()
   traceCanopyPath(ctx, width, height)
   const rim = ctx.createLinearGradient(0, 0, width, height)
-  rim.addColorStop(0, '#475569')
-  rim.addColorStop(0.5, '#1e293b')
-  rim.addColorStop(1, '#334155')
+  rim.addColorStop(0, '#334155')
+  rim.addColorStop(0.5, '#131d31')
+  rim.addColorStop(1, '#263449')
   ctx.strokeStyle = rim
-  ctx.lineWidth = 16
+  ctx.lineWidth = rimWidth
   ctx.stroke()
   ctx.strokeStyle = view.stormActive
-    ? `rgba(251, 113, 133, ${(0.45 + Math.sin(timeSec * 6) * 0.3).toFixed(3)})`
-    : 'rgba(148, 163, 184, 0.45)'
-  ctx.lineWidth = 1.2
-  ctx.stroke()
-
-  ctx.strokeStyle = rim
-  ctx.lineWidth = 9
-  ctx.lineCap = 'round'
-  for (const xr of [0.33, 0.67]) {
-    ctx.beginPath()
-    ctx.moveTo(width * (0.5 + (xr - 0.5) * 0.72), height * 0.07)
-    ctx.lineTo(width * (0.5 + (xr - 0.5) * 1.08), height * 0.78)
-    ctx.stroke()
-  }
-
-  // Rivets along the top rim
-  ctx.fillStyle = 'rgba(148, 163, 184, 0.55)'
-  for (let k = 0; k < 14; k += 1) {
-    ctx.beginPath()
-    ctx.arc(width * (0.24 + k * 0.04), height * 0.07 - 4, 1.3, 0, Math.PI * 2)
-    ctx.fill()
-  }
-
-  // Dashboard console in perspective
-  const dashTop = height * 0.8
-  ctx.beginPath()
-  ctx.moveTo(-width * 0.2, height * 1.2)
-  ctx.lineTo(width * 0.08, dashTop + 6)
-  ctx.quadraticCurveTo(width * 0.5, dashTop - 14, width * 0.92, dashTop + 6)
-  ctx.lineTo(width * 1.2, height * 1.2)
-  ctx.closePath()
-  const dash = ctx.createLinearGradient(0, dashTop - 14, 0, height)
-  dash.addColorStop(0, '#1e293b')
-  dash.addColorStop(0.12, '#0f172a')
-  dash.addColorStop(1, '#020617')
-  ctx.fillStyle = dash
-  ctx.fill()
-  ctx.strokeStyle = 'rgba(125, 211, 252, 0.22)'
+    ? `rgba(251, 113, 133, ${(0.38 + Math.sin(timeSec * 5) * 0.24).toFixed(3)})`
+    : 'rgba(148, 163, 184, 0.32)'
   ctx.lineWidth = 1
   ctx.stroke()
 
-  // Three glowing console screens: token throughput, route health, loaf meter
-  const screens = [0.3, 0.5, 0.7]
-  for (let k = 0; k < screens.length; k += 1) {
-    const sxCenter = width * (screens[k] ?? 0.5)
-    const sw = width * 0.12
-    const sh = height * 0.085
-    const sx = sxCenter - sw / 2
-    const sy = dashTop + height * 0.03
-    ctx.fillStyle = 'rgba(2, 6, 23, 0.92)'
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)'
-    ctx.beginPath()
-    ctx.roundRect(sx, sy, sw, sh, 4)
-    ctx.fill()
-    ctx.stroke()
-    let barColor = view.accent
-    if (k === 1 && view.stormActive) {
-      barColor = '#fb7185'
-    } else if (k === 2) {
-      barColor = '#fbbf24'
+  if (!isCompact) {
+    ctx.strokeStyle = 'rgba(22, 32, 51, 0.92)'
+    ctx.lineWidth = Math.max(4, Math.min(6.5, width * 0.0052))
+    ctx.lineCap = 'round'
+    for (const xr of [0.22, 0.78]) {
+      ctx.beginPath()
+      ctx.moveTo(width * (0.5 + (xr - 0.5) * 0.86), height * 0.056)
+      ctx.lineTo(width * (0.5 + (xr - 0.5) * 1.06), height * 0.795)
+      ctx.stroke()
     }
-    ctx.fillStyle = barColor
-    const bars = 9
-    for (let b = 0; b < bars; b += 1) {
-      const level =
-        0.25 + 0.7 * Math.abs(Math.sin(timeSec * (1.4 + k * 0.6) + b * 0.9 + k))
-      const bw = (sw - 10) / bars - 1.5
-      const bh =
-        (sh - 8) * (k === 2 && view.isLoaf ? Math.min(1, level + 0.3) : level)
-      ctx.globalAlpha = Math.min(1, cabin * 1.25) * 0.85
-      ctx.fillRect(sx + 5 + b * (bw + 1.5), sy + sh - 4 - bh, bw, bh)
-    }
-    ctx.globalAlpha = Math.min(1, cabin * 1.25)
   }
 
-  // Blinking indicator LEDs
-  for (let k = 0; k < 10; k += 1) {
-    const on = Math.sin(timeSec * (2 + k * 0.7) + k) > 0.1
-    ctx.fillStyle = on
-      ? (['#34d399', '#38bdf8', '#fbbf24'][k % 3] ?? '#34d399')
-      : 'rgba(51, 65, 85, 0.9)'
+  // Dashboard console in perspective
+  const dashTop = height * 0.828
+  ctx.beginPath()
+  ctx.moveTo(-width * 0.2, height * 1.2)
+  ctx.lineTo(width * 0.06, dashTop + 5)
+  ctx.quadraticCurveTo(width * 0.5, dashTop - 10, width * 0.94, dashTop + 5)
+  ctx.lineTo(width * 1.2, height * 1.2)
+  ctx.closePath()
+  const dash = ctx.createLinearGradient(0, dashTop - 10, 0, height)
+  dash.addColorStop(0, '#152036')
+  dash.addColorStop(0.18, '#0b1222')
+  dash.addColorStop(1, '#030712')
+  ctx.fillStyle = dash
+  ctx.fill()
+  ctx.strokeStyle = 'rgba(125, 211, 252, 0.16)'
+  ctx.lineWidth = 1
+  ctx.stroke()
+
+  const drawWaveBezel = (
+    sx: number,
+    sy: number,
+    sw: number,
+    sh: number,
+    stroke: string,
+    freq: number,
+    phase: number
+  ): void => {
+    ctx.fillStyle = 'rgba(3, 8, 20, 0.84)'
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.18)'
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.roundRect(sx, sy, sw, sh, 5)
+    ctx.fill()
+    ctx.stroke()
+
+    const midY = sy + sh * 0.52
+    const amp = sh * 0.26
+    ctx.strokeStyle = stroke
+    ctx.lineWidth = 1.35
+    ctx.beginPath()
+    const samples = 24
+    for (let s = 0; s <= samples; s += 1) {
+      const u = s / samples
+      const env = Math.sin(u * Math.PI)
+      const wy =
+        midY +
+        Math.sin(u * Math.PI * freq - timeSec * 2.1 + phase) * amp * env +
+        Math.sin(u * Math.PI * (freq * 1.9) + timeSec * 1.3) * amp * 0.28 * env
+      const wx = sx + 6 + u * (sw - 12)
+      if (s === 0) ctx.moveTo(wx, wy)
+      else ctx.lineTo(wx, wy)
+    }
+    ctx.stroke()
+  }
+
+  let waveStroke = 'rgba(56, 189, 248, 0.82)'
+  if (view.stormActive) {
+    waveStroke = 'rgba(251, 113, 133, 0.85)'
+  } else if (view.isLoaf) {
+    waveStroke = 'rgba(251, 191, 36, 0.82)'
+  }
+
+  if (isCompact) {
+    const sw = Math.min(width * 0.58, 220)
+    const sh = Math.max(20, height * 0.072)
+    drawWaveBezel(
+      (width - sw) * 0.5,
+      dashTop + height * 0.025,
+      sw,
+      sh,
+      waveStroke,
+      3.2,
+      0
+    )
+  } else {
+    const sw = Math.min(width * 0.135, 165)
+    const sh = Math.max(26, height * 0.074)
+    const sy = dashTop + height * 0.026
+    drawWaveBezel(width * 0.3 - sw * 0.5, sy, sw, sh, view.accent, 3.0, 0)
+    drawWaveBezel(width * 0.5 - sw * 0.5, sy, sw, sh, waveStroke, 4.2, 1.4)
+    drawWaveBezel(
+      width * 0.7 - sw * 0.5,
+      sy,
+      sw,
+      sh,
+      'rgba(251, 191, 36, 0.75)',
+      2.4,
+      2.8
+    )
+  }
+
+  const ledCount = isCompact ? 3 : 5
+  const ledSpread = isCompact ? 0.18 : 0.24
+  for (let k = 0; k < ledCount; k += 1) {
+    const u = ledCount > 1 ? k / (ledCount - 1) - 0.5 : 0
+    const pulse = 0.45 + 0.55 * Math.sin(timeSec * (1.2 + k * 0.4) + k)
+    let ledColor = `rgba(56, 189, 248, ${(0.28 + pulse * 0.45).toFixed(3)})`
+    if (view.stormActive) {
+      ledColor = `rgba(251, 113, 133, ${(0.35 + pulse * 0.45).toFixed(3)})`
+    } else if (view.isLoaf) {
+      ledColor = `rgba(251, 191, 36, ${(0.28 + pulse * 0.45).toFixed(3)})`
+    }
+    ctx.fillStyle = ledColor
     ctx.beginPath()
     ctx.arc(
-      width * (0.2 + k * 0.066),
-      dashTop + height * 0.15,
-      2,
+      width * (0.5 + u * ledSpread),
+      dashTop + height * 0.125,
+      1.8,
       0,
       Math.PI * 2
     )
@@ -1000,66 +1142,43 @@ function drawCabinCockpit(
 
   // Zero-G cabin props float in front of the canopy (stronger parallax, nearer the eye)
   ctx.save()
-  ctx.globalAlpha = Math.min(1, cabin * 1.4)
-  const nearParX = parX * 1.8
-  const nearParY = parY * 1.8
-  const mugX = width * 0.76 + Math.sin(timeSec * 0.55) * 16 + nearParX
-  const mugY = height * 0.66 + Math.cos(timeSec * 0.7) * 10 + nearParY
-  const mugSpin = Math.sin(timeSec * 0.4) * 0.5
-  ctx.save()
-  ctx.translate(mugX, mugY)
-  ctx.rotate(mugSpin)
-  ctx.fillStyle = view.isLoaf ? '#fef3c7' : '#e2e8f0'
-  ctx.beginPath()
-  ctx.roundRect(-11, -13, 22, 26, 4)
-  ctx.fill()
-  ctx.strokeStyle = view.isLoaf ? '#fde68a' : '#cbd5e1'
-  ctx.lineWidth = 3.2
-  ctx.beginPath()
-  ctx.arc(13, 0, 6, -Math.PI / 2, Math.PI / 2)
-  ctx.stroke()
-  ctx.fillStyle = view.isLoaf ? '#b45309' : '#0ea5e9'
-  ctx.fillRect(-11, -4, 22, 4)
-  ctx.restore()
+  ctx.globalAlpha = Math.min(1, cabin * 1.25)
+  const nearParX = parX * 1.35
+  const nearParY = parY * 1.35
 
-  // Floating tea droplets / steam spheres
-  for (let k = 0; k < 6; k += 1) {
-    const phase = timeSec * 0.5 + k * 1.3
-    const dx = mugX - 18 - k * 9 + Math.sin(phase) * 6
-    const dy = mugY - 22 - k * 7 + Math.cos(phase * 1.2) * 5
-    ctx.fillStyle = view.isLoaf
-      ? 'rgba(253, 230, 138, 0.55)'
-      : 'rgba(186, 230, 253, 0.5)'
+  if (width >= 900) {
+    const mugX = width * 0.88 + Math.sin(timeSec * 0.52) * 10 + nearParX
+    const mugY = height * 0.7 + Math.cos(timeSec * 0.65) * 7 + nearParY
+    const mugSpin = Math.sin(timeSec * 0.35) * 0.34
+    ctx.save()
+    ctx.translate(mugX, mugY)
+    ctx.rotate(mugSpin)
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.62)'
+    ctx.strokeStyle = view.isLoaf
+      ? 'rgba(253, 230, 138, 0.34)'
+      : 'rgba(186, 230, 253, 0.32)'
+    ctx.lineWidth = 1.2
     ctx.beginPath()
-    ctx.arc(dx, dy, 2.6 - k * 0.3, 0, Math.PI * 2)
+    ctx.roundRect(-9, -11, 18, 22, 3.5)
     ctx.fill()
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.arc(10.5, 0, 4.8, -Math.PI / 2, Math.PI / 2)
+    ctx.stroke()
+    ctx.restore()
   }
 
-  // Tumbling headset / notepad on the left
-  const padX = width * 0.2 + Math.cos(timeSec * 0.45) * 14 + nearParX
-  const padY = height * 0.64 + Math.sin(timeSec * 0.6) * 12 + nearParY
-  ctx.save()
-  ctx.translate(padX, padY)
-  ctx.rotate(timeSec * 0.18)
-  ctx.fillStyle = '#334155'
-  ctx.beginPath()
-  ctx.roundRect(-16, -11, 32, 22, 3)
-  ctx.fill()
-  ctx.fillStyle = view.isLoaf ? '#fbbf24' : '#38bdf8'
-  ctx.fillRect(-12, -6, 18, 2)
-  ctx.fillRect(-12, -1, 22, 2)
-  ctx.fillRect(-12, 4, 12, 2)
-  ctx.restore()
-
   // Dust motes catching the starlight
-  for (let k = 0; k < 18; k += 1) {
+  const moteCount = isCompact ? 5 : 10
+  for (let k = 0; k < moteCount; k += 1) {
     const mx =
-      ((k * 97.3 + timeSec * (6 + (k % 5) * 2)) % (width * 1.1)) - width * 0.05
+      ((k * 113.7 + timeSec * (4 + (k % 4) * 1.6)) % (width * 1.05)) -
+      width * 0.025
     const my =
-      height * (0.15 + ((k * 37) % 70) / 100) + Math.sin(timeSec + k) * 8
-    ctx.fillStyle = 'rgba(226, 232, 240, 0.35)'
+      height * (0.14 + ((k * 37) % 64) / 100) + Math.sin(timeSec * 0.8 + k) * 6
+    ctx.fillStyle = 'rgba(226, 232, 240, 0.22)'
     ctx.beginPath()
-    ctx.arc(mx + nearParX * 0.5, my + nearParY * 0.5, 0.9, 0, Math.PI * 2)
+    ctx.arc(mx + nearParX * 0.4, my + nearParY * 0.4, 0.85, 0, Math.PI * 2)
     ctx.fill()
   }
 
@@ -1067,16 +1186,276 @@ function drawCabinCockpit(
   const vig = ctx.createRadialGradient(
     width * 0.5,
     height * 0.45,
-    Math.min(width, height) * 0.35,
+    Math.min(width, height) * 0.38,
     width * 0.5,
     height * 0.45,
-    Math.max(width, height) * 0.75
+    Math.max(width, height) * 0.78
   )
   vig.addColorStop(0, 'rgba(0, 0, 0, 0)')
-  vig.addColorStop(1, 'rgba(0, 0, 0, 0.55)')
+  vig.addColorStop(1, 'rgba(0, 0, 0, 0.44)')
   ctx.fillStyle = vig
   ctx.fillRect(0, 0, width, height)
   ctx.restore()
+}
+
+export function renderCosmicHudOverlay(
+  ctx: CanvasRenderingContext2D,
+  field: CosmicUniverseField,
+  input: CosmicSceneInput,
+  layout: CosmicCameraLayout = computeCosmicCameraLayout(input),
+  clearCanvas = true
+): void {
+  const {
+    width,
+    height,
+    isCompact,
+    isLoaf,
+    simTime,
+    cabin,
+    galaxy,
+    outside,
+    local,
+    cx,
+    cy,
+    fov,
+    camDist,
+    refScale,
+    roll,
+    rsWorld,
+    horizonScreenR,
+  } = layout
+  if (width <= 0 || height <= 0) return
+
+  if (clearCanvas) {
+    ctx.clearRect(0, 0, width, height)
+  }
+
+  const { timeSec } = input
+  const project = createProjector(
+    cx,
+    cy,
+    fov,
+    camDist,
+    input.yaw,
+    input.pitch,
+    roll
+  )
+
+  const fixedObsX =
+    width * (isCompact ? 0.8 : 0.81) + Math.sin(input.yaw - 0.08) * 14
+  const fixedObsY =
+    height * (isCompact ? 0.76 : 0.63) + Math.sin(input.pitch - 0.31) * 12
+  const obsGalactic = project(
+    PALE_BLUE_DOT_GALACTIC.x,
+    PALE_BLUE_DOT_GALACTIC.y,
+    PALE_BLUE_DOT_GALACTIC.z
+  )
+  const obsX = obsGalactic.visible
+    ? fixedObsX + (obsGalactic.sx - fixedObsX) * galaxy
+    : fixedObsX
+  const obsY = obsGalactic.visible
+    ? fixedObsY + (obsGalactic.sy - fixedObsY) * galaxy
+    : fixedObsY
+
+  const orbitStrength = outside * local
+  if (orbitStrength > 0.04) {
+    ctx.save()
+    ctx.globalAlpha = orbitStrength * (isCompact ? 0.7 : 0.9)
+
+    const segCount = 72
+    for (let rIdx = 0; rIdx < ORBITAL_RINGS.length; rIdx += 1) {
+      const ring = ORBITAL_RINGS[rIdx]
+      if (!ring) continue
+      const worldR = rsWorld * ring.radiusMult
+      ctx.strokeStyle = ring.strokeColor
+      ctx.lineWidth = rIdx === 0 ? 0.95 : 0.75
+      ctx.beginPath()
+      let penDown = false
+      for (let s = 0; s <= segCount; s += 1) {
+        const ang = (s / segCount) * Math.PI * 2
+        const pt3 = rotateRingPoint(worldR, ang, ring.incX, ring.incZ)
+        const proj = project(pt3.x, pt3.y, pt3.z)
+        if (!proj.visible) {
+          penDown = false
+          continue
+        }
+        const distToCenter = Math.hypot(proj.sx - cx, proj.sy - cy)
+        if (proj.zRot > 0 && distToCenter < horizonScreenR * 1.05) {
+          penDown = false
+          continue
+        }
+        if (!penDown) {
+          ctx.moveTo(proj.sx, proj.sy)
+          penDown = true
+        } else {
+          ctx.lineTo(proj.sx, proj.sy)
+        }
+      }
+      ctx.stroke()
+    }
+
+    const satStep = isCompact ? 3 : 2
+    for (let i = 0; i < field.satellites.length; i += satStep) {
+      const sat = field.satellites[i]
+      if (!sat) continue
+      const ring = ORBITAL_RINGS[sat.ringIndex]
+      if (!ring) continue
+      const ang = sat.angle0 + simTime * sat.speed
+      const pt3 = rotateRingPoint(
+        rsWorld * ring.radiusMult,
+        ang,
+        ring.incX,
+        ring.incZ
+      )
+      const proj = project(pt3.x, pt3.y, pt3.z)
+      if (!proj.visible) continue
+      if (
+        proj.zRot > 0 &&
+        Math.hypot(proj.sx - cx, proj.sy - cy) < horizonScreenR * 1.05
+      ) {
+        continue
+      }
+      const satColor = SATELLITE_COLORS[sat.hueIndex] ?? '#38bdf8'
+      const dotR = Math.min(
+        2.2,
+        Math.max(0.9, sat.size * (proj.scale / refScale) * 0.75)
+      )
+      ctx.fillStyle = satColor
+      ctx.globalAlpha = orbitStrength * (proj.zRot <= 0 ? 0.7 : 0.32)
+      ctx.beginPath()
+      ctx.arc(proj.sx, proj.sy, dotR, 0, Math.PI * 2)
+      ctx.fill()
+    }
+
+    const relayCfg = RELAY_RING_ANGLES[input.activeRelayId] ?? {
+      ringIndex: 0,
+      baseAngle: -0.68,
+    }
+    const relayRing = ORBITAL_RINGS[relayCfg.ringIndex] ?? ORBITAL_RINGS[0]
+    if (relayRing) {
+      const relayAngle = relayCfg.baseAngle + simTime * relayRing.speed * 0.45
+      const relay3D = rotateRingPoint(
+        rsWorld * relayRing.radiusMult,
+        relayAngle,
+        relayRing.incX,
+        relayRing.incZ
+      )
+      const relayProj = project(relay3D.x, relay3D.y, relay3D.z)
+      if (relayProj.visible) {
+        const dx = relayProj.sx - cx
+        const dy = relayProj.sy - cy
+        const dist = Math.max(1, Math.hypot(dx, dy))
+        const startR = Math.min(dist * 0.45, horizonScreenR * 1.24)
+        const startX = cx + (dx / dist) * startR
+        const startY = cy + (dy / dist) * startR
+        const ctrlX = (startX + relayProj.sx) * 0.5
+        const ctrlY = Math.min(startY, relayProj.sy) - horizonScreenR * 0.55
+
+        ctx.save()
+        ctx.strokeStyle = input.activeAccent
+        ctx.globalAlpha = 0.52 * orbitStrength
+        ctx.lineWidth = 1.4
+        ctx.setLineDash([5, 7])
+        ctx.lineDashOffset = -timeSec * 38
+        ctx.beginPath()
+        ctx.moveTo(startX, startY)
+        ctx.quadraticCurveTo(ctrlX, ctrlY, relayProj.sx, relayProj.sy)
+        ctx.stroke()
+
+        if (!isCompact) {
+          ctx.globalAlpha = 0.24 * orbitStrength
+          ctx.lineWidth = 1
+          ctx.setLineDash([4, 9])
+          ctx.lineDashOffset = -timeSec * 24
+          ctx.beginPath()
+          ctx.moveTo(relayProj.sx, relayProj.sy)
+          ctx.quadraticCurveTo(
+            (relayProj.sx + obsX) * 0.52,
+            Math.min(relayProj.sy, obsY) - 28,
+            obsX,
+            obsY
+          )
+          ctx.stroke()
+        }
+        ctx.restore()
+
+        ctx.globalAlpha = orbitStrength
+        ctx.fillStyle = input.activeAccent
+        ctx.beginPath()
+        ctx.arc(relayProj.sx, relayProj.sy, 3.6, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.strokeStyle = input.activeAccent
+        ctx.globalAlpha = 0.42 * orbitStrength
+        ctx.lineWidth = 1.1
+        ctx.beginPath()
+        ctx.arc(
+          relayProj.sx,
+          relayProj.sy,
+          8 + Math.sin(timeSec * 3.2) * 1.8,
+          0,
+          Math.PI * 2
+        )
+        ctx.stroke()
+      }
+    }
+
+    if (input.stormActive) {
+      const shieldX = cx + horizonScreenR * (isCompact ? 1.45 : 1.9)
+      const shieldY = cy - horizonScreenR * (isCompact ? 0.95 : 1.15)
+      ctx.save()
+      ctx.globalAlpha = orbitStrength
+      ctx.strokeStyle = 'rgba(52, 211, 153, 0.72)'
+      ctx.lineWidth = 1.8
+      ctx.beginPath()
+      ctx.arc(shieldX, shieldY, 24, -Math.PI * 0.72, Math.PI * 0.28)
+      ctx.stroke()
+
+      ctx.strokeStyle = 'rgba(251, 113, 133, 0.64)'
+      ctx.lineWidth = 1.3
+      ctx.setLineDash([5, 6])
+      ctx.lineDashOffset = -timeSec * 58
+      ctx.beginPath()
+      ctx.moveTo(width * 0.14, height * 0.09)
+      ctx.lineTo(shieldX - 4, shieldY - 5)
+      ctx.lineTo(width * 0.3, height * 0.05)
+      ctx.stroke()
+      ctx.restore()
+    }
+
+    ctx.restore()
+  }
+
+  if (outside > 0.04) {
+    ctx.save()
+    ctx.globalAlpha = outside * (1 - galaxy * 0.55)
+    drawPaleBlueDotAndAstronaut(
+      ctx,
+      obsX,
+      obsY,
+      timeSec,
+      isLoaf,
+      input.stormActive
+    )
+    ctx.restore()
+  }
+
+  if (galaxy > 0.35) {
+    drawYouAreHerePin(ctx, width, obsX, obsY, timeSec, galaxy, input.hereLabel)
+  }
+
+  if (cabin > 0.01) {
+    drawCabinCockpit(ctx, {
+      width,
+      height,
+      timeSec,
+      cabin,
+      isLoaf,
+      stormActive: input.stormActive,
+      pointerNormX: input.pointerInside ? input.pointerNormX : 0.5,
+      pointerNormY: input.pointerInside ? input.pointerNormY : 0.5,
+      accent: input.activeAccent,
+    })
+  }
 }
 
 export function renderCosmicSingularityFrame(
@@ -1087,30 +1466,24 @@ export function renderCosmicSingularityFrame(
   const { width, height, timeSec } = input
   if (width <= 0 || height <= 0) return
 
-  const isLoaf = input.mood === 'loaf'
-  const speedFactor = isLoaf ? 0.56 : 1.08
-  const warp = Math.max(0, Math.min(1.5, input.warpEnergy))
-  const simTime = timeSec * speedFactor
-
-  const cabin = Math.max(0, Math.min(1, input.cabinBlend))
-  const galaxy = Math.max(0, Math.min(1, input.galaxyBlend))
-  const outside = 1 - cabin
-  const local = 1 - galaxy
-
-  const cx = width * (0.41 + 0.09 * Math.max(cabin, galaxy))
-  const cy = height * (0.51 - 0.05 * cabin - 0.01 * galaxy)
-  const fixedObsX = width * 0.81 + Math.sin(input.yaw - 0.08) * 18
-  const fixedObsY = height * 0.63 + Math.sin(input.pitch - 0.31) * 14
-
-  const minDim = Math.min(width, height)
-  const fov = minDim * 1.18
-  const camDist = Math.max(COSMIC_CAM_DIST_MIN * 0.9, input.camDist)
-  // Fixed reference keeps sprite sizes physical: closer camera → bigger sprites
-  const refScale = fov / 6.2
-  const roll =
-    -0.155 * outside * local + Math.sin(timeSec * 0.37) * 0.028 * cabin
-  const rsWorld = 0.72
-  const horizonScreenR = (rsWorld * fov) / camDist
+  const layout = computeCosmicCameraLayout(input)
+  const {
+    minDim,
+    isCompact,
+    isLoaf,
+    simTime,
+    warp,
+    galaxy,
+    local,
+    cx,
+    cy,
+    fov,
+    camDist,
+    refScale,
+    roll,
+    rsWorld,
+    horizonScreenR,
+  } = layout
 
   const project = createProjector(
     cx,
@@ -1178,22 +1551,11 @@ export function renderCosmicSingularityFrame(
     refScale,
   })
 
-  const obsGalactic = project(
-    PALE_BLUE_DOT_GALACTIC.x,
-    PALE_BLUE_DOT_GALACTIC.y,
-    PALE_BLUE_DOT_GALACTIC.z
-  )
-  const obsX = obsGalactic.visible
-    ? fixedObsX + (obsGalactic.sx - fixedObsX) * galaxy
-    : fixedObsX
-  const obsY = obsGalactic.visible
-    ? fixedObsY + (obsGalactic.sy - fixedObsY) * galaxy
-    : fixedObsY
-
   const pointerPx = input.pointerNormX * width
   const pointerPy = input.pointerNormY * height
+  const starStep = isCompact ? 2 : 1
 
-  for (let i = 0; i < field.stars.length; i += 1) {
+  for (let i = 0; i < field.stars.length; i += starStep) {
     const star = field.stars[i]
     if (!star) continue
     const proj = project(star.x, star.y, star.z)
@@ -1268,99 +1630,14 @@ export function renderCosmicSingularityFrame(
     }
   }
 
-  const drawOrbitalRingPass = (frontPass: boolean): void => {
-    const segCount = 84
-    for (let rIdx = 0; rIdx < ORBITAL_RINGS.length; rIdx += 1) {
-      const ring = ORBITAL_RINGS[rIdx]
-      if (!ring) continue
-      const worldR = rsWorld * ring.radiusMult
-      ctx.strokeStyle = ring.strokeColor
-      ctx.lineWidth = rIdx === 0 ? 1.15 : 0.9
-      ctx.beginPath()
-      let penDown = false
-      for (let s = 0; s <= segCount; s += 1) {
-        const ang = (s / segCount) * Math.PI * 2
-        const pt3 = rotateRingPoint(worldR, ang, ring.incX, ring.incZ)
-        const proj = project(pt3.x, pt3.y, pt3.z)
-        const isFront = proj.zRot <= 0
-        if (!proj.visible || isFront !== frontPass) {
-          penDown = false
-          continue
-        }
-        if (!penDown) {
-          ctx.moveTo(proj.sx, proj.sy)
-          penDown = true
-        } else {
-          ctx.lineTo(proj.sx, proj.sy)
-        }
-      }
-      ctx.stroke()
-    }
-
-    for (let i = 0; i < field.satellites.length; i += 1) {
-      const sat = field.satellites[i]
-      if (!sat) continue
-      const ring = ORBITAL_RINGS[sat.ringIndex]
-      if (!ring) continue
-      const ang = sat.angle0 + simTime * sat.speed
-      const pt3 = rotateRingPoint(
-        rsWorld * ring.radiusMult,
-        ang,
-        ring.incX,
-        ring.incZ
-      )
-      const proj = project(pt3.x, pt3.y, pt3.z)
-      const isFront = proj.zRot <= 0
-      if (!proj.visible || isFront !== frontPass) continue
-      const satColor = SATELLITE_COLORS[sat.hueIndex] ?? '#38bdf8'
-      const dotR = Math.max(0.9, sat.size * (proj.scale / refScale))
-      ctx.fillStyle = satColor
-      ctx.globalAlpha = isFront ? 0.88 : 0.46
-      ctx.beginPath()
-      ctx.arc(proj.sx, proj.sy, dotR, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.globalAlpha = 1
-    }
-  }
-
-  const drawPolarJet = (signY: 1 | -1, frontPass: boolean): void => {
-    const tipWorldY = signY * rsWorld * 3.6
-    const tipProj = project(0, tipWorldY, 0)
-    const baseProj = project(0, signY * rsWorld * 0.92, 0)
-    if (!tipProj.visible || !baseProj.visible) return
-    const isFront = tipProj.zRot <= 0
-    if (isFront !== frontPass) return
-
-    ctx.save()
-    ctx.globalCompositeOperation = 'lighter'
-    const jetGrad = ctx.createLinearGradient(
-      baseProj.sx,
-      baseProj.sy,
-      tipProj.sx,
-      tipProj.sy
-    )
-    jetGrad.addColorStop(
-      0,
-      isLoaf ? 'rgba(251, 191, 36, 0.42)' : 'rgba(125, 211, 252, 0.5)'
-    )
-    jetGrad.addColorStop(0.45, 'rgba(129, 140, 248, 0.2)')
-    jetGrad.addColorStop(1, 'rgba(56, 189, 248, 0)')
-    ctx.strokeStyle = jetGrad
-    ctx.lineWidth = horizonScreenR * 0.34
-    ctx.lineCap = 'round'
-    ctx.beginPath()
-    ctx.moveTo(baseProj.sx, baseProj.sy)
-    ctx.lineTo(tipProj.sx, tipProj.sy)
-    ctx.stroke()
-    ctx.restore()
-  }
-
   const drawAccretionPass = (frontPass: boolean): void => {
+    if (local <= 0.04) return
     ctx.save()
     ctx.globalCompositeOperation = 'lighter'
     ctx.lineCap = 'round'
+    const filStep = isCompact ? 2 : 1
 
-    for (let i = 0; i < field.filaments.length; i += 1) {
+    for (let i = 0; i < field.filaments.length; i += filStep) {
       const fil = field.filaments[i]
       if (!fil) continue
       const rWorld = rsWorld * fil.radiusRatio
@@ -1413,7 +1690,7 @@ export function renderCosmicSingularityFrame(
       const segArcWorld = Math.max(0.001, rWorld * fil.arcSpan)
       const doppler = Math.max(-1, Math.min(1, -dz / segArcWorld))
       const dopplerAlpha =
-        (0.18 + fil.heat * 0.42) * (1 + doppler * 0.52) * boost
+        (0.08 + fil.heat * 0.22) * (1 + doppler * 0.46) * boost * local
 
       ctx.strokeStyle = pickFilamentStroke(
         fil.heat,
@@ -1421,48 +1698,57 @@ export function renderCosmicSingularityFrame(
         isLoaf,
         dopplerAlpha
       )
-      // Cap width so filaments sweeping past the cabin canopy don't smear the frame
       ctx.lineWidth = Math.min(
-        7,
-        Math.max(0.65, fil.thickness * (pMid.scale / refScale))
+        2.1,
+        Math.max(0.55, fil.thickness * 0.55 * (pMid.scale / refScale))
       )
       ctx.beginPath()
       ctx.moveTo(ax, ay)
       ctx.quadraticCurveTo(mx, my, bx, by)
       ctx.stroke()
-
-      // Secondary relativistic underside Einstein-ring arc
-      if (!frontPass && fil.heat > 0.42 && i % 2 === 0) {
-        const mirrorScale = 0.78
-        const uAx = cx + (ax - cx) * mirrorScale
-        const uAy = cy - (ay - cy) * mirrorScale
-        const uMx = cx + (mx - cx) * mirrorScale
-        const uMy = cy - (my - cy) * mirrorScale
-        const uBx = cx + (bx - cx) * mirrorScale
-        const uBy = cy - (by - cy) * mirrorScale
-        const uDist = Math.hypot(uMx - cx, uMy - cy)
-        if (uDist > horizonScreenR * 1.03 && uDist < horizonScreenR * 1.72) {
-          ctx.strokeStyle = pickFilamentStroke(
-            fil.heat,
-            doppler,
-            isLoaf,
-            dopplerAlpha * 0.58
-          )
-          ctx.lineWidth = Math.max(0.55, fil.thickness * 0.62)
-          ctx.beginPath()
-          ctx.moveTo(uAx, uAy)
-          ctx.quadraticCurveTo(uMx, uMy, uBx, uBy)
-          ctx.stroke()
-        }
-      }
     }
 
     ctx.restore()
   }
 
-  drawOrbitalRingPass(false)
-  drawPolarJet(-1, false)
-  drawPolarJet(1, false)
+  if (local > 0.04) {
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
+    ctx.translate(cx, cy)
+    ctx.rotate(roll)
+    ctx.scale(1, Math.max(0.24, Math.abs(Math.sin(input.pitch)) * 0.72 + 0.14))
+    const diskBase = ctx.createRadialGradient(
+      0,
+      0,
+      horizonScreenR * 0.95,
+      0,
+      0,
+      horizonScreenR * 3.4
+    )
+    diskBase.addColorStop(
+      0,
+      `rgba(255, 255, 255, ${(0.24 * local).toFixed(3)})`
+    )
+    diskBase.addColorStop(
+      0.24,
+      isLoaf
+        ? `rgba(246, 173, 62, ${(0.28 * local).toFixed(3)})`
+        : `rgba(76, 188, 248, ${(0.26 * local).toFixed(3)})`
+    )
+    diskBase.addColorStop(
+      0.62,
+      isLoaf
+        ? `rgba(180, 83, 9, ${(0.1 * local).toFixed(3)})`
+        : `rgba(37, 99, 235, ${(0.09 * local).toFixed(3)})`
+    )
+    diskBase.addColorStop(1, 'rgba(0, 0, 0, 0)')
+    ctx.fillStyle = diskBase
+    ctx.beginPath()
+    ctx.arc(0, 0, horizonScreenR * 3.4, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
+  }
+
   drawAccretionPass(false)
 
   ctx.save()
@@ -1473,18 +1759,26 @@ export function renderCosmicSingularityFrame(
     horizonScreenR * 0.92,
     cx,
     cy,
-    horizonScreenR * 2.35
+    horizonScreenR * 2.2
   )
-  coronaGrad.addColorStop(0, 'rgba(255, 255, 255, 0.72)')
   coronaGrad.addColorStop(
-    0.14,
-    isLoaf ? 'rgba(251, 191, 36, 0.62)' : 'rgba(125, 211, 252, 0.62)'
+    0,
+    `rgba(255, 255, 255, ${(0.55 * local).toFixed(3)})`
   )
-  coronaGrad.addColorStop(0.42, 'rgba(245, 158, 11, 0.24)')
+  coronaGrad.addColorStop(
+    0.18,
+    isLoaf
+      ? `rgba(251, 191, 36, ${(0.38 * local).toFixed(3)})`
+      : `rgba(125, 211, 252, ${(0.38 * local).toFixed(3)})`
+  )
+  coronaGrad.addColorStop(
+    0.48,
+    `rgba(148, 163, 184, ${(0.1 * local).toFixed(3)})`
+  )
   coronaGrad.addColorStop(1, 'rgba(0, 0, 0, 0)')
   ctx.fillStyle = coronaGrad
   ctx.beginPath()
-  ctx.arc(cx, cy, horizonScreenR * 2.35, 0, Math.PI * 2)
+  ctx.arc(cx, cy, horizonScreenR * 2.2, 0, Math.PI * 2)
   ctx.fill()
   ctx.restore()
 
@@ -1494,25 +1788,14 @@ export function renderCosmicSingularityFrame(
   ctx.fill()
 
   ctx.strokeStyle = isLoaf
-    ? 'rgba(254, 243, 199, 0.88)'
-    : 'rgba(224, 242, 254, 0.9)'
-  ctx.lineWidth = 1.6
+    ? 'rgba(254, 243, 199, 0.72)'
+    : 'rgba(224, 242, 254, 0.72)'
+  ctx.lineWidth = 1.3
   ctx.beginPath()
   ctx.arc(cx, cy, horizonScreenR * 1.02, 0, Math.PI * 2)
   ctx.stroke()
 
-  ctx.strokeStyle = isLoaf
-    ? 'rgba(251, 191, 36, 0.34)'
-    : 'rgba(56, 189, 248, 0.36)'
-  ctx.lineWidth = 0.95
-  ctx.beginPath()
-  ctx.arc(cx, cy, horizonScreenR * 1.11, 0, Math.PI * 2)
-  ctx.stroke()
-
   drawAccretionPass(true)
-  drawPolarJet(-1, true)
-  drawPolarJet(1, true)
-  drawOrbitalRingPass(true)
 
   for (let w = 0; w < input.pulseWaves.length; w += 1) {
     const progress = input.pulseWaves[w]
@@ -1543,147 +1826,5 @@ export function renderCosmicSingularityFrame(
     ctx.stroke()
   }
 
-  const relayCfg = RELAY_RING_ANGLES[input.activeRelayId] ?? {
-    ringIndex: 0,
-    baseAngle: -0.68,
-  }
-  const relayRing = ORBITAL_RINGS[relayCfg.ringIndex] ?? ORBITAL_RINGS[0]
-  if (relayRing) {
-    const relayAngle = relayCfg.baseAngle + simTime * relayRing.speed * 0.45
-    const relay3D = rotateRingPoint(
-      rsWorld * relayRing.radiusMult,
-      relayAngle,
-      relayRing.incX,
-      relayRing.incZ
-    )
-    const relayProj = project(relay3D.x, relay3D.y, relay3D.z)
-    if (relayProj.visible) {
-      const ctrlX = (cx + relayProj.sx) * 0.5
-      const ctrlY = Math.min(cy, relayProj.sy) - horizonScreenR * 0.85
-
-      ctx.save()
-      ctx.strokeStyle = input.activeAccent
-      ctx.globalAlpha = 0.58
-      ctx.lineWidth = 1.7
-      ctx.setLineDash([7, 8])
-      ctx.lineDashOffset = -timeSec * 46
-      ctx.beginPath()
-      ctx.moveTo(cx, cy)
-      ctx.quadraticCurveTo(ctrlX, ctrlY, relayProj.sx, relayProj.sy)
-      ctx.stroke()
-
-      ctx.globalAlpha = 0.28
-      ctx.lineWidth = 1.05
-      ctx.setLineDash([4, 9])
-      ctx.lineDashOffset = -timeSec * 28
-      ctx.beginPath()
-      ctx.moveTo(relayProj.sx, relayProj.sy)
-      ctx.quadraticCurveTo(
-        (relayProj.sx + obsX) * 0.52,
-        Math.min(relayProj.sy, obsY) - 34,
-        obsX,
-        obsY
-      )
-      ctx.stroke()
-      ctx.restore()
-
-      ctx.fillStyle = input.activeAccent
-      ctx.beginPath()
-      ctx.arc(relayProj.sx, relayProj.sy, 4.2, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.strokeStyle = input.activeAccent
-      ctx.globalAlpha = 0.45
-      ctx.lineWidth = 1.2
-      ctx.beginPath()
-      ctx.arc(
-        relayProj.sx,
-        relayProj.sy,
-        9 + Math.sin(timeSec * 3.2) * 2,
-        0,
-        Math.PI * 2
-      )
-      ctx.stroke()
-      ctx.globalAlpha = 1
-    }
-  }
-
-  if (input.stormActive) {
-    const shieldX = cx + horizonScreenR * 1.95
-    const shieldY = cy - horizonScreenR * 1.15
-    ctx.save()
-    ctx.strokeStyle = 'rgba(52, 211, 153, 0.78)'
-    ctx.lineWidth = 2
-    ctx.beginPath()
-    ctx.arc(shieldX, shieldY, 28, -Math.PI * 0.72, Math.PI * 0.28)
-    ctx.stroke()
-
-    ctx.strokeStyle = 'rgba(251, 113, 133, 0.72)'
-    ctx.lineWidth = 1.5
-    ctx.setLineDash([6, 6])
-    ctx.lineDashOffset = -timeSec * 68
-    ctx.beginPath()
-    ctx.moveTo(width * 0.14, height * 0.08)
-    ctx.lineTo(shieldX - 4, shieldY - 6)
-    ctx.lineTo(width * 0.31, height * 0.04)
-    ctx.stroke()
-    ctx.restore()
-  }
-
-  const scaleLineY = obsY + 26
-  const scaleStartX = cx + horizonScreenR * 1.35
-  if (obsX - scaleStartX > 90 && galaxy < 0.3) {
-    ctx.save()
-    ctx.strokeStyle = 'rgba(148, 163, 184, 0.22)'
-    ctx.lineWidth = 0.8
-    ctx.setLineDash([2, 6])
-    ctx.beginPath()
-    ctx.moveTo(scaleStartX, scaleLineY)
-    ctx.lineTo(obsX - 18, scaleLineY)
-    ctx.stroke()
-    ctx.restore()
-  }
-
-  if (outside > 0.02) {
-    ctx.save()
-    ctx.globalAlpha = outside * (1 - galaxy * 0.55)
-    drawPaleBlueDotAndAstronaut(
-      ctx,
-      obsX,
-      obsY,
-      timeSec,
-      isLoaf,
-      input.stormActive
-    )
-    ctx.restore()
-  }
-
-  if (galaxy > 0.35) {
-    drawYouAreHerePin(ctx, obsX, obsY, timeSec, galaxy, input.hereLabel)
-  }
-
-  if (cabin > 0.01) {
-    drawCabinCockpit(ctx, {
-      width,
-      height,
-      timeSec,
-      cabin,
-      isLoaf,
-      stormActive: input.stormActive,
-      pointerNormX: input.pointerInside ? input.pointerNormX : 0.5,
-      pointerNormY: input.pointerInside ? input.pointerNormY : 0.5,
-      accent: input.activeAccent,
-    })
-  }
-
-  if (input.pointerInside) {
-    ctx.save()
-    ctx.strokeStyle = isLoaf
-      ? 'rgba(251, 191, 36, 0.28)'
-      : 'rgba(125, 211, 252, 0.28)'
-    ctx.lineWidth = 1
-    ctx.beginPath()
-    ctx.arc(pointerPx, pointerPy, 22, 0, Math.PI * 2)
-    ctx.stroke()
-    ctx.restore()
-  }
+  renderCosmicHudOverlay(ctx, field, input, layout, false)
 }
