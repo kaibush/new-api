@@ -992,4 +992,12 @@ export const STATIC_I18N_KEYS = [
   'Upstream 429 solar flares deflect off the magnetosphere; your zero-G tea stays warm.',
   'Gravitational time dilation active: AI finished the refactor while you took one slow breath.',
   'Every API key is scoped and budgeted across orbits—drift off on time tonight.',
+  // Homepage cosmic camera views (cabin / orbit / galaxy).
+  'Inside the Pod',
+  'Orbit View',
+  'Galaxy Scale',
+  'Zero-G cabin · tea floating · the singularity works outside',
+  '100,000 LY spiral · your pod is one pixel',
+  'Pod Cabin: Tea floats past the canopy while the singularity relays every request outside.',
+  'Galaxy Scale: Four spiral arms, one blinking pixel of you—the routes still settle themselves.',
 ] as const

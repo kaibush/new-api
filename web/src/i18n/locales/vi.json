@@ -8423,6 +8423,17 @@
     "Previous match": "Kết quả trước",
     "Next match": "Kết quả tiếp theo",
     "This message": "Tin nhắn này",
-    "Tool calls: {{count}}": "Lệnh gọi công cụ: {{count}}"
+    "Tool calls: {{count}}": "Lệnh gọi công cụ: {{count}}",
+    "Inside the Pod": "Trong khoang",
+    "Orbit View": "Quỹ đạo",
+    "Galaxy Scale": "Thiên hà",
+    "Camera view": "Góc máy",
+    "You are here": "Bạn ở đây",
+    "Warp Transit": "Đang bẻ cong",
+    "Drag in 3D · Scroll to zoom · Double-click to dive": "Kéo xoay · Cuộn để thu phóng · Nhấp đúp để lao xuống",
+    "Zero-G cabin · tea floating · the singularity works outside": "Khoang không trọng lực · trà lơ lửng · điểm kỳ dị làm việc bên ngoài",
+    "100,000 LY spiral · your pod is one pixel": "Xoắn ốc 100.000 năm ánh sáng · khoang của bạn chỉ là một điểm ảnh",
+    "Pod Cabin: Tea floats past the canopy while the singularity relays every request outside.": "Khoang: trà trôi qua kính buồng lái trong khi điểm kỳ dị bên ngoài chuyển tiếp mọi yêu cầu.",
+    "Galaxy Scale: Four spiral arms, one blinking pixel of you—the routes still settle themselves.": "Quy mô thiên hà: bốn nhánh xoắn, bạn chỉ là một điểm ảnh nhấp nháy—các tuyến vẫn tự ổn định."
   }
 }

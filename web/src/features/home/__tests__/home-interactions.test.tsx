@@ -165,6 +165,52 @@ describe('CosmicSingularityStage', () => {
     expect(screen.getByText('POST /v1/messages')).toBeVisible()
   })
 
+  it('flies between cabin, orbit and galaxy camera views and hides orbit-only beacons outside orbit', () => {
+    const { container } = render(<CosmicSingularityStage mood='work' />)
+    const viewport = container.querySelector('.cosmic-imax-viewport')
+    const viewGroup = screen.getByRole('group', { name: 'Camera view' })
+    const cabinBtn = within(viewGroup).getByRole('button', {
+      name: 'Inside the Pod',
+    })
+    const orbitBtn = within(viewGroup).getByRole('button', {
+      name: 'Orbit View',
+    })
+    const galaxyBtn = within(viewGroup).getByRole('button', {
+      name: 'Galaxy Scale',
+    })
+
+    expect(orbitBtn).toHaveAttribute('aria-pressed', 'true')
+    expect(viewport).toHaveAttribute('data-view', 'orbit')
+    expect(
+      screen.getByRole('button', {
+        name: 'Focus on tiny you on the Pale Blue Dot',
+      })
+    ).toBeVisible()
+
+    fireEvent.click(cabinBtn)
+    expect(cabinBtn).toHaveAttribute('aria-pressed', 'true')
+    expect(orbitBtn).toHaveAttribute('aria-pressed', 'false')
+    expect(viewport).toHaveAttribute('data-view', 'cabin')
+    expect(viewport).toHaveAttribute('data-flight', 'true')
+    expect(
+      screen.queryByRole('button', {
+        name: 'Focus on tiny you on the Pale Blue Dot',
+      })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'Pod Cabin: Tea floats past the canopy while the singularity relays every request outside.'
+      )
+    ).toBeVisible()
+
+    fireEvent.click(galaxyBtn)
+    expect(galaxyBtn).toHaveAttribute('aria-pressed', 'true')
+    expect(viewport).toHaveAttribute('data-view', 'galaxy')
+    expect(
+      screen.getByText('100,000 LY spiral · your pod is one pixel')
+    ).toBeVisible()
+  })
+
   it('enters custom 3D camera orbit when dragging across the cosmic viewport', () => {
     const { container } = render(<CosmicSingularityStage mood='work' />)
     const viewport = container.querySelector('.cosmic-imax-viewport')

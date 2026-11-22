@@ -8423,6 +8423,17 @@
     "Previous match": "上一個相符項目",
     "Next match": "下一個相符項目",
     "This message": "本則訊息",
-    "Tool calls: {{count}}": "工具呼叫：{{count}}"
+    "Tool calls: {{count}}": "工具呼叫：{{count}}",
+    "Inside the Pod": "艙內摸魚",
+    "Orbit View": "環繞視角",
+    "Galaxy Scale": "銀河宏觀",
+    "Camera view": "鏡頭視角",
+    "You are here": "你在這裡",
+    "Warp Transit": "曲速躍遷中",
+    "Drag in 3D · Scroll to zoom · Double-click to dive": "拖曳旋轉 · 滾輪縮放 · 雙擊俯衝",
+    "Zero-G cabin · tea floating · the singularity works outside": "零重力艙 · 茶杯漂浮 · 奇點在窗外加班",
+    "100,000 LY spiral · your pod is one pixel": "10 萬光年旋臂 · 你的艙只是一個像素",
+    "Pod Cabin: Tea floats past the canopy while the singularity relays every request outside.": "艙內廣播：茶杯從舷窗前飄過，窗外的奇點正替你轉發每一個請求。",
+    "Galaxy Scale: Four spiral arms, one blinking pixel of you—the routes still settle themselves.": "銀河尺度：四條旋臂，你只是一粒閃爍的像素——路由依舊自動收斂。"
   }
 }

@@ -8423,6 +8423,17 @@
     "Previous match": "上一个匹配",
     "Next match": "下一个匹配",
     "This message": "本条消息",
-    "Tool calls: {{count}}": "工具调用：{{count}}"
+    "Tool calls: {{count}}": "工具调用：{{count}}",
+    "Inside the Pod": "舱内摸鱼",
+    "Orbit View": "环绕视角",
+    "Galaxy Scale": "银河宏观",
+    "Camera view": "镜头视角",
+    "You are here": "你在这里",
+    "Warp Transit": "曲速跃迁中",
+    "Drag in 3D · Scroll to zoom · Double-click to dive": "拖拽旋转 · 滚轮缩放 · 双击俯冲",
+    "Zero-G cabin · tea floating · the singularity works outside": "零重力舱 · 茶杯漂浮 · 奇点在窗外加班",
+    "100,000 LY spiral · your pod is one pixel": "10 万光年旋臂 · 你的舱只是一个像素",
+    "Pod Cabin: Tea floats past the canopy while the singularity relays every request outside.": "舱内广播：茶杯从舷窗前飘过，窗外的奇点正替你转发每一个请求。",
+    "Galaxy Scale: Four spiral arms, one blinking pixel of you—the routes still settle themselves.": "银河尺度：四条旋臂，你只是一粒闪烁的像素——路由依旧自动收敛。"
   }
 }

@@ -22,9 +22,11 @@ import {
   Compass,
   Orbit,
   Radio,
+  Rocket,
   RotateCcw,
   Sparkles,
   Sun,
+  Telescope,
 } from 'lucide-react'
 import {
   useEffect,
@@ -53,8 +55,14 @@ import {
   type TidalUpstreamBuoy,
 } from '../constants'
 import {
+  COSMIC_CAMERA_PRESETS,
+  COSMIC_CAM_DIST_MAX,
+  COSMIC_CAM_DIST_MIN,
+  computeCosmicViewBlends,
   createCosmicUniverseField,
   renderCosmicSingularityFrame,
+  resolveCosmicCameraView,
+  type CosmicCameraView,
 } from '../lib/cosmic-singularity-engine'
 
 interface CosmicSingularityStageProps {
@@ -72,9 +80,43 @@ interface ShockwaveBurst {
 
 const DEFAULT_YAW = 0.08
 const DEFAULT_PITCH = 0.31
+const FLIGHT_DURATION_SEC = 2.4
+
+const CAMERA_VIEW_OPTIONS: readonly {
+  id: CosmicCameraView
+  labelKey: string
+  captionKey: string
+  whisperKey: string
+  icon: typeof Orbit
+}[] = [
+  {
+    id: 'cabin',
+    labelKey: 'Inside the Pod',
+    captionKey: 'Zero-G cabin · tea floating · the singularity works outside',
+    whisperKey:
+      'Pod Cabin: Tea floats past the canopy while the singularity relays every request outside.',
+    icon: Rocket,
+  },
+  {
+    id: 'orbit',
+    labelKey: 'Orbit View',
+    captionKey: '1.7m Human · Drag to Orbit 3D',
+    whisperKey:
+      'Across 93 billion light-years of cosmos, your busywork is a single photon—let the gateway carry it.',
+    icon: Orbit,
+  },
+  {
+    id: 'galaxy',
+    labelKey: 'Galaxy Scale',
+    captionKey: '100,000 LY spiral · your pod is one pixel',
+    whisperKey:
+      'Galaxy Scale: Four spiral arms, one blinking pixel of you—the routes still settle themselves.',
+    icon: Telescope,
+  },
+]
 
 function clampPitch(value: number): number {
-  return Math.max(-0.58, Math.min(0.76, value))
+  return Math.max(-0.58, Math.min(1.2, value))
 }
 
 function CosmicLandmarkBeacon(props: {
@@ -167,6 +209,8 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
     pitchDeg: 18,
     yawDeg: 5,
   })
+  const [cameraView, setCameraView] = useState<CosmicCameraView>('orbit')
+  const [inFlight, setInFlight] = useState(false)
 
   const simRef = useRef({
     yaw: DEFAULT_YAW,
@@ -184,7 +228,14 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
     dragOriginYaw: DEFAULT_YAW,
     dragOriginPitch: DEFAULT_PITCH,
     dragMoved: false,
+    camDist: COSMIC_CAMERA_PRESETS.orbit.camDist,
+    targetCamDist: COSMIC_CAMERA_PRESETS.orbit.camDist,
+    flightFrom: COSMIC_CAMERA_PRESETS.orbit.camDist,
+    flightTo: COSMIC_CAMERA_PRESETS.orbit.camDist,
+    flightStartSec: -1,
+    lastViewId: 'orbit' as CosmicCameraView,
   })
+  const hereLabel = t('You are here')
 
   const activeProtocolId = props.selectedProtocolId ?? internalProtocolId
   const activeProtocol =
@@ -205,12 +256,12 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
   }, [warpBoosted, pulseCount])
 
   useEffect(() => {
-    if (hasCustomOrbit) return
+    if (hasCustomOrbit || cameraView !== 'orbit') return
     const nextPitch = props.mood === 'loaf' ? 0.23 : DEFAULT_PITCH
     const nextYaw = props.mood === 'loaf' ? 0.22 : DEFAULT_YAW
     simRef.current.targetPitch = nextPitch
     simRef.current.targetYaw = nextYaw
-  }, [props.mood, hasCustomOrbit])
+  }, [props.mood, hasCustomOrbit, cameraView])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -263,6 +314,9 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
         pointerNormY: 0.5,
         pointerInside: false,
         pulseWaves: [],
+        camDist: simRef.current.targetCamDist,
+        ...computeCosmicViewBlends(simRef.current.targetCamDist),
+        hereLabel,
       })
       return () => {
         resizeObserver.disconnect()
@@ -270,11 +324,11 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
     }
 
     let frameId = 0
-    const originMs = performance.now()
     let lastHudSyncMs = 0
 
     const renderLoop = (nowMs: number): void => {
-      const timeSec = (nowMs - originMs) / 1000
+      // Shared absolute clock so flight/pulse timestamps survive effect restarts
+      const timeSec = nowMs / 1000
       const sim = simRef.current
 
       // Gentle cosmic drift when not actively dragging
@@ -283,6 +337,38 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
       sim.yaw += (desiredYaw - sim.yaw) * 0.09
       sim.pitch += (sim.targetPitch - sim.pitch) * 0.09
       sim.warpEnergy *= 0.94
+
+      // Cinematic fly-through: eased dolly with a hyperspace warp spike mid-flight
+      if (sim.flightStartSec >= 0) {
+        const progress = Math.min(
+          1,
+          (timeSec - sim.flightStartSec) / FLIGHT_DURATION_SEC
+        )
+        const eased =
+          progress < 0.5
+            ? 4 * progress * progress * progress
+            : 1 - Math.pow(-2 * progress + 2, 3) / 2
+        const logFrom = Math.log(sim.flightFrom)
+        const logTo = Math.log(sim.flightTo)
+        sim.camDist = Math.exp(logFrom + (logTo - logFrom) * eased)
+        sim.warpEnergy = Math.max(
+          sim.warpEnergy,
+          Math.sin(progress * Math.PI) * 1.35
+        )
+        if (progress >= 1) {
+          sim.flightStartSec = -1
+          sim.targetCamDist = sim.flightTo
+          setInFlight(false)
+        }
+      } else {
+        sim.camDist += (sim.targetCamDist - sim.camDist) * 0.12
+      }
+
+      const liveView = resolveCosmicCameraView(sim.camDist)
+      if (liveView !== sim.lastViewId) {
+        sim.lastViewId = liveView
+        setCameraView(liveView)
+      }
 
       const activeWaves: number[] = []
       const keptStarts: number[] = []
@@ -310,6 +396,9 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
         pointerNormY: sim.pointerNormY,
         pointerInside: sim.pointerInside,
         pulseWaves: activeWaves,
+        camDist: sim.camDist,
+        ...computeCosmicViewBlends(sim.camDist),
+        hereLabel,
       })
 
       if (viewportRef.current) {
@@ -337,7 +426,61 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
       window.cancelAnimationFrame(frameId)
       resizeObserver.disconnect()
     }
-  }, [universeField, props.mood, stormActive, activeBuoy.id, activeAccent])
+  }, [
+    universeField,
+    props.mood,
+    stormActive,
+    activeBuoy.id,
+    activeAccent,
+    hereLabel,
+  ])
+
+  // Google-Earth style wheel zoom; at either end the page scrolls normally
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return
+    const handleWheel = (event: WheelEvent): void => {
+      const sim = simRef.current
+      const zoomingIn = event.deltaY < 0
+      const atLimit = zoomingIn
+        ? sim.targetCamDist <= COSMIC_CAM_DIST_MIN + 0.01
+        : sim.targetCamDist >= COSMIC_CAM_DIST_MAX - 0.01
+      if (sim.flightStartSec >= 0) {
+        event.preventDefault()
+        return
+      }
+      if (atLimit) return
+      event.preventDefault()
+      const factor = Math.exp(
+        Math.max(-60, Math.min(60, event.deltaY)) * 0.0042
+      )
+      sim.targetCamDist = Math.max(
+        COSMIC_CAM_DIST_MIN,
+        Math.min(COSMIC_CAM_DIST_MAX, sim.targetCamDist * factor)
+      )
+      sim.warpEnergy = Math.max(sim.warpEnergy, 0.35)
+      setHasCustomOrbit(true)
+    }
+    viewport.addEventListener('wheel', handleWheel, { passive: false })
+    return () => viewport.removeEventListener('wheel', handleWheel)
+  }, [])
+
+  const flyToView = (view: CosmicCameraView): void => {
+    const sim = simRef.current
+    const preset = COSMIC_CAMERA_PRESETS[view]
+    sim.flightFrom = sim.camDist
+    sim.flightTo = preset.camDist
+    sim.flightStartSec = performance.now() / 1000
+    sim.targetYaw = preset.yaw
+    sim.targetPitch = preset.pitch
+    setCameraView(view)
+    sim.lastViewId = view
+    setInFlight(true)
+    setSelectedLandmarkId(null)
+    setHasCustomOrbit(view !== 'orbit')
+    const option = CAMERA_VIEW_OPTIONS.find((item) => item.id === view)
+    if (option) setWhisperKey(option.whisperKey)
+  }
 
   const triggerCosmicPulse = (
     xPct: number,
@@ -350,7 +493,7 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
     const nowSec = performance.now() / 1000
     simRef.current.pulseStartTimes = [
       ...simRef.current.pulseStartTimes.slice(-3),
-      nowSec % 100000,
+      nowSec,
     ]
     setPulseCount((prev) => {
       const next = prev + 1
@@ -378,6 +521,12 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
   }
 
   const handleResetOrbit = (): void => {
+    const orbitDrift = Math.abs(
+      simRef.current.camDist - COSMIC_CAMERA_PRESETS.orbit.camDist
+    )
+    if (cameraView !== 'orbit' || orbitDrift > 0.4) {
+      flyToView('orbit')
+    }
     const resetPitch = props.mood === 'loaf' ? 0.23 : DEFAULT_PITCH
     const resetYaw = props.mood === 'loaf' ? 0.22 : DEFAULT_YAW
     simRef.current.targetYaw = resetYaw
@@ -511,6 +660,18 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
       return next
     })
   }
+
+  const handleCosmosDoubleClick = (): void => {
+    if (cameraView === 'galaxy') {
+      flyToView('orbit')
+      return
+    }
+    if (cameraView === 'orbit') flyToView('cabin')
+  }
+
+  const activeViewOption =
+    CAMERA_VIEW_OPTIONS.find((option) => option.id === cameraView) ??
+    CAMERA_VIEW_OPTIONS[1]
 
   let headerBannerText = t('Singularity Roaring · Tiny Speck Unwinding')
   if (stormActive) {
@@ -728,7 +889,10 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
         onPointerCancel={handleViewportPointerEnd}
         onPointerLeave={handleViewportPointerLeave}
         onClick={handleCosmosClick}
+        onDoubleClick={handleCosmosDoubleClick}
         data-dragging={isDragging}
+        data-view={cameraView}
+        data-flight={inFlight}
         className='cosmic-imax-viewport relative h-[350px] w-full overflow-hidden select-none sm:h-[430px] lg:h-[500px]'
       >
         <canvas
@@ -750,12 +914,44 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
 
         {/* Top-Left Macroscopic Scale Contrast Telemetry */}
         <div className='pointer-events-none absolute top-3.5 right-3.5 left-3.5 z-20 flex flex-wrap items-start justify-between gap-2 sm:right-5 sm:left-5'>
-          <div className='rounded-xl border border-white/12 bg-slate-950/62 px-3 py-1.5 font-mono text-[10px] tracking-[0.14em] text-slate-200/90 uppercase backdrop-blur-md'>
-            <span className='text-sky-300'>93B LY</span>
-            <span className='mx-1.5 text-slate-500'>vs</span>
-            <span className='text-amber-300'>
-              {t('1.7m Human · Drag to Orbit 3D')}
-            </span>
+          <div className='flex flex-col gap-2'>
+            <div
+              role='group'
+              aria-label={t('Camera view')}
+              className='pointer-events-auto flex items-center gap-0.5 rounded-full border border-white/14 bg-slate-950/70 p-0.5 backdrop-blur-md'
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+              onDoubleClick={(event) => event.stopPropagation()}
+            >
+              {CAMERA_VIEW_OPTIONS.map((option) => {
+                const Icon = option.icon
+                const active = option.id === cameraView
+                return (
+                  <button
+                    key={option.id}
+                    type='button'
+                    aria-pressed={active}
+                    onClick={() => flyToView(option.id)}
+                    className={cn(
+                      'flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-1 font-mono text-[10px] font-medium tracking-wide transition-all duration-300 outline-none focus-visible:ring-2 focus-visible:ring-sky-400',
+                      active
+                        ? 'bg-sky-400 text-slate-950 shadow-[0_0_18px_rgba(56,189,248,0.45)]'
+                        : 'text-slate-300 hover:bg-white/10 hover:text-white'
+                    )}
+                  >
+                    <Icon aria-hidden='true' className='size-3' />
+                    {t(option.labelKey)}
+                  </button>
+                )
+              })}
+            </div>
+            <div className='rounded-xl border border-white/12 bg-slate-950/62 px-3 py-1.5 font-mono text-[10px] tracking-[0.14em] text-slate-200/90 uppercase backdrop-blur-md'>
+              <span className='text-sky-300'>93B LY</span>
+              <span className='mx-1.5 text-slate-500'>vs</span>
+              <span className='text-amber-300'>
+                {t(activeViewOption.captionKey)}
+              </span>
+            </div>
           </div>
 
           {stormActive && (
@@ -766,26 +962,37 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
         </div>
 
         {/* 4 Interactive Accessible Deep-Space Scale Landmarks */}
-        {COSMIC_LANDMARKS.map((spec) => (
-          <CosmicLandmarkBeacon
-            key={spec.id}
-            spec={spec}
-            selected={selectedLandmarkId === spec.id}
-            boosted={warpBoosted || props.mood === 'loaf'}
-            onSelect={(picked) => {
-              const isTogglingOff = selectedLandmarkId === picked.id
-              setSelectedLandmarkId(isTogglingOff ? null : picked.id)
-              simRef.current.targetYaw = picked.targetYaw
-              simRef.current.targetPitch = picked.targetPitch
-              setHasCustomOrbit(true)
-              triggerCosmicPulse(
-                Number.parseFloat(picked.left) || 50,
-                Number.parseFloat(picked.top) || 50,
-                picked.whisperKey
-              )
-            }}
-          />
-        ))}
+        {inFlight && (
+          <div
+            aria-hidden='true'
+            className='cosmic-flight-banner pointer-events-none absolute top-1/2 left-1/2 z-30 -translate-x-1/2 -translate-y-1/2 rounded-full border border-sky-300/40 bg-slate-950/70 px-4 py-1.5 font-mono text-[11px] tracking-[0.3em] text-sky-100 uppercase backdrop-blur-md'
+          >
+            {t('Warp Transit')}
+          </div>
+        )}
+
+        {cameraView === 'orbit' &&
+          !inFlight &&
+          COSMIC_LANDMARKS.map((spec) => (
+            <CosmicLandmarkBeacon
+              key={spec.id}
+              spec={spec}
+              selected={selectedLandmarkId === spec.id}
+              boosted={warpBoosted || props.mood === 'loaf'}
+              onSelect={(picked) => {
+                const isTogglingOff = selectedLandmarkId === picked.id
+                setSelectedLandmarkId(isTogglingOff ? null : picked.id)
+                simRef.current.targetYaw = picked.targetYaw
+                simRef.current.targetPitch = picked.targetPitch
+                setHasCustomOrbit(true)
+                triggerCosmicPulse(
+                  Number.parseFloat(picked.left) || 50,
+                  Number.parseFloat(picked.top) || 50,
+                  picked.whisperKey
+                )
+              }}
+            />
+          ))}
 
         {/* Click-Spawned Gravitational Wave Shockwave Reticles */}
         {bursts.map((burst) => (
@@ -811,7 +1018,7 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
             <span className='truncate'>{t(whisperKey)}</span>
           </div>
           <span className='hidden shrink-0 font-mono text-[10px] text-sky-300/90 md:inline'>
-            {t('Drag in 3D · Click any beacon')}
+            {t('Drag in 3D · Scroll to zoom · Double-click to dive')}
           </span>
         </div>
       </div>

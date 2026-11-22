@@ -227,6 +227,31 @@ For commercial licensing, please contact support@quantumnous.com
   cursor: grabbing;
 }
 
+/* Gyro astrolabe only belongs to the orbit camera; cabin & galaxy views fade it out */
+.cosmic-imax-viewport .cosmic-gyro-scene {
+  transition: opacity 0.8s ease;
+}
+
+.cosmic-imax-viewport:not([data-view='orbit']) .cosmic-gyro-scene,
+.cosmic-imax-viewport[data-flight='true'] .cosmic-gyro-scene {
+  opacity: 0;
+}
+
+.cosmic-flight-banner {
+  animation: cosmic-flight-flicker 0.9s ease-in-out infinite alternate;
+}
+
+@keyframes cosmic-flight-flicker {
+  from {
+    opacity: 0.45;
+    letter-spacing: 0.3em;
+  }
+  to {
+    opacity: 1;
+    letter-spacing: 0.42em;
+  }
+}
+
 /* True CSS 3D preserve-3d Holographic Astrolabe Horizon Rings */
 .cosmic-gyro-scene {
   perspective: 1200px;
@@ -464,6 +489,7 @@ For commercial licensing, please contact support@quantumnous.com
   .cosmic-shockwave-inner,
   .cosmic-shockwave-outer,
   .cosmic-photon-spark,
+  .cosmic-flight-banner,
   .tidal-ribbon-track,
   .tidal-ribbon-track-reverse,
   .tidal-pipeline-pulse {

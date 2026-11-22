@@ -8423,6 +8423,17 @@
     "Previous match": "Previous match",
     "Next match": "Next match",
     "This message": "This message",
-    "Tool calls: {{count}}": "Tool calls: {{count}}"
+    "Tool calls: {{count}}": "Tool calls: {{count}}",
+    "Inside the Pod": "Inside the Pod",
+    "Orbit View": "Orbit View",
+    "Galaxy Scale": "Galaxy Scale",
+    "Camera view": "Camera view",
+    "You are here": "You are here",
+    "Warp Transit": "Warp Transit",
+    "Drag in 3D · Scroll to zoom · Double-click to dive": "Drag in 3D · Scroll to zoom · Double-click to dive",
+    "Zero-G cabin · tea floating · the singularity works outside": "Zero-G cabin · tea floating · the singularity works outside",
+    "100,000 LY spiral · your pod is one pixel": "100,000 LY spiral · your pod is one pixel",
+    "Pod Cabin: Tea floats past the canopy while the singularity relays every request outside.": "Pod Cabin: Tea floats past the canopy while the singularity relays every request outside.",
+    "Galaxy Scale: Four spiral arms, one blinking pixel of you—the routes still settle themselves.": "Galaxy Scale: Four spiral arms, one blinking pixel of you—the routes still settle themselves."
   }
 }

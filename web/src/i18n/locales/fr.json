@@ -8423,6 +8423,17 @@
     "Previous match": "Résultat précédent",
     "Next match": "Résultat suivant",
     "This message": "Ce message",
-    "Tool calls: {{count}}": "Appels d’outils : {{count}}"
+    "Tool calls: {{count}}": "Appels d’outils : {{count}}",
+    "Inside the Pod": "Dans la capsule",
+    "Orbit View": "Vue orbitale",
+    "Galaxy Scale": "Échelle galactique",
+    "Camera view": "Vue caméra",
+    "You are here": "Vous êtes ici",
+    "Warp Transit": "Transit en distorsion",
+    "Drag in 3D · Scroll to zoom · Double-click to dive": "Glisser en 3D · Molette pour zoomer · Double-clic pour plonger",
+    "Zero-G cabin · tea floating · the singularity works outside": "Cabine en apesanteur · thé flottant · la singularité travaille dehors",
+    "100,000 LY spiral · your pod is one pixel": "Spirale de 100 000 AL · votre capsule tient en un pixel",
+    "Pod Cabin: Tea floats past the canopy while the singularity relays every request outside.": "Cabine : le thé flotte devant la verrière pendant que la singularité relaie chaque requête dehors.",
+    "Galaxy Scale: Four spiral arms, one blinking pixel of you—the routes still settle themselves.": "Échelle galactique : quatre bras spiraux, un pixel clignotant de vous — les routes se règlent toutes seules."
   }
 }
