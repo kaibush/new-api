@@ -21,7 +21,7 @@ func GetInputAudits(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid audit filters"})
 		return
 	}
-	filter := model.InputAuditFilter{RequestId: c.Query("request_id"), Keyword: strings.TrimSpace(keyword), PromptHash: c.Query("prompt_hash")}
+	filter := model.InputAuditFilter{RequestId: c.Query("request_id"), Keyword: strings.TrimSpace(keyword)}
 	values := []struct {
 		key    string
 		target *int64
@@ -47,7 +47,7 @@ func GetInputAudits(c *gin.Context) {
 		}
 		filter.UserId = id
 	}
-	if (filter.PromptHash != "" && (len(filter.PromptHash) != 64 || strings.ContainsAny(filter.PromptHash, "%_"))) || len(filter.RequestId) > 64 || (filter.Start > 0 && filter.End > 0 && filter.End < filter.Start) {
+	if len(filter.RequestId) > 64 || (filter.Start > 0 && filter.End > 0 && filter.End < filter.Start) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid audit filters"})
 		return
 	}
@@ -58,7 +58,7 @@ func GetInputAudits(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
-	rows, total, err := model.QueryInputAudits(model.DB.WithContext(ctx), filter, page.GetStartIdx(), page.PageSize)
+	rows, total, err := model.QueryInputAuditTurns(model.DB.WithContext(ctx), filter, page.GetStartIdx(), page.PageSize)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -102,15 +102,18 @@ func UpdateInputAuditSettings(c *gin.Context) {
 
 func DeleteInputAudits(c *gin.Context) {
 	var request struct {
-		IDs       []int64 `json:"ids"`
-		All       bool    `json:"all"`
-		UserID    int     `json:"user_id"`
-		RequestID string  `json:"request_id"`
-		Keyword   string  `json:"keyword"`
-		Start     int64   `json:"start_timestamp"`
-		End       int64   `json:"end_timestamp"`
+		IDs       []int64                   `json:"ids"`
+		Turns     []model.InputAuditTurnRef `json:"turns"`
+		All       bool                      `json:"all"`
+		UserID    int                       `json:"user_id"`
+		RequestID string                    `json:"request_id"`
+		Keyword   string                    `json:"keyword"`
+		Start     int64                     `json:"start_timestamp"`
+		End       int64                     `json:"end_timestamp"`
 	}
-	if err := common.DecodeJson(http.MaxBytesReader(c.Writer, c.Request.Body, 8192), &request); err != nil || len(request.IDs) > 100 || (!request.All && len(request.IDs) == 0) || (request.All && len(request.IDs) > 0) || slices.ContainsFunc(request.IDs, func(id int64) bool { return id < 1 }) || request.UserID < 0 || request.Start < 0 || request.End < 0 || (request.Start > 0 && request.End > 0 && request.End < request.Start) || len(request.RequestID) > 64 || !utf8.ValidString(request.Keyword) || utf8.RuneCountInString(request.Keyword) > 256 || strings.ContainsRune(request.Keyword, '\x00') {
+	if err := common.DecodeJson(http.MaxBytesReader(c.Writer, c.Request.Body, 32768), &request); err != nil || len(request.IDs) > 100 || len(request.Turns) > 100 || (!request.All && len(request.IDs)+len(request.Turns) == 0) || (request.All && len(request.IDs)+len(request.Turns) > 0) || slices.ContainsFunc(request.IDs, func(id int64) bool { return id < 1 }) || slices.ContainsFunc(request.Turns, func(turn model.InputAuditTurnRef) bool {
+		return turn.UserId < 1 || turn.TurnKey == "" || len(turn.TurnKey) > 64 || strings.ContainsRune(turn.TurnKey, '\x00')
+	}) || request.UserID < 0 || request.Start < 0 || request.End < 0 || (request.Start > 0 && request.End > 0 && request.End < request.Start) || len(request.RequestID) > 64 || !utf8.ValidString(request.Keyword) || utf8.RuneCountInString(request.Keyword) > 256 || strings.ContainsRune(request.Keyword, '\x00') {
 		c.JSON(400, gin.H{"success": false, "message": "Invalid audit filters"})
 		return
 	}
@@ -122,10 +125,14 @@ func DeleteInputAudits(c *gin.Context) {
 		return
 	}
 	filter := model.InputAuditFilter{UserId: request.UserID, RequestId: request.RequestID, Keyword: strings.TrimSpace(request.Keyword), Start: request.Start, End: request.End}
-	if err := model.DeleteInputAuditMessages(db, request.IDs, filter); err != nil {
+	err := model.DeleteInputAuditMessages(db, request.IDs, request.Turns, filter)
+	if recorder := service.CurrentInputAuditRecorder(); recorder != nil {
+		recorder.ForgetTranscripts()
+	}
+	if err != nil {
 		c.JSON(409, gin.H{"success": false, "message": err.Error()})
 		return
 	}
-	recordManageAudit(c, "input_audit.messages_delete", map[string]any{"message_ids": request.IDs, "user_id": request.UserID, "request_id": request.RequestID})
+	recordManageAudit(c, "input_audit.messages_delete", map[string]any{"message_ids": request.IDs, "turns": len(request.Turns), "user_id": request.UserID, "request_id": request.RequestID})
 	c.JSON(200, gin.H{"success": true})
 }

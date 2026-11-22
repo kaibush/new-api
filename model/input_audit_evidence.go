@@ -1,6 +1,8 @@
 package model
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
@@ -49,7 +51,9 @@ func (document InputAuditEvidenceDocument) Reviewable() bool {
 	if document.Complete() {
 		return true
 	}
-	return document.Version >= 2 && document.Source == "client_request" && slices.ContainsFunc(document.Messages, func(message InputAuditEvidenceMessage) bool { return message.Text != "" && message.OriginalHash != "" })
+	return document.Version >= 2 && document.Source == "client_request" && slices.ContainsFunc(document.Messages, func(message InputAuditEvidenceMessage) bool {
+		return message.Text != "" && (document.Version >= 3 || message.OriginalHash != "")
+	})
 }
 
 type InputAuditEvidence struct {
@@ -144,26 +148,21 @@ func CreateInputAuditCase(db *gorm.DB, auditID int64, operator int, reason strin
 		if err := tx.First(&audit, auditID).Error; err != nil {
 			return err
 		}
-		snapshot := InputAuditCaseSnapshot{Audit: audit, Document: InputAuditEvidenceDocument{Source: "legacy_preview", Scope: "retained_user_text", Messages: []InputAuditEvidenceMessage{{Role: "user", Text: audit.Content}}, Truncated: audit.Truncated, ContextMissing: true, Omitted: []string{"original_context_unavailable"}}}
-		var evidence InputAuditEvidence
-		if audit.RequestId != "" {
-			err := tx.Where("request_id = ? AND user_id = ? AND content_hash = ? AND created_at >= ?", audit.RequestId, audit.UserId, audit.ContentHash, time.Now().Unix()-int64(settings.RetentionDays)*86400).First(&evidence).Error
-			if err == nil {
-				var readErr error
-				snapshot.Document, readErr = ReadInputAuditEvidence(tx, evidence)
-				if readErr != nil {
-					return readErr
-				}
-				if evidence.Policy != "" {
-					if err := common.UnmarshalJsonStr(evidence.Policy, &snapshot.Allowlist); err != nil {
-						return err
-					}
-				}
-				snapshot.EvidenceID, snapshot.DocumentHash = evidence.Id, evidence.DocumentHash
-			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-				return err
-			}
+		document, err := InputAuditRequestDocument(tx, audit, 262144, false)
+		if err != nil {
+			return err
 		}
+		body, err := common.Marshal(document)
+		if err != nil {
+			return err
+		}
+		digest := sha256.Sum256(body)
+		// Allowlist exceptions are captured as configured when the case opens.
+		allowlist := request_plugin_setting.GetAllowlist()
+		allowlist.Entries = slices.DeleteFunc(slices.Clone(allowlist.Entries), func(entry request_plugin_setting.AllowlistEntry) bool {
+			return entry.UserID != audit.UserId
+		})
+		snapshot := InputAuditCaseSnapshot{Audit: audit, EvidenceID: audit.ThreadId, DocumentHash: hex.EncodeToString(digest[:]), Document: document, Allowlist: allowlist}
 		encoded, err := common.Marshal(snapshot)
 		if err != nil {
 			return err

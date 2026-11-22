@@ -48,7 +48,7 @@ import {
   getInputAuditCases,
 } from './api'
 import { useInputAuditCaseLabels } from './case-labels'
-import { InputAuditEvidenceView } from './evidence-view'
+import { InputAuditEvidenceView } from './transcript-view'
 
 const creationSchema = z.object({ reason: z.string().trim().min(1).max(500) })
 const decisionSchema = z.object({
@@ -84,8 +84,7 @@ export function InputAuditCasePanel(props: {
   const queryClient = useQueryClient()
   const existing = useQuery({
     queryKey: ['input-audit-case-for-audit', user?.id, props.auditID],
-    queryFn: () =>
-      getInputAuditCases({ audit_id: props.auditID, page_size: 1 }),
+    queryFn: () => getInputAuditCases({ turn_of: props.auditID, page_size: 1 }),
     enabled:
       user?.role === ROLE.SUPER_ADMIN &&
       props.auditID !== undefined &&

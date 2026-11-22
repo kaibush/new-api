@@ -25,15 +25,21 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { UserIdentity } from '@/components/user-identity'
+import { toIntlLocale } from '@/i18n/languages'
 import dayjs from '@/lib/dayjs'
+import { formatNumber } from '@/lib/format'
 
 import type { InputAudit } from './api'
 import { InputAuditDetailsDialog } from './details-dialog'
+import { HighlightedText } from './highlight'
+import { keywordExcerpt } from './keyword'
 
 export function useInputAuditColumns(
-  onDelete?: (id: number) => void
+  onDelete?: (entry: InputAudit) => void,
+  keyword?: string
 ): ColumnDef<InputAudit>[] {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   return useMemo(
     () => [
       {
@@ -64,12 +70,14 @@ export function useInputAuditColumns(
       },
 
       {
-        accessorKey: 'created_at',
-        header: t('Received at gateway'),
-        size: 180,
+        id: 'last_at',
+        header: t('Last request'),
+        size: 170,
         cell: ({ row }) =>
-          dayjs.unix(row.original.created_at).format('YYYY-MM-DD HH:mm:ss'),
-        meta: { label: t('Received at gateway'), mobileTitle: true },
+          dayjs
+            .unix(row.original.last_at || row.original.created_at)
+            .format('YYYY-MM-DD HH:mm:ss'),
+        meta: { label: t('Last request'), mobileTitle: true },
       },
       {
         accessorKey: 'username',
@@ -92,33 +100,87 @@ export function useInputAuditColumns(
       {
         accessorKey: 'content',
         header: t('User message'),
-        size: 380,
-        cell: ({ row }) => (
-          <TruncatedCell
-            className='max-w-96'
-            contentClassName='line-clamp-2 whitespace-normal break-words'
-          >
-            {row.original.content}
-          </TruncatedCell>
-        ),
+        size: 420,
+        cell: ({ row }) => {
+          // What the agent did for this message, read from its conversation.
+          const activity = row.original.activity
+          return (
+            <div className='flex max-w-[28rem] flex-col gap-1'>
+              <TruncatedCell
+                contentClassName='line-clamp-2 whitespace-normal break-words'
+                tooltipContent={
+                  <HighlightedText
+                    text={row.original.content}
+                    query={keyword}
+                  />
+                }
+              >
+                <HighlightedText
+                  text={keywordExcerpt(row.original.content, keyword)}
+                  query={keyword}
+                />
+              </TruncatedCell>
+              {activity && activity.tool_calls > 0 && (
+                <div className='text-muted-foreground flex flex-wrap items-center gap-1 text-xs'>
+                  <span>
+                    {t('Tool calls: {{count}}', {
+                      count: `${formatNumber(activity.tool_calls, locale)}${activity.more ? '+' : ''}`,
+                    })}
+                  </span>
+                  {activity.tools.map((tool) => (
+                    <Badge key={tool} variant='outline' className='font-mono'>
+                      {tool}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+              {activity?.reply && (
+                <TruncatedCell
+                  contentClassName='text-muted-foreground line-clamp-1 whitespace-normal break-words text-xs'
+                  tooltipContent={
+                    <HighlightedText text={activity.reply} query={keyword} />
+                  }
+                >
+                  <span className='font-medium'>{t('Assistant')}: </span>
+                  <HighlightedText text={activity.reply} query={keyword} />
+                </TruncatedCell>
+              )}
+            </div>
+          )
+        },
         meta: { label: t('User message') },
       },
       {
-        accessorKey: 'truncated',
-        header: t('Truncated'),
-        size: 110,
-        cell: ({ row }) => (
-          <Badge variant='secondary'>
-            {row.original.truncated ? t('Yes') : t('No')}
-          </Badge>
-        ),
-        meta: { label: t('Truncated') },
+        id: 'requests',
+        header: t('Requests'),
+        size: 150,
+        cell: ({ row }) => {
+          const count = row.original.request_count ?? 1
+          const first = row.original.first_at || row.original.created_at
+          const last = row.original.last_at || row.original.created_at
+          return (
+            <div className='flex flex-col items-start gap-0.5'>
+              <Badge variant={count > 1 ? 'default' : 'secondary'}>
+                ×{formatNumber(count, locale)}
+              </Badge>
+              {count > 1 && (
+                <span className='text-muted-foreground text-xs'>
+                  {dayjs.unix(first).format('HH:mm:ss')} –{' '}
+                  {dayjs.unix(last).format('HH:mm:ss')}
+                </span>
+              )}
+            </div>
+          )
+        },
+        meta: { label: t('Requests') },
       },
       {
         id: 'details',
         header: t('Details'),
         size: 90,
-        cell: ({ row }) => <InputAuditDetailsDialog entry={row.original} />,
+        cell: ({ row }) => (
+          <InputAuditDetailsDialog entry={row.original} keyword={keyword} />
+        ),
         meta: { label: t('Details') },
       },
       {
@@ -130,7 +192,7 @@ export function useInputAuditColumns(
             <Button
               variant='destructive'
               size='sm'
-              onClick={() => onDelete(row.original.id)}
+              onClick={() => onDelete(row.original)}
             >
               {t('Delete')}
             </Button>
@@ -138,6 +200,6 @@ export function useInputAuditColumns(
         meta: { label: t('Delete') },
       },
     ],
-    [t, onDelete]
+    [t, locale, onDelete, keyword]
   )
 }

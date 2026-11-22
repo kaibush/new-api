@@ -41,6 +41,21 @@ export interface InputAudit {
   content_hash: string
   content_chars: number
   truncated: boolean
+  turn_key?: string
+  turn_item?: number
+  thread_id?: number
+  item_count?: number
+  new_items?: number
+  request_count?: number
+  first_at?: number
+  last_at?: number
+  // Tool calls and the latest assistant message until the next user message.
+  activity?: {
+    tool_calls: number
+    tools: string[]
+    reply: string
+    more: boolean
+  }
 }
 
 export interface InputAuditSettings {
@@ -77,7 +92,6 @@ export interface InputAuditFilters {
   user_id?: number
   request_id?: string
   keyword?: string
-  prompt_hash?: string
   start_timestamp?: number
   end_timestamp?: number
 }
@@ -204,12 +218,65 @@ export interface InputAuditCaseDetail {
   }[]
 }
 
-export async function getInputAuditEvidence(
-  auditID: number
-): Promise<InputAuditEvidenceResponse> {
-  const response = await api.get<ApiResponse<InputAuditEvidenceResponse>>(
-    `/api/input-audit/${auditID}/evidence`
+export interface InputAuditTranscriptItem {
+  seq: number
+  role: string
+  kind: string
+  name?: string
+  call_id?: string
+  text: string
+  original_chars: number
+  media?: number
+  truncated?: boolean
+  unavailable?: boolean
+  created_at?: number
+}
+
+export interface InputAuditTranscript {
+  request: InputAudit
+  reason?: string
+  turn_seq: number
+  turn_requests: InputAudit[]
+  turn_request_count: number
+  outline: { seq: number; text: string; requests: number; created_at: number }[]
+  source: 'thread' | 'legacy' | 'preview'
+  thread?: {
+    id: number
+    item_count: number
+    parent_id: number
+    truncated: boolean
+    context_missing: boolean
+    tools: string[]
+    request_count: number
+    first_at: number
+    last_at: number
+  }
+  context_missing?: boolean
+  offset: number
+  total: number
+  items: InputAuditTranscriptItem[]
+  request_range: { start: number; end: number }
+}
+
+export async function getInputAuditTranscript(
+  auditID: number,
+  window: { offset?: number; limit?: number }
+): Promise<InputAuditTranscript> {
+  const response = await api.get<ApiResponse<InputAuditTranscript>>(
+    `/api/input-audit/${auditID}/transcript`,
+    { params: window }
   )
+  return requireAuditData(response.data)
+}
+
+// Matching items of the request's whole conversation, not only loaded ones.
+export async function searchInputAuditTranscript(
+  auditID: number,
+  query: string
+): Promise<{ seqs: number[]; more: boolean }> {
+  const response = await api.get<
+    ApiResponse<{ seqs: number[]; more: boolean }>
+  >(`/api/input-audit/${auditID}/transcript/search`, { params: { q: query } })
   return requireAuditData(response.data)
 }
 
@@ -217,6 +284,8 @@ export async function getInputAuditCases(params: {
   p?: number
   page_size?: number
   audit_id?: number
+  // Cases of any request issued for the same user message.
+  turn_of?: number
   user_id?: number
   status?: string
 }): Promise<{ items: InputAuditCase[]; total: number }> {
@@ -321,9 +390,18 @@ export async function updateInputAuditSettings(
   return requireServerSuccess(response.data)
 }
 
-export async function deleteInputAudits(
-  values: { ids?: number[]; all?: boolean } & Partial<InputAuditFilters>
-) {
+export interface InputAuditTurnRef {
+  user_id: number
+  turn_key: string
+}
+
+export type InputAuditDeletion = {
+  ids?: number[]
+  turns?: InputAuditTurnRef[]
+  all?: boolean
+} & Partial<InputAuditFilters>
+
+export async function deleteInputAudits(values: InputAuditDeletion) {
   const response = await api.delete<ApiResponse>('/api/input-audit', {
     data: values,
   })

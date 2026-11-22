@@ -129,19 +129,19 @@ export function InputAuditSettingsDialog(props: {
     },
     {
       name: 'evidence_max_chars' as const,
-      label: t('Evidence characters per request'),
+      label: t('Characters per conversation item'),
       min: 1024,
       max: 262144,
     },
     {
       name: 'evidence_max_records' as const,
-      label: t('Maximum evidence records'),
+      label: t('Maximum conversations'),
       min: 100,
       max: 1000000,
     },
     {
       name: 'evidence_max_bytes' as const,
-      label: t('Evidence storage limit (bytes)'),
+      label: t('Conversation storage limit (bytes)'),
       min: 8 * 1024 * 1024,
       max: 512 * 1024 * 1024,
     },
@@ -219,7 +219,7 @@ export function InputAuditSettingsDialog(props: {
                       onCheckedChange={(value) =>
                         form.setValue('evidence_enabled', value)
                       }
-                      label={t('Retain submitted text evidence')}
+                      label={t('Retain conversation transcripts')}
                       disabled={mutation.isPending}
                     />
                     <p className='text-muted-foreground text-xs'>
@@ -294,7 +294,7 @@ export function InputAuditSettingsDialog(props: {
         </Tabs>
         <p className='text-muted-foreground text-xs'>
           {t(
-            'Each request is recorded separately. Repeated text is compressed and deduplicated. Long text retains excerpts; images and other media are not stored. Queue overload may drop evidence.'
+            'Requests from one conversation share a single transcript; each request only stores the items it added. System prompts are stored once and shared. Long items retain excerpts, and tool calls and results keep up to one eighth of the item limit. Images and other media are not stored. Queue overload may drop evidence.'
           )}
         </p>
         <Button className='mt-4' type='submit' disabled={mutation.isPending}>

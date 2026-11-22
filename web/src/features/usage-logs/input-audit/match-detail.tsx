@@ -26,9 +26,9 @@ import { formatNumber } from '@/lib/format'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { useInputAuditCaseLabels } from './case-labels'
-import { InputAuditEvidenceView } from './evidence-view'
 import { AuditFeatureSurface } from './feature-surface'
 import { decideMatch, getMatch, type MatchRecord } from './match-api'
+import { InputAuditEvidenceView } from './transcript-view'
 
 export function MatchDetail(props: { id: number; onClose: () => void }) {
   const { t, i18n } = useTranslation()

@@ -158,7 +158,7 @@ it('explicitly displays unavailable evidence instead of substituting another mes
   ).toBeVisible()
 })
 
-it('reviews retained request fields in the current dialog and keeps searches and review drafts when switching tabs', async () => {
+it('reviews retained request fields in the current dialog and keeps the view mode and review drafts when switching tabs', async () => {
   requestContext = {
     available: true,
     complete: false,
@@ -190,24 +190,21 @@ it('reviews retained request fields in the current dialog and keeps searches and
   expect(screen.getAllByRole('dialog')).toHaveLength(1)
   expect(screen.getByText('Incomplete evidence')).toBeVisible()
   expect(
-    screen.getByText('request field 0 <script>content</script>')
-  ).toBeVisible()
-  expect(document.querySelector('script')).toBeNull()
-  const search = screen.getByRole('textbox', {
-    name: 'Search retained evidence',
-  })
-  await userEvent.type(search, '/messages/11/')
-  await userEvent.click(screen.getByRole('button', { name: /Message 12/ }))
-  expect(
     screen.getByText('request field 11 <script>content</script>')
   ).toBeVisible()
+  expect(document.querySelector('script')).toBeNull()
+  const userOnly = screen.getByRole('button', { name: 'User messages only' })
+  await userEvent.click(userOnly)
+  expect(
+    screen.queryByText('request field 0 <script>content</script>')
+  ).not.toBeInTheDocument()
   await userEvent.click(screen.getByRole('tab', { name: 'Human review' }))
   await userEvent.type(
     screen.getByRole('textbox', { name: 'Review reason' }),
     'Check full user context'
   )
   await userEvent.click(screen.getByRole('tab', { name: 'Request content' }))
-  expect(search).toHaveValue('/messages/11/')
+  expect(userOnly).toHaveAttribute('aria-pressed', 'true')
   await userEvent.click(screen.getByRole('tab', { name: 'Human review' }))
   expect(screen.getByRole('textbox', { name: 'Review reason' })).toHaveValue(
     'Check full user context'

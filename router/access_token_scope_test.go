@@ -51,6 +51,13 @@ var accessTokenExemptRoutes = []string{
 	"GET /api/oauth/telegram/login",
 	"GET /api/oauth/telegram/bind/:flow_token",
 
+	// Anonymous help, callbacks and the self-authenticating community socket.
+	"GET /api/help-center",
+	"POST /api/oauth/wechat",
+	"GET /api/community/ws",
+	"GET /api/community/wechat/callback",
+	"POST /api/community/wechat/callback",
+
 	// Browser session cookie endpoints.
 	"POST /api/user/auth/refresh",
 	"POST /api/user/auth/logout",

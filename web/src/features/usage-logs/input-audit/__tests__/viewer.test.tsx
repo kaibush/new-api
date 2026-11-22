@@ -56,6 +56,70 @@ const entry = {
   content_hash: 'full-text-hash',
   content_chars: 9000,
   truncated: true,
+  turn_key: 'turn-a',
+  turn_item: 2,
+  thread_id: 9,
+  item_count: 4,
+  new_items: 2,
+  request_count: 1,
+  first_at: 1700000000,
+  last_at: 1700000000,
+}
+const transcript = {
+  request: entry,
+  turn_seq: 1,
+  turn_requests: [entry],
+  turn_request_count: 1,
+  outline: [
+    { seq: 1, text: 'Fix the login bug', requests: 1, created_at: 1700000000 },
+  ],
+  source: 'thread',
+  thread: {
+    id: 9,
+    item_count: 4,
+    parent_id: 0,
+    truncated: false,
+    context_missing: false,
+    tools: ['shell'],
+    request_count: 1,
+    first_at: 1700000000,
+    last_at: 1700000000,
+  },
+  offset: 0,
+  total: 4,
+  items: [
+    {
+      seq: 0,
+      role: 'system',
+      kind: 'message',
+      text: 'You are a coding agent',
+      original_chars: 22,
+    },
+    {
+      seq: 1,
+      role: 'user',
+      kind: 'message',
+      text: 'Fix the login bug',
+      original_chars: 17,
+      created_at: 1700000000,
+    },
+    {
+      seq: 2,
+      role: 'assistant',
+      kind: 'tool_call',
+      name: 'shell',
+      text: '{"cmd":"cat login.go"}',
+      original_chars: 22,
+    },
+    {
+      seq: 3,
+      role: 'tool',
+      kind: 'tool_result',
+      text: 'package login',
+      original_chars: 13,
+    },
+  ],
+  request_range: { start: 2, end: 4 },
 }
 let client: QueryClient
 
@@ -77,10 +141,11 @@ beforeEach(() => {
     if (url === '/api/input-audit/allowlist/history') {
       return { data: { success: true, data: [] } }
     }
-    if (url === '/api/input-audit/1/evidence') {
-      return {
-        data: { success: true, data: { available: false, complete: false } },
-      }
+    if (String(url).endsWith('/transcript')) {
+      return { data: { success: true, data: transcript } }
+    }
+    if (String(url).endsWith('/transcript/search')) {
+      return { data: { success: true, data: { seqs: [], more: false } } }
     }
     if (url === '/api/input-audit/allowlist') {
       return { data: { success: true, data: { version: 0, entries: [] } } }
@@ -192,7 +257,7 @@ it('root opens message audits on demand and sees safe text, first receive time a
   await userEvent.click(await screen.findByRole('button', { name: 'Details' }))
   const dialog = screen.getByRole('dialog', { name: 'Input Audits' })
   await userEvent.click(
-    within(dialog).getByRole('tab', { name: 'Request text preview' })
+    await within(dialog).findByRole('tab', { name: 'Request' })
   )
   expect(within(dialog).getByText(entry.content)).toBeVisible()
   expect(dialog.querySelector('script')).toBeNull()
@@ -201,7 +266,6 @@ it('root opens message audits on demand and sees safe text, first receive time a
       'Long messages retain the beginning and end; the middle is omitted.'
     )
   ).toBeVisible()
-  await userEvent.click(within(dialog).getByRole('button', { name: 'Request' }))
   expect(within(dialog).getByText('9,000')).toBeVisible()
   expect(within(dialog).getByText('full-text-hash')).toBeVisible()
   await userEvent.keyboard('{Escape}')
@@ -210,39 +274,57 @@ it('root opens message audits on demand and sees safe text, first receive time a
   )
 })
 
-it('a prompt lookup searches its exact version across users and can return to the user timeline', async () => {
-  const promptHash = 'a'.repeat(64)
-  vi.mocked(api.get).mockImplementation(async (url) => {
-    if (url === '/api/input-audit/1/evidence') {
-      return {
-        data: {
-          success: true,
-          data: {
-            available: true,
-            complete: true,
-            document: {
-              version: 2,
-              source: 'client_request',
-              scope: 'submitted_text_excerpts',
-              messages: [
-                {
-                  index: 0,
-                  role: 'system',
-                  kind: 'message',
-                  text: 'Shared policy',
-                  original_hash: promptHash,
-                },
-              ],
-              truncated: false,
-              context_missing: false,
-              omitted: [],
-            },
+it('details open the whole conversation at the user message and mark what the request added', async () => {
+  render(
+    <QueryClientProvider client={client}>
+      <InputAuditDetailsDialog entry={entry} />
+    </QueryClientProvider>
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Details' }))
+  const dialog = screen.getByRole('dialog', { name: 'Input Audits' })
+  const outline = await within(dialog).findByRole('navigation', {
+    name: 'User messages in this conversation',
+  })
+  expect(
+    within(outline).getByRole('button', { name: /Fix the login bug/ })
+  ).toHaveAttribute('aria-current', 'true')
+  expect(api.get).toHaveBeenCalledWith('/api/input-audit/1/transcript', {
+    params: { offset: undefined, limit: 200 },
+  })
+  const conversation = within(dialog).getByRole('list', {
+    name: 'Conversation',
+  })
+  expect(within(conversation).getByText('Added by this request')).toBeVisible()
+  expect(
+    within(conversation).getByText('Added by this request').closest('li')
+      ?.nextElementSibling
+  ).toHaveAttribute('data-seq', '2')
+  expect(within(dialog).getByText(/Requests for this message: 1/)).toBeVisible()
+  expect(within(dialog).getByText('Tools: shell')).toBeVisible()
+})
+
+it('switching requests of one message and jumping to an unloaded user message load the matching window', async () => {
+  const retry = { ...entry, id: 2, created_at: 1700000060, new_items: 0 }
+  vi.mocked(api.get).mockImplementation(async () => ({
+    data: {
+      success: true,
+      data: {
+        ...transcript,
+        turn_requests: [retry, entry],
+        turn_request_count: 2,
+        outline: [
+          ...transcript.outline,
+          {
+            seq: 450,
+            text: 'Later instruction',
+            requests: 3,
+            created_at: 1700000600,
           },
-        },
-      }
-    }
-    return { data: { success: true, data: { items: [], total: 0 } } }
-  })
+        ],
+        total: 600,
+      },
+    },
+  }))
   render(
     <QueryClientProvider client={client}>
       <InputAuditDetailsDialog entry={entry} />
@@ -250,313 +332,214 @@ it('a prompt lookup searches its exact version across users and can return to th
   )
   await userEvent.click(screen.getByRole('button', { name: 'Details' }))
   const dialog = screen.getByRole('dialog', { name: 'Input Audits' })
-  await waitFor(() =>
-    expect(api.get).toHaveBeenCalledWith('/api/input-audit', {
-      params: { p: 1, page_size: 10, user_id: 4 },
-    })
-  )
-  expect(
-    within(dialog).getByRole('tab', { name: 'Evidence message' })
-  ).toHaveAttribute('aria-selected', 'true')
-  await userEvent.click(
-    await within(dialog).findByRole('button', {
-      name: 'Requests using this prompt',
-    })
+  await userEvent.selectOptions(
+    await within(dialog).findByRole('combobox', {
+      name: 'Request for this message',
+    }),
+    '2'
   )
   await waitFor(() =>
-    expect(api.get).toHaveBeenCalledWith('/api/input-audit', {
-      params: { p: 1, page_size: 10, prompt_hash: promptHash },
+    expect(api.get).toHaveBeenCalledWith('/api/input-audit/2/transcript', {
+      params: { offset: undefined, limit: 200 },
     })
   )
-  expect(
-    within(dialog).getByText(
-      'Related requests do not prove they belong to the same conversation.'
-    )
-  ).toBeVisible()
-  await userEvent.click(
-    within(dialog).getByRole('button', {
-      name: 'Recent requests from this user',
-    })
-  )
-  expect(
-    within(dialog).getByRole('heading', {
-      name: 'Recent requests from this user',
-    })
-  ).toBeVisible()
-})
-
-it('an evicted evidence record displays its retention reason', async () => {
-  vi.mocked(api.get).mockImplementation(async (url) => {
-    if (url === '/api/input-audit/1/evidence') {
-      return {
-        data: {
-          success: true,
-          data: {
-            available: false,
-            complete: false,
-            reason: 'capacity_evicted',
-          },
-        },
-      }
-    }
-    return { data: { success: true, data: { items: [], total: 0 } } }
-  })
-  render(
-    <QueryClientProvider client={client}>
-      <InputAuditDetailsDialog entry={entry} />
-    </QueryClientProvider>
-  )
-  await userEvent.click(screen.getByRole('button', { name: 'Details' }))
-  const dialog = screen.getByRole('dialog', { name: 'Input Audits' })
-  await userEvent.click(
-    within(dialog).getByRole('tab', { name: 'Evidence message' })
-  )
-  expect(
-    await within(dialog).findByText('Evidence was removed by storage limits')
-  ).toBeVisible()
-})
-
-it('related request navigation reuses one dialog, returns through visits and resets on reopen', async () => {
-  const requests = [
-    entry,
-    { ...entry, id: 2, request_id: 'request-b', content: 'second request' },
-    { ...entry, id: 3, request_id: 'request-c', content: 'third request' },
-  ]
-  const original = vi.mocked(api.get).getMockImplementation()
-  if (!original) throw new Error('API fixture is not initialized')
-  vi.mocked(api.get).mockImplementation(async (url, config) => {
-    if (url === '/api/input-audit') {
-      return { data: { success: true, data: { items: requests, total: 3 } } }
-    }
-    if (String(url).endsWith('/evidence')) {
-      return {
-        data: { success: true, data: { available: false, complete: false } },
-      }
-    }
-    return original(url, config)
-  })
-  render(
-    <QueryClientProvider client={client}>
-      <InputAuditDetailsDialog entry={entry} />
-    </QueryClientProvider>
-  )
-  const trigger = screen.getByRole('button', { name: 'Details' })
-  await userEvent.click(trigger)
-  const dialog = screen.getByRole('dialog', { name: 'Input Audits' })
-  const related = within(dialog).getByRole('region', {
-    name: 'Related requests',
-  })
-  await userEvent.click(
-    within(dialog).getByRole('tab', { name: 'Request text preview' })
-  )
-  await within(related).findByText(/second request/)
-  await userEvent.click(
-    within(related).getAllByRole('button', { name: 'Details' })[0]
-  )
-  expect(screen.getAllByRole('dialog')).toHaveLength(1)
-  expect(screen.getByRole('dialog')).toBe(dialog)
-  expect(within(dialog).getByText('second request')).toBeVisible()
-  const currentHeading = within(dialog).getByRole('heading', {
-    name: /^Current request:.*request-b$/,
-  })
-  expect(currentHeading).toHaveFocus()
-  expect(currentHeading.closest('header')).toHaveClass(
-    'flex-col',
-    'sm:flex-row'
-  )
-
-  const next = within(related).getAllByRole('button', { name: 'Details' })[1]
-  next.focus()
-  await userEvent.keyboard('{Enter}')
-  expect(screen.getAllByRole('dialog')).toHaveLength(1)
-  expect(within(dialog).getByText('third request')).toBeVisible()
-  await userEvent.click(
-    within(dialog).getByRole('button', { name: 'Back to previous request' })
-  )
-  expect(within(dialog).getByText('second request')).toBeVisible()
-  await userEvent.click(
-    within(dialog).getByRole('button', { name: 'Back to previous request' })
-  )
-  await userEvent.click(
-    within(dialog).getByRole('tab', { name: 'Request text preview' })
-  )
-  expect(within(dialog).getByText(entry.content)).toBeVisible()
-  expect(
-    within(dialog).queryByRole('button', { name: 'Back to previous request' })
-  ).not.toBeInTheDocument()
-  await userEvent.click(
-    within(related).getAllByRole('button', { name: 'Details' })[0]
-  )
-  await userEvent.keyboard('{Escape}')
-  await waitFor(() =>
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-  )
-  expect(trigger).toHaveFocus()
-  await userEvent.click(trigger)
-  expect(screen.getByRole('tab', { name: 'Evidence message' })).toHaveAttribute(
-    'aria-selected',
-    'true'
-  )
-  await userEvent.click(
-    screen.getByRole('tab', { name: 'Request text preview' })
-  )
-  expect(
-    within(screen.getByRole('dialog')).getByText(entry.content)
-  ).toBeVisible()
-  expect(
-    screen.queryByRole('button', { name: 'Back to previous request' })
-  ).not.toBeInTheDocument()
-})
-
-it('related request navigation preserves evidence tabs and prompt pagination without showing previous evidence during loading or failure', async () => {
-  const promptHash = 'b'.repeat(64)
-  const relatedEntry = {
-    ...entry,
-    id: 2,
-    user_id: 7,
-    username: 'bob',
-    request_id: 'request-b',
-    content: 'other user request',
-  }
-  let rejectEvidence: (reason: Error) => void = () => {}
-  const pendingEvidence = new Promise((_resolve, reject) => {
-    rejectEvidence = reject
-  })
-  vi.mocked(api.get).mockImplementation(async (url) => {
-    if (url === '/api/input-audit/2/evidence') return pendingEvidence
-    if (url === '/api/input-audit/1/evidence') {
-      return {
-        data: {
-          success: true,
-          data: {
-            available: true,
-            complete: true,
-            document: {
-              source: 'client_request',
-              scope: 'submitted_text_excerpts',
-              messages: [
-                {
-                  index: 0,
-                  role: 'system',
-                  kind: 'message',
-                  text: 'original policy',
-                  original_hash: promptHash,
-                },
-              ],
-              truncated: false,
-              context_missing: false,
-              omitted: [],
-            },
-          },
-        },
-      }
-    }
-    return {
-      data: { success: true, data: { items: [relatedEntry], total: 21 } },
-    }
-  })
-  render(
-    <QueryClientProvider client={client}>
-      <InputAuditDetailsDialog entry={entry} />
-    </QueryClientProvider>
-  )
-  await userEvent.click(screen.getByRole('button', { name: 'Details' }))
-  const dialog = screen.getByRole('dialog', { name: 'Input Audits' })
-  await userEvent.click(
-    within(dialog).getByRole('tab', { name: 'Evidence message' })
-  )
-  await userEvent.click(
-    await within(dialog).findByRole('button', {
-      name: 'Requests using this prompt',
-    })
-  )
-  const related = within(dialog).getByRole('region', {
-    name: 'Related requests',
-  })
-  await userEvent.click(
-    within(related).getByRole('button', { name: 'Go to next page' })
-  )
-  await waitFor(() =>
-    expect(api.get).toHaveBeenCalledWith('/api/input-audit', {
-      params: { p: 2, page_size: 10, prompt_hash: promptHash },
-    })
-  )
-  await userEvent.click(
-    within(related).getByRole('button', { name: 'Details' })
-  )
-  expect(screen.getAllByRole('dialog')).toHaveLength(1)
-  expect(
-    within(dialog).getByRole('tab', { name: 'Evidence message' })
-  ).toHaveAttribute('aria-selected', 'true')
-  const evidencePanel = within(dialog).getByRole('tabpanel', {
-    name: 'Evidence message',
-  })
-  expect(
-    within(evidencePanel).queryByText('original policy')
-  ).not.toBeInTheDocument()
-  expect(within(evidencePanel).getByText('Loading...')).toBeVisible()
-  rejectEvidence(new Error('evidence unavailable'))
-  await within(evidencePanel).findByRole('button', { name: 'Retry' })
-  expect(
-    within(evidencePanel).queryByText('original policy')
-  ).not.toBeInTheDocument()
-  await userEvent.click(
-    within(dialog).getByRole('button', { name: 'Back to previous request' })
-  )
-  expect(
-    within(dialog).getByRole('tab', { name: 'Evidence message' })
-  ).toHaveAttribute('aria-selected', 'true')
-  expect(await within(dialog).findByText('original policy')).toBeVisible()
-  expect(
-    within(related).getByRole('heading', { name: 'Requests using this prompt' })
-  ).toBeVisible()
-  expect(within(related).getByText('2 / 3')).toBeVisible()
-})
-
-it('returning from a related request restores the previous unsaved review draft', async () => {
-  const relatedEntry = {
-    ...entry,
-    id: 2,
-    request_id: 'request-b',
-    content: 'second request',
-  }
-  const original = vi.mocked(api.get).getMockImplementation()
-  if (!original) throw new Error('API fixture is not initialized')
-  vi.mocked(api.get).mockImplementation(async (url, config) => {
-    if (url === '/api/input-audit') {
-      return {
-        data: { success: true, data: { items: [relatedEntry], total: 1 } },
-      }
-    }
-    return original(url, config)
-  })
-  render(
-    <QueryClientProvider client={client}>
-      <InputAuditDetailsDialog entry={entry} />
-    </QueryClientProvider>
-  )
-  await userEvent.click(screen.getByRole('button', { name: 'Details' }))
-  const dialog = screen.getByRole('dialog', { name: 'Input Audits' })
-  await userEvent.click(within(dialog).getByRole('tab', { name: 'Review' }))
-  const reason = await within(dialog).findByRole('textbox', {
-    name: 'Review reason',
-  })
-  await userEvent.type(reason, 'Unsaved reason for the original request')
   await userEvent.click(
     within(
-      within(dialog).getByRole('region', { name: 'Related requests' })
-    ).getByRole('button', { name: 'Details' })
+      within(dialog).getByRole('navigation', {
+        name: 'User messages in this conversation',
+      })
+    ).getByRole('button', { name: /Later instruction/ })
   )
-  expect(
-    await within(dialog).findByRole('textbox', { name: 'Review reason' })
-  ).toHaveValue('')
-  await userEvent.click(
-    within(dialog).getByRole('button', { name: 'Back to previous request' })
+  await waitFor(() =>
+    expect(api.get).toHaveBeenCalledWith('/api/input-audit/2/transcript', {
+      params: { offset: 440, limit: 200 },
+    })
   )
-  expect(
-    await within(dialog).findByRole('textbox', { name: 'Review reason' })
-  ).toHaveValue('Unsaved reason for the original request')
 })
+
+it('list rows show what the agent did and highlight a searched keyword', async () => {
+  vi.mocked(api.get).mockImplementation(async (url) => ({
+    data: {
+      success: true,
+      data:
+        url === '/api/input-audit'
+          ? {
+              items: [
+                {
+                  ...entry,
+                  content: `${'x'.repeat(80)} drop the Users table`,
+                  activity: {
+                    tool_calls: 1000,
+                    tools: ['shell', 'apply_patch'],
+                    reply: 'Dropped the users table',
+                    more: true,
+                  },
+                },
+              ],
+              total: 1,
+            }
+          : { items: [], total: 0 },
+    },
+  }))
+  render(
+    <QueryClientProvider client={client}>
+      <InputAuditViewer />
+    </QueryClientProvider>
+  )
+  await screen.findByText('alice (#4)')
+  expect(document.querySelector('mark')).toBeNull()
+  expect(screen.getByText('Tool calls: 1,000+')).toBeVisible()
+  expect(screen.getByText('apply_patch')).toBeVisible()
+  expect(screen.getByText('Dropped the users table')).toBeVisible()
+  const keyword = screen.getByRole('textbox', { name: 'Message keyword' })
+  await userEvent.type(keyword, 'users{Enter}')
+  const mark = await screen.findByText('Users', { selector: 'mark' })
+  expect(mark.parentElement?.textContent).toMatch(/^…x+ drop the Users table$/)
+  expect(mark.parentElement?.textContent?.length).toBeLessThan(60)
+  expect(
+    screen.getByText('users', { selector: 'mark' }).parentElement
+  ).toHaveTextContent('Assistant: Dropped the users table')
+})
+
+it('details opened from a keyword search highlight matches and step through the whole conversation', async () => {
+  vi.mocked(api.get).mockImplementation(async (url, config) => {
+    if (String(url).endsWith('/transcript/search')) {
+      return {
+        data: {
+          success: true,
+          data: {
+            seqs: config?.params?.q === 'login' ? [1, 2, 3, 500] : [],
+            more: false,
+          },
+        },
+      }
+    }
+    return { data: { success: true, data: { ...transcript, total: 600 } } }
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <InputAuditDetailsDialog entry={entry} keyword=' login ' />
+    </QueryClientProvider>
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Details' }))
+  const dialog = screen.getByRole('dialog', { name: 'Input Audits' })
+  const search = await within(dialog).findByRole('textbox', {
+    name: 'Search this conversation',
+  })
+  expect(search).toHaveValue('login')
+  expect(await within(dialog).findByRole('status')).toHaveTextContent('1 / 4')
+  expect(api.get).toHaveBeenCalledWith('/api/input-audit/1/transcript/search', {
+    params: { q: 'login' },
+  })
+  const conversation = within(dialog).getByRole('list', {
+    name: 'Conversation',
+  })
+  const message = conversation.querySelector('[data-seq="1"]') as HTMLElement
+  expect(within(message).getByText('login', { selector: 'mark' })).toBeVisible()
+  expect(within(message).getByText('This message')).toBeVisible()
+
+  await userEvent.click(
+    within(dialog).getByRole('button', { name: 'Next match' })
+  )
+  await userEvent.click(
+    within(dialog).getByRole('button', { name: 'Next match' })
+  )
+  expect(within(dialog).getByRole('status')).toHaveTextContent('3 / 4')
+  const result = conversation.querySelector('[data-seq="3"]') as HTMLElement
+  expect(
+    within(result).getByRole('button', { name: /Tool result/ })
+  ).toHaveAttribute('aria-expanded', 'true')
+
+  await userEvent.click(search)
+  await userEvent.keyboard('{Enter}')
+  await waitFor(() =>
+    expect(api.get).toHaveBeenCalledWith('/api/input-audit/1/transcript', {
+      params: { offset: 490, limit: 200 },
+    })
+  )
+  expect(within(dialog).getByRole('status')).toHaveTextContent('4 / 4')
+
+  await userEvent.clear(search)
+  await userEvent.type(search, 'nothing here')
+  await waitFor(() =>
+    expect(within(dialog).getByRole('status')).toHaveTextContent('No matches')
+  )
+  expect(conversation.querySelector('mark')).toBeNull()
+})
+
+it('earlier and later conversation items load on demand', async () => {
+  vi.mocked(api.get).mockImplementation(async (_url, config) => {
+    const offset = Number(config?.params?.offset ?? 200)
+    return {
+      data: {
+        success: true,
+        data: {
+          ...transcript,
+          turn_seq: 200,
+          outline: [],
+          offset,
+          total: 600,
+          items: [
+            {
+              seq: offset,
+              role: 'user',
+              kind: 'message',
+              text: `instruction-${offset}`,
+              original_chars: 15,
+            },
+          ],
+          request_range: { start: 200, end: 201 },
+        },
+      },
+    }
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <InputAuditDetailsDialog entry={entry} />
+    </QueryClientProvider>
+  )
+  await userEvent.click(screen.getByRole('button', { name: 'Details' }))
+  const dialog = screen.getByRole('dialog', { name: 'Input Audits' })
+  expect(await within(dialog).findByText('instruction-200')).toBeVisible()
+  await userEvent.click(
+    within(dialog).getByRole('button', { name: 'Show earlier items' })
+  )
+  expect(await within(dialog).findByText('instruction-0')).toBeVisible()
+  expect(api.get).toHaveBeenCalledWith('/api/input-audit/1/transcript', {
+    params: { offset: 0, limit: 200 },
+  })
+  await userEvent.click(
+    within(dialog).getByRole('button', { name: 'Show later items' })
+  )
+  expect(await within(dialog).findByText('instruction-400')).toBeVisible()
+  expect(within(dialog).getByText('instruction-200')).toBeVisible()
+})
+
+it.each([
+  [
+    { source: 'preview', reason: 'capacity_evicted', thread: undefined },
+    'Evidence was removed by storage limits',
+  ],
+  [
+    { request_range: { start: 4, end: 4 } },
+    'This request added no new items. It resent existing history, for example as a retry.',
+  ],
+])(
+  'conversation notices explain missing or resent context',
+  async (overrides, notice) => {
+    vi.mocked(api.get).mockImplementation(async () => ({
+      data: { success: true, data: { ...transcript, ...overrides } },
+    }))
+    render(
+      <QueryClientProvider client={client}>
+        <InputAuditDetailsDialog entry={entry} />
+      </QueryClientProvider>
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Details' }))
+    const dialog = screen.getByRole('dialog', { name: 'Input Audits' })
+    expect(await within(dialog).findByText(notice)).toBeVisible()
+  }
+)
 
 it('selecting a user by name sends its ID and reset clears the selection', async () => {
   render(
@@ -1008,7 +991,7 @@ it('case decisions preserve drafts on conflict, refresh explicitly and require c
     </QueryClientProvider>
   )
   await userEvent.click(await screen.findByRole('button', { name: 'Details' }))
-  await userEvent.click(screen.getByRole('tab', { name: 'Review' }))
+  await userEvent.click(await screen.findByRole('tab', { name: 'Review' }))
   await userEvent.click(await screen.findByRole('tab', { name: 'Decision' }))
   const form = await screen.findByRole('form', { name: 'Review decision' })
   await userEvent.selectOptions(
@@ -1110,7 +1093,7 @@ it('incomplete case evidence disables confirmation and renders submitted text sa
     </QueryClientProvider>
   )
   await userEvent.click(await screen.findByRole('button', { name: 'Details' }))
-  await userEvent.click(screen.getByRole('tab', { name: 'Review' }))
+  await userEvent.click(await screen.findByRole('tab', { name: 'Review' }))
   await userEvent.click(await screen.findByRole('tab', { name: 'Decision' }))
   const form = await screen.findByRole('form', { name: 'Review decision' })
   expect(
@@ -1273,7 +1256,7 @@ it.each(['Delete', 'Delete selected', 'Clear filtered messages'])(
         data:
           action === 'Clear filtered messages'
             ? expect.objectContaining({ all: true })
-            : { ids: [1] },
+            : { turns: [{ user_id: 4, turn_key: 'turn-a' }] },
       })
     )
   }
@@ -1339,7 +1322,7 @@ it('mobile message details use viewport height and close with Escape returning f
     'sm:max-w-6xl'
   )
   await userEvent.click(
-    within(detail).getByRole('tab', { name: 'Request text preview' })
+    await within(detail).findByRole('tab', { name: 'Request' })
   )
   expect(within(detail).getByText(entry.content)).toBeVisible()
   await userEvent.keyboard('{Escape}')

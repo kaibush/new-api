@@ -70,6 +70,7 @@ import {
   deleteInputAudits,
   getInputAuditStatus,
   type InputAudit,
+  type InputAuditDeletion,
   type InputAuditFilters,
   type InputAuditStatus,
 } from './api'
@@ -103,6 +104,20 @@ const InputAuditSettingsDialog = lazy(() =>
 
 const EMPTY_ROWS: InputAudit[] = []
 
+// A row is one user message; deleting it removes every request sent for it.
+function turnDeletion(entries: InputAudit[]): InputAuditDeletion {
+  const turns = entries.flatMap((entry) =>
+    entry.turn_key ? [{ user_id: entry.user_id, turn_key: entry.turn_key }] : []
+  )
+  const ids = entries
+    .filter((entry) => !entry.turn_key)
+    .map((entry) => entry.id)
+  return {
+    ...(turns.length > 0 && { turns }),
+    ...(ids.length > 0 && { ids }),
+  }
+}
+
 function InputAuditMessages(props: { active?: boolean }) {
   const { t } = useTranslation()
   const isMobile = useMediaQuery('(max-width: 640px)')
@@ -131,9 +146,7 @@ function InputAuditMessages(props: { active?: boolean }) {
     enabled: canRead && props.active !== false,
     retry: false,
   })
-  const [deletion, setDeletion] = useState<
-    { ids?: number[]; all?: boolean } & Partial<InputAuditFilters>
-  >()
+  const [deletion, setDeletion] = useState<InputAuditDeletion>()
   const remove = useMutation({
     mutationFn: deleteInputAudits,
     onSuccess: () => {
@@ -147,15 +160,21 @@ function InputAuditMessages(props: { active?: boolean }) {
       void queryClient.invalidateQueries({ queryKey: ['model-review-summary'] })
     },
   })
-  const onDelete = useCallback((id: number) => setDeletion({ ids: [id] }), [])
-  const columns = useInputAuditColumns(canRead ? onDelete : undefined)
+  const onDelete = useCallback(
+    (entry: InputAudit) => setDeletion(turnDeletion([entry])),
+    []
+  )
+  const columns = useInputAuditColumns(
+    canRead ? onDelete : undefined,
+    filters.keyword
+  )
   const { table } = useDataTable({
     columns,
     data:
       canRead && !query.isError
         ? (query.data?.items ?? EMPTY_ROWS)
         : EMPTY_ROWS,
-    getRowId: (entry) => String(entry.id),
+    getRowId: (entry) => `${entry.user_id}:${entry.turn_key || entry.id}`,
     totalCount: query.isError ? 0 : (query.data?.total ?? 0),
     pagination: { pageIndex: filters.p - 1, pageSize: filters.page_size },
     onPaginationChange: (updater) => {
@@ -231,11 +250,13 @@ function InputAuditMessages(props: { active?: boolean }) {
                   table.getFilteredSelectedRowModel().rows.length > 100
                 }
                 onClick={() =>
-                  setDeletion({
-                    ids: table
-                      .getFilteredSelectedRowModel()
-                      .rows.map((row) => row.original.id),
-                  })
+                  setDeletion(
+                    turnDeletion(
+                      table
+                        .getFilteredSelectedRowModel()
+                        .rows.map((row) => row.original)
+                    )
+                  )
                 }
               >
                 {t('Delete selected')}
@@ -359,7 +380,7 @@ function InputAuditMessages(props: { active?: boolean }) {
         }}
         title={t('Delete submitted messages')}
         desc={t(
-          'Delete the selected submitted messages and their live evidence and model review results. Retained human review cases are preserved. Pause or stop active review tasks first. This cannot be undone.'
+          'Delete the selected user messages with every request sent for them, their conversation evidence and model review results. Retained human review cases are preserved. Pause or stop active review tasks first. This cannot be undone.'
         )}
         destructive
         isLoading={remove.isPending}
@@ -382,7 +403,7 @@ function InputAuditCollectionStatus(props: { status: InputAuditStatus }) {
         <AccordionContent className='space-y-2'>
           <p className='text-muted-foreground text-xs'>
             {t(
-              'Short messages are stored in full. Long messages retain the beginning and end. Time is when the gateway received the first matching input.'
+              'Each row is one user message. Requests an agent sends while working on it are counted on the row and shown together in the conversation details. Short messages are stored in full; long messages retain the beginning and end.'
             )}
           </p>
           <p className='text-muted-foreground text-xs'>

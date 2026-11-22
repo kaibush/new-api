@@ -19,7 +19,7 @@ const InputAuditOptionKey = "InputAuditSettings"
 type InputAudit struct {
 	ReviewAttemptedAt int64  `json:"model_reviewed_at" gorm:"index"`
 	Id                int64  `json:"id" gorm:"index:idx_input_audit_time_id,priority:2"`
-	UserId            int    `json:"user_id" gorm:"uniqueIndex:idx_input_audit_user_hash,priority:1;index:idx_input_audit_user_time,priority:1"`
+	UserId            int    `json:"user_id" gorm:"uniqueIndex:idx_input_audit_user_hash,priority:1;index:idx_input_audit_user_time,priority:1;index:idx_input_audit_user_turn,priority:1"`
 	EvidenceState     string `json:"evidence_state,omitempty" gorm:"type:varchar(32)"`
 	InputHash         string `json:"input_hash,omitempty" gorm:"type:varchar(64)"`
 	ContentHash       string `json:"content_hash" gorm:"type:varchar(64);uniqueIndex:idx_input_audit_user_hash,priority:2"`
@@ -33,6 +33,13 @@ type InputAudit struct {
 	Content           string `json:"content" gorm:"type:text"`
 	ContentChars      int    `json:"content_chars"`
 	Truncated         bool   `json:"truncated"`
+	// TurnKey groups the requests an agent issues for one user message: the
+	// chain digest of that message (input_hash for rows captured earlier).
+	TurnKey   string `json:"turn_key" gorm:"type:varchar(64);index:idx_input_audit_user_turn,priority:2"`
+	TurnItem  int    `json:"turn_item"`
+	ThreadId  int64  `json:"thread_id" gorm:"index"`
+	ItemCount int    `json:"item_count"`
+	NewItems  int    `json:"new_items"`
 }
 
 type InputAuditSettings struct {
@@ -127,17 +134,22 @@ func PersistInputAudits(db *gorm.DB, rows []InputAudit, now int64) error {
 		if err := tx.Model(&InputAudit{}).Where("created_at < ?", cutoff).Order("created_at").Order("id").Limit(1000).Pluck("id", &ids).Error; err != nil {
 			return err
 		}
-		if len(ids) > 0 {
-			if err := tx.Where("id IN ?", ids).Delete(&InputAudit{}).Error; err != nil {
-				return err
-			}
+		if err := deleteInputAuditRows(tx, ids); err != nil {
+			return err
 		}
 		if settings.Enabled && len(rows) > 0 {
 			current := make([]InputAudit, 0, len(rows))
 			for _, row := range rows {
-				if row.CreatedAt >= cutoff {
-					current = append(current, row)
+				if row.CreatedAt < cutoff {
+					continue
 				}
+				if row.TurnKey == "" {
+					row.TurnKey = row.InputHash
+				}
+				if row.TurnKey == "" {
+					row.TurnKey = row.ContentHash
+				}
+				current = append(current, row)
 			}
 			if len(current) > 0 {
 				conflict := clause.OnConflict{DoNothing: true}
@@ -165,23 +177,109 @@ func PersistInputAudits(db *gorm.DB, rows []InputAudit, now int64) error {
 		if err := tx.Model(&InputAudit{}).Where("created_at < ? OR (created_at = ? AND id < ?)", boundary.CreatedAt, boundary.CreatedAt, boundary.Id).Order("created_at").Order("id").Limit(1000).Pluck("id", &ids).Error; err != nil {
 			return err
 		}
-		if len(ids) == 0 {
-			return nil
-		}
-		if err := tx.Where("id IN ?", ids).Delete(&InputAudit{}).Error; err != nil {
+		if err := deleteInputAuditRows(tx, ids); err != nil {
 			return fmt.Errorf("prune input audits: %w", err)
 		}
 		return nil
 	})
 }
 
+// deleteInputAuditRows removes request rows and conversation threads that no
+// remaining request references.
+func deleteInputAuditRows(tx *gorm.DB, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	var threads []int64
+	if err := tx.Model(&InputAudit{}).Distinct().Where("id IN ? AND thread_id > 0", ids).Pluck("thread_id", &threads).Error; err != nil {
+		return err
+	}
+	if err := tx.Where("id IN ?", ids).Delete(&InputAudit{}).Error; err != nil {
+		return err
+	}
+	return releaseInputAuditThreads(tx, threads)
+}
+
+// BackfillInputAuditTurnKeys groups rows captured before conversation turns
+// by their submitted text, matching the earlier list. Safe to run repeatedly.
+func BackfillInputAuditTurnKeys(db *gorm.DB) error {
+	return db.Model(&InputAudit{}).Where("turn_key IS NULL OR turn_key = ?", "").Update("turn_key", gorm.Expr("CASE WHEN input_hash IS NULL OR input_hash = '' THEN content_hash ELSE input_hash END")).Error
+}
+
 type InputAuditFilter struct {
-	UserId     int
-	RequestId  string
-	PromptHash string
-	Keyword    string
-	Start      int64
-	End        int64
+	UserId    int
+	RequestId string
+	Keyword   string
+	Start     int64
+	End       int64
+}
+
+// InputAuditTurnRef identifies the requests issued for one user message.
+type InputAuditTurnRef struct {
+	UserId  int    `json:"user_id"`
+	TurnKey string `json:"turn_key"`
+}
+
+// InputAuditTurn is the latest request of a turn with the turn's totals.
+type InputAuditTurn struct {
+	InputAudit
+	RequestCount int                     `json:"request_count"`
+	FirstAt      int64                   `json:"first_at"`
+	LastAt       int64                   `json:"last_at"`
+	Activity     *InputAuditTurnActivity `json:"activity,omitempty"`
+}
+
+// InputAuditTurnActivity summarizes what happened after a user message until
+// the next one, so a reviewer can follow an agent loop from the list.
+type InputAuditTurnActivity struct {
+	ToolCalls int      `json:"tool_calls"`
+	Tools     []string `json:"tools"`
+	Reply     string   `json:"reply"`
+	More      bool     `json:"more"`
+}
+
+// QueryInputAuditTurns lists one row per user message; agent loops issue many
+// requests for the same message and they are counted, not repeated.
+func QueryInputAuditTurns(db *gorm.DB, filter InputAuditFilter, offset, limit int) ([]InputAuditTurn, int64, error) {
+	turns := []InputAuditTurn{}
+	grouped := filteredInputAudits(db, filter).Select("user_id, turn_key, MAX(id) AS last_id, COUNT(*) AS request_count, MIN(created_at) AS first_at, MAX(created_at) AS last_at").Group("user_id, turn_key")
+	var total int64
+	if err := db.Table("(?) AS turns", grouped).Count(&total).Error; err != nil {
+		return turns, 0, err
+	}
+	var stats []struct {
+		LastId       int64
+		RequestCount int
+		FirstAt      int64
+		LastAt       int64
+	}
+	if err := db.Table("(?) AS turns", grouped).Order("last_at DESC").Order("last_id DESC").Offset(offset).Limit(limit).Scan(&stats).Error; err != nil {
+		return turns, 0, err
+	}
+	if len(stats) == 0 {
+		return turns, total, nil
+	}
+	ids := make([]int64, 0, len(stats))
+	for _, stat := range stats {
+		ids = append(ids, stat.LastId)
+	}
+	var rows []InputAudit
+	if err := db.Where("id IN ?", ids).Find(&rows).Error; err != nil {
+		return turns, 0, err
+	}
+	byID := make(map[int64]InputAudit, len(rows))
+	for _, row := range rows {
+		byID[row.Id] = row
+	}
+	for _, stat := range stats {
+		if row, ok := byID[stat.LastId]; ok {
+			turns = append(turns, InputAuditTurn{InputAudit: row, RequestCount: stat.RequestCount, FirstAt: stat.FirstAt, LastAt: stat.LastAt})
+		}
+	}
+	if err := summarizeInputAuditTurns(db, turns); err != nil {
+		return turns, 0, err
+	}
+	return turns, total, nil
 }
 
 func QueryInputAudits(db *gorm.DB, filter InputAuditFilter, offset, limit int) ([]InputAudit, int64, error) {
@@ -203,11 +301,6 @@ func filteredInputAudits(db *gorm.DB, filter InputAuditFilter) *gorm.DB {
 	if filter.RequestId != "" {
 		query = query.Where("request_id = ?", filter.RequestId)
 	}
-	if filter.PromptHash != "" {
-		evidenceIDs := db.Model(&InputAuditEvidenceTextRef{}).Select("evidence_id").Where("prompt_hash = ?", filter.PromptHash)
-		evidence := db.Model(&InputAuditEvidence{}).Select("1").Where("input_audit_evidences.user_id = input_audits.user_id AND input_audit_evidences.request_id = input_audits.request_id").Where("id IN (?)", evidenceIDs)
-		query = query.Where("EXISTS (?)", evidence)
-	}
 	if filter.Keyword != "" {
 		// Treat SQL wildcard characters as literal message text. LOWER supports
 		// ASCII case-insensitive search across all three database engines.
@@ -224,8 +317,10 @@ func filteredInputAudits(db *gorm.DB, filter InputAuditFilter) *gorm.DB {
 }
 
 // DeleteInputAuditMessages removes live submitted text and its derived review
-// evidence. Independently retained human case snapshots keep their audit trail.
-func DeleteInputAuditMessages(db *gorm.DB, ids []int64, filter InputAuditFilter) error {
+// evidence, selected by request IDs, whole turns or the filter. Conversation
+// threads are deleted once no remaining request references them.
+// Independently retained human case snapshots keep their audit trail.
+func DeleteInputAuditMessages(db *gorm.DB, ids []int64, turns []InputAuditTurnRef, filter InputAuditFilter) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		var guard Option
 		if err := lockForUpdate(tx).Where(&Option{Key: InputAuditReviewOption}).First(&guard).Error; err != nil {
@@ -238,6 +333,12 @@ func DeleteInputAuditMessages(db *gorm.DB, ids []int64, filter InputAuditFilter)
 		if active > 0 {
 			return errors.New("Pause or stop the review queue before deleting submitted messages")
 		}
+		// Writers append to conversations under the settings row; holding it
+		// keeps them from extending a thread while it is deleted.
+		var settings Option
+		if err := lockForUpdate(tx).Where(&Option{Key: InputAuditOptionKey}).Limit(1).Find(&settings).Error; err != nil {
+			return err
+		}
 		var upper InputAudit
 		if err := tx.Select("id").Order("id DESC").Limit(1).Find(&upper).Error; err != nil {
 			return err
@@ -245,6 +346,17 @@ func DeleteInputAuditMessages(db *gorm.DB, ids []int64, filter InputAuditFilter)
 		query := filteredInputAudits(tx, filter).Where("id <= ?", upper.Id)
 		if len(ids) > 0 {
 			query = query.Where("id IN ?", ids)
+		}
+		if len(turns) > 0 {
+			selected := tx.Session(&gorm.Session{NewDB: true})
+			for i, turn := range turns {
+				if i == 0 {
+					selected = selected.Where("user_id = ? AND turn_key = ?", turn.UserId, turn.TurnKey)
+				} else {
+					selected = selected.Or("user_id = ? AND turn_key = ?", turn.UserId, turn.TurnKey)
+				}
+			}
+			query = query.Where(selected)
 		}
 		for {
 			var rows []InputAudit
@@ -271,7 +383,7 @@ func DeleteInputAuditMessages(db *gorm.DB, ids []int64, filter InputAuditFilter)
 			if err := tx.Where("audit_id IN ?", deleted).Delete(&InputAuditReviewResult{}).Error; err != nil {
 				return err
 			}
-			if err := tx.Where("id IN ?", deleted).Delete(&InputAudit{}).Error; err != nil {
+			if err := deleteInputAuditRows(tx, deleted); err != nil {
 				return err
 			}
 		}

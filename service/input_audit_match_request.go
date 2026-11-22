@@ -14,7 +14,7 @@ import (
 // checked. Earlier plugins may have changed it; it is not an inbound wire copy.
 // Fields are retained in source order, excluding media and bounded structural gaps.
 func ExtractInputAuditMatchRequest(body []byte, maxChars int) model.InputAuditEvidenceDocument {
-	builder := inputAuditEvidenceBuilder{fullText: true, document: model.InputAuditEvidenceDocument{Version: 2, Source: "rejection_stage_request", Scope: "submitted_text_excerpts", Messages: []model.InputAuditEvidenceMessage{}, Omitted: []string{}}}
+	builder := inputAuditEvidenceBuilder{document: model.InputAuditEvidenceDocument{Version: 2, Source: "rejection_stage_request", Scope: "submitted_text_excerpts", Messages: []model.InputAuditEvidenceMessage{}, Omitted: []string{}}}
 	if !gjson.ValidBytes(body) {
 		builder.document.ContextMissing = true
 		builder.omit("unsupported_protocol")

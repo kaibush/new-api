@@ -395,6 +395,8 @@ func migrateDB() error {
 		&UserAccessToken{},
 		&SiteVisit{},
 		&InputAudit{},
+		&InputAuditThread{},
+		&InputAuditThreadItem{},
 		&InputAuditEvidence{},
 		&InputAuditEvidenceText{},
 		&InputAuditEvidenceTextRef{},
@@ -406,6 +408,9 @@ func migrateDB() error {
 		&InputAuditReviewResult{},
 	)
 	if err != nil {
+		return err
+	}
+	if err := BackfillInputAuditTurnKeys(DB); err != nil {
 		return err
 	}
 	if err := InitializeCheckinAccounting(); err != nil {

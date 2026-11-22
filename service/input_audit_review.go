@@ -103,29 +103,10 @@ func (t *inputAuditReviewTransport) RoundTrip(req *http.Request) (*http.Response
 // boundaries. Missing/partial evidence never produces an unqualified safe label.
 func ReviewInputAudit(ctx context.Context, db *gorm.DB, client *http.Client, settings model.InputAuditReviewSettings, audit model.InputAudit) model.InputAuditReviewResult {
 	result := model.InputAuditReviewResult{AuditId: audit.Id, UserId: audit.UserId, CreatedAt: time.Now().Unix(), Status: "failed", Model: settings.Model}
-	document := model.InputAuditEvidenceDocument{Source: "legacy_preview", ContextMissing: true, Truncated: audit.Truncated, Messages: []model.InputAuditEvidenceMessage{{Role: "user", Text: audit.Content}}}
-	var evidence model.InputAuditEvidence
-	collection, err := model.LoadInputAuditSettings(db)
+	// Each request is reviewed with the user's messages so far and the items
+	// it added; earlier requests of the same conversation cover the rest.
+	document, err := model.InputAuditRequestDocument(db, audit, 200000, true)
 	if err != nil {
-		result.Reason = "evidence_read_failed"
-		return result
-	}
-	err = db.Where("user_id = ? AND request_id = ? AND content_hash = ? AND created_at >= ?", audit.UserId, audit.RequestId, audit.ContentHash, time.Now().Unix()-int64(collection.RetentionDays)*86400).First(&evidence).Error
-	if err == nil {
-		retained, readErr := model.ReadInputAuditEvidence(db, evidence)
-		if readErr != nil {
-			result.Reason = "invalid_evidence"
-			return result
-		}
-		// Extraction can retain an empty document (for example, a Responses
-		// request above the extraction limit). Keep reviewing the audit preview
-		// in that case, without presenting it as complete request evidence.
-		if slices.ContainsFunc(retained.Messages, func(message model.InputAuditEvidenceMessage) bool {
-			return strings.TrimSpace(message.Text) != ""
-		}) {
-			document = retained
-		}
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		result.Reason = "evidence_read_failed"
 		return result
 	}
