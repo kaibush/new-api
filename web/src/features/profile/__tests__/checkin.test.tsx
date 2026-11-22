@@ -672,3 +672,93 @@ test('initial calendar month follows the server check-in date across time zones'
     vi.useRealTimers()
   }
 })
+
+test('claiming a check-in immediately switches to an opaque checked-in button without flashing back to Check in now', async () => {
+  let resolveRefetch: ((value: unknown) => void) | undefined
+  const refetchPromise = new Promise((resolve) => {
+    resolveRefetch = resolve
+  })
+  const initialStatus = {
+    data: {
+      success: true,
+      data: {
+        enabled: true,
+        eligibility: { ...eligibility, mode: 2, expiry_seconds: 3600 },
+        stats: {
+          checked_in_today: false,
+          records: [],
+          total_checkins: 0,
+          checkin_count: 0,
+          total_quota: 0,
+        },
+      },
+    },
+  }
+  vi.spyOn(api, 'get')
+    .mockResolvedValueOnce(initialStatus)
+    .mockReturnValueOnce(refetchPromise as ReturnType<typeof api.get>)
+
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <CheckinCalendarCard
+        embedded
+        checkinEnabled
+        turnstileEnabled={false}
+        turnstileSiteKey=''
+      />
+    </QueryClientProvider>
+  )
+
+  const initialButton = await screen.findByRole('button', {
+    name: 'Check in now',
+  })
+  expect(initialButton).toHaveClass('bg-primary', 'transition-colors')
+
+  fireEvent.click(initialButton)
+  fireEvent.click(screen.getByRole('button', { name: 'Claim this reward' }))
+
+  const checkedButton = await screen.findByRole('button', {
+    name: 'Checked in',
+  })
+  expect(checkedButton).toBeDisabled()
+  expect(checkedButton).not.toBe(initialButton)
+  expect(checkedButton).toHaveClass(
+    'bg-muted',
+    'text-muted-foreground',
+    'disabled:opacity-100',
+    'transition-colors'
+  )
+  expect(checkedButton).not.toHaveClass(
+    'bg-primary',
+    'disabled:opacity-50',
+    'transition-all'
+  )
+  expect(
+    screen.queryByRole('button', { name: 'Check in now' })
+  ).not.toBeInTheDocument()
+
+  resolveRefetch?.({
+    data: {
+      success: true,
+      data: {
+        enabled: true,
+        eligibility: { ...eligibility, mode: 2, expiry_seconds: 3600 },
+        stats: {
+          checked_in_today: true,
+          records: [{ checkin_date: eligibility.today, quota_awarded: 10 }],
+          total_checkins: 1,
+          checkin_count: 1,
+          total_quota: 10,
+        },
+      },
+    },
+  })
+
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Checked in' })).toBeDisabled()
+  )
+  client.clear()
+})

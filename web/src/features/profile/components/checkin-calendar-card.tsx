@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   CalendarDays,
+  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -99,6 +100,10 @@ export function CheckinCalendarCard({
   const [celebration, setCelebration] = useState<CheckinSuccessPayload | null>(
     null
   )
+  const [claimedToday, setClaimedToday] = useState<{
+    date: string
+    quotaAwarded: number
+  } | null>(null)
   const [confettiBurstKey, setConfettiBurstKey] = useState(0)
 
   // Fetch checkin status
@@ -147,18 +152,27 @@ export function CheckinCalendarCard({
     const [year, month] = currentMonthStr.split('-').map(Number)
     return new Date(year, month - 1, 1)
   }, [currentMonthStr])
-  const checkedToday = checkinData?.stats?.checked_in_today === true
-  const todayAward = checkinRecordsMap[eligibility?.today || todayString]
+  const claimedMatchesToday = claimedToday?.date === todayString
+  const checkedToday =
+    checkinData?.stats?.checked_in_today === true || claimedMatchesToday
+  const todayAward =
+    checkinRecordsMap[eligibility?.today || todayString] ??
+    (claimedMatchesToday ? claimedToday.quotaAwarded : undefined)
 
   const streakDays = useMemo(() => {
     const dates = (checkinData?.stats?.records || []).map(
       (record: CheckinRecord) => record.checkin_date
     )
-    if (celebration !== null) {
+    if (claimedMatchesToday || celebration !== null) {
       dates.push(todayString)
     }
     return computeCheckinStreak(dates, todayString)
-  }, [celebration, checkinData?.stats?.records, todayString])
+  }, [
+    celebration,
+    checkinData?.stats?.records,
+    claimedMatchesToday,
+    todayString,
+  ])
 
   useEffect(() => {
     if (initialLoaded) return
@@ -191,6 +205,10 @@ export function CheckinCalendarCard({
           toast.success(
             `${t('Check-in successful! Received')} ${formatQuotaWithCurrency(res.data.quota_awarded)}`
           )
+          setClaimedToday({
+            date: todayString,
+            quotaAwarded: res.data.quota_awarded,
+          })
           setCelebration(payload)
           setConfettiBurstKey((key) => key + 1)
           onCheckinSuccess?.(payload)
@@ -232,6 +250,7 @@ export function CheckinCalendarCard({
       refetch,
       shouldTriggerTurnstile,
       t,
+      todayString,
       turnstileSiteKey,
     ]
   )
@@ -302,13 +321,30 @@ export function CheckinCalendarCard({
     )
   }
 
+  const checkinButtonDisabled = checkinLoading || checkedToday || !checkinData
+  let checkinButtonState:
+    | 'loading'
+    | 'checked'
+    | 'unavailable'
+    | 'details'
+    | 'ready' = 'ready'
   let checkinButtonLabel = t('Check in now')
+  let checkinButtonVariant: 'default' | 'outline' = 'default'
   if (checkinLoading) {
+    checkinButtonState = 'loading'
     checkinButtonLabel = t('Loading...')
+    checkinButtonVariant = 'outline'
   } else if (checkedToday) {
+    checkinButtonState = 'checked'
     checkinButtonLabel = t('Checked in')
+    checkinButtonVariant = 'outline'
+  } else if (!checkinData) {
+    checkinButtonState = 'unavailable'
+    checkinButtonVariant = 'outline'
   } else if (eligibility?.allowed === false) {
+    checkinButtonState = 'details'
     checkinButtonLabel = t('Check-in reward details')
+    checkinButtonVariant = 'outline'
   }
 
   const celebrationRoll = celebration
@@ -436,11 +472,25 @@ export function CheckinCalendarCard({
               </div>
             </Button>
             <Button
+              key={checkinButtonState}
+              type='button'
+              variant={checkinButtonVariant}
               onClick={() => setRewardDialogOpen(true)}
-              disabled={checkinLoading || checkedToday || !checkinData}
+              disabled={checkinButtonDisabled}
               size='sm'
-              className='min-h-11 w-full shrink-0 sm:min-h-9 sm:w-auto'
+              className={cn(
+                'min-h-11 w-full shrink-0 transition-colors sm:min-h-9 sm:w-auto',
+                checkinButtonDisabled &&
+                  'bg-muted text-muted-foreground dark:bg-muted disabled:opacity-100'
+              )}
             >
+              {checkinButtonState === 'checked' && (
+                <Check
+                  data-icon='inline-start'
+                  aria-hidden='true'
+                  className='text-success'
+                />
+              )}
               {checkinButtonLabel}
             </Button>
           </div>
@@ -588,7 +638,7 @@ export function CheckinCalendarCard({
                     const stampedPastDay =
                       !isToday && isCheckedIn && dayObj.isCurrentMonth
                     const stampedToday =
-                      isToday && (isCheckedIn || celebration !== null)
+                      isToday && (isCheckedIn || checkedToday)
 
                     const dayButton = (
                       <Button
