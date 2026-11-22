@@ -16,8 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+export { CosmicSingularityStage } from './cosmic-singularity-stage'
+export { CosmicTiltCard } from './cosmic-tilt-card'
 export { HeroButtons } from './hero-buttons'
-export { TidalAquariumStage } from './tidal-aquarium-stage'
 export { CTA } from './sections/cta'
 export { Hero } from './sections/hero'
 export { ProtocolWorkbench } from './sections/protocol-workbench'

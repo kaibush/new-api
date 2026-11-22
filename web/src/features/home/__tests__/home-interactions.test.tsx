@@ -19,12 +19,12 @@ For commercial licensing, please contact support@quantumnous.com
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState, type ComponentProps, type ReactNode } from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { CosmicSingularityStage } from '../components/cosmic-singularity-stage'
 import { Hero } from '../components/sections/hero'
 import { ProtocolWorkbench } from '../components/sections/protocol-workbench'
 import { ProviderConstellation } from '../components/sections/provider-constellation'
-import { TidalAquariumStage } from '../components/tidal-aquarium-stage'
 import type { HomeMood, ProtocolId } from '../constants'
 
 vi.mock('@tanstack/react-router', () => ({
@@ -74,11 +74,19 @@ function ControlledWorkbench() {
   )
 }
 
-describe('TidalAquariumStage', () => {
-  it('switches upstream buoys, deflects 429 storm to backup, feeds koi, and syncs protocol', () => {
+beforeEach(() => {
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+describe('CosmicSingularityStage', () => {
+  it('switches star-gate relays, deflects 429 solar flares, locks onto the Pale Blue Dot beacon, resets 3D orbit, and syncs protocol', () => {
     const onProtocolChange = vi.fn()
     render(
-      <TidalAquariumStage mood='work' onProtocolChange={onProtocolChange} />
+      <CosmicSingularityStage mood='work' onProtocolChange={onProtocolChange} />
     )
 
     const routeGroup = screen.getByRole('group', {
@@ -102,30 +110,50 @@ describe('TidalAquariumStage', () => {
     fireEvent.click(openaiBtn)
     expect(openaiBtn).toHaveAttribute('aria-pressed', 'true')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Simulate 429 Storm' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Simulate 429 Flare' }))
     expect(
-      screen.getByRole('button', { name: 'Restore Calm' })
+      screen.getByRole('button', { name: 'Restore Calm Orbit' })
     ).toHaveAttribute('aria-pressed', 'true')
     expect(
       within(routeGroup).getByRole('button', { name: 'Claude' })
     ).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByText('Claude · claude-sonnet-4')).toBeVisible()
     expect(screen.getByText('429 Bypassed → Backup Smooth')).toBeVisible()
-    expect(screen.getByText('Storms Above · Pure Zen Below')).toBeVisible()
+    expect(
+      screen.getByText('Flares Outside · Zero-G Peace Inside')
+    ).toBeVisible()
+    expect(screen.getByText('Magnetosphere Shield Engaged')).toBeVisible()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Restore Calm' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Restore Calm Orbit' }))
     expect(screen.getByText('Zero Manual Babysitting')).toBeVisible()
 
-    const koiBtn = screen.getByRole('button', {
-      name: 'Swim with the coral koi',
+    const paleBlueDotBtn = screen.getByRole('button', {
+      name: 'Focus on tiny you on the Pale Blue Dot',
     })
-    expect(koiBtn).toHaveAttribute('aria-pressed', 'false')
-    fireEvent.click(koiBtn)
-    expect(koiBtn).toHaveAttribute('aria-pressed', 'true')
-    expect(koiBtn).toHaveAttribute('data-swimming', 'true')
+    expect(paleBlueDotBtn).toHaveAttribute('aria-pressed', 'false')
     expect(
-      screen.getByRole('button', { name: /Feed Koi\s*·\s*1/i })
+      screen.queryByRole('button', { name: 'Reset 3D View' })
+    ).not.toBeInTheDocument()
+
+    fireEvent.click(paleBlueDotBtn)
+    expect(paleBlueDotBtn).toHaveAttribute('aria-pressed', 'true')
+    expect(paleBlueDotBtn).toHaveAttribute('data-orbiting', 'true')
+    expect(
+      screen.getByRole('button', { name: /Pulse Cosmos\s*·\s*1/i })
     ).toBeVisible()
+    expect(
+      screen.getByText(
+        'Pale Blue Dot Capsule: Across 93 billion light-years, 429 rate-limits vanish at the shield—float back and daydream.'
+      )
+    ).toBeVisible()
+
+    const resetOrbitBtn = screen.getByRole('button', { name: 'Reset 3D View' })
+    expect(resetOrbitBtn).toBeVisible()
+    fireEvent.click(resetOrbitBtn)
+    expect(paleBlueDotBtn).toHaveAttribute('aria-pressed', 'false')
+    expect(
+      screen.queryByRole('button', { name: 'Reset 3D View' })
+    ).not.toBeInTheDocument()
 
     const protocolGroup = screen.getByRole('group', {
       name: 'Select ingress protocol',
@@ -136,10 +164,39 @@ describe('TidalAquariumStage', () => {
     expect(onProtocolChange).toHaveBeenCalledWith('claude')
     expect(screen.getByText('POST /v1/messages')).toBeVisible()
   })
+
+  it('enters custom 3D camera orbit when dragging across the cosmic viewport', () => {
+    const { container } = render(<CosmicSingularityStage mood='work' />)
+    const viewport = container.querySelector('.cosmic-imax-viewport')
+    expect(viewport).not.toBeNull()
+    if (!viewport) return
+
+    expect(
+      screen.queryByRole('button', { name: 'Reset 3D View' })
+    ).not.toBeInTheDocument()
+
+    fireEvent.pointerDown(viewport, {
+      button: 0,
+      pointerId: 1,
+      clientX: 200,
+      clientY: 200,
+    })
+    expect(viewport).toHaveAttribute('data-dragging', 'true')
+
+    fireEvent.pointerMove(viewport, {
+      pointerId: 1,
+      clientX: 268,
+      clientY: 172,
+    })
+    fireEvent.pointerUp(viewport, { pointerId: 1 })
+
+    expect(viewport).toHaveAttribute('data-dragging', 'false')
+    expect(screen.getByRole('button', { name: 'Reset 3D View' })).toBeVisible()
+  })
 })
 
 describe('Hero', () => {
-  it('switches between Work Mode and Loaf Mode and updates sanctuary copy', () => {
+  it('switches between Work Mode and Loaf Mode and updates cosmic observatory copy', () => {
     render(<ControlledHero />)
 
     const moodGroup = screen.getByRole('group', {
@@ -153,14 +210,17 @@ describe('Hero', () => {
     })
 
     expect(workBtn).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByText('40+ Models Standing By')).toBeVisible()
+    expect(screen.getByText('40+ Star Systems Standing By')).toBeVisible()
+    expect(
+      screen.getByText('Singularity Roaring · Tiny Speck Unwinding')
+    ).toBeVisible()
 
     fireEvent.click(loafBtn)
     expect(loafBtn).toHaveAttribute('aria-pressed', 'true')
     expect(workBtn).toHaveAttribute('aria-pressed', 'false')
     expect(screen.getByText('Paid Daydreaming Cleared')).toBeVisible()
     expect(
-      screen.getByText('Loafing Sanctuary On · AI Running the Shift')
+      screen.getByText('Time Dilation On · AI Starfleet Running the Shift')
     ).toBeVisible()
   })
 })

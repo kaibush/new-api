@@ -52,19 +52,18 @@ export interface TidalUpstreamBuoy {
   dutyKey: string
 }
 
-export interface KoiSpiritSpec {
-  id: 'coral' | 'jade' | 'gold' | 'indigo'
+export interface CosmicLandmarkSpec {
+  id: 'singularity' | 'dyson' | 'stargate' | 'pale-blue-dot'
+  code: string
+  shortTagKey: string
   labelKey: string
   whisperKey: string
   left: string
   top: string
-  widthClass: string
-  glideClass: string
-  flipX?: boolean
-  bodyPrimary: string
-  bodySecondary: string
-  patchColor: string
-  finTint: string
+  targetYaw: number
+  targetPitch: number
+  accentColor: string
+  isHumanObserver?: boolean
 }
 
 export interface GatewaySpecItem {
@@ -142,8 +141,8 @@ export const TIDAL_UPSTREAMS: readonly TidalUpstreamBuoy[] = [
     id: 'openai',
     name: 'OpenAI',
     iconKey: 'OpenAI',
-    accentLight: '#0a8770',
-    accentDark: '#2dd4bf',
+    accentLight: '#0284c7',
+    accentDark: '#38bdf8',
     sampleModel: 'gpt-5',
     dutyKey: 'Handling daily reasoning on autopilot',
   },
@@ -151,8 +150,8 @@ export const TIDAL_UPSTREAMS: readonly TidalUpstreamBuoy[] = [
     id: 'claude',
     name: 'Claude',
     iconKey: 'Claude.Color',
-    accentLight: '#df4d26',
-    accentDark: '#ff6e42',
+    accentLight: '#d97706',
+    accentDark: '#fbbf24',
     sampleModel: 'claude-sonnet-4',
     dutyKey: 'Writing clean code while you stretch',
   },
@@ -160,8 +159,8 @@ export const TIDAL_UPSTREAMS: readonly TidalUpstreamBuoy[] = [
     id: 'gemini',
     name: 'Gemini',
     iconKey: 'Gemini.Color',
-    accentLight: '#2563eb',
-    accentDark: '#60a5fa',
+    accentLight: '#6366f1',
+    accentDark: '#a78bfa',
     sampleModel: 'gemini-2.5-pro',
     dutyKey: 'Digesting million-token docs calmly',
   },
@@ -169,78 +168,74 @@ export const TIDAL_UPSTREAMS: readonly TidalUpstreamBuoy[] = [
     id: 'deepseek',
     name: 'DeepSeek',
     iconKey: 'DeepSeek.Color',
-    accentLight: '#c47a10',
-    accentDark: '#fbbf24',
+    accentLight: '#0d9488',
+    accentDark: '#2dd4bf',
     sampleModel: 'deepseek-reasoner',
     dutyKey: 'Deep thinking so your brain can rest',
   },
 ] as const
 
-export const KOI_SPIRITS: readonly KoiSpiritSpec[] = [
+export const COSMIC_LANDMARKS: readonly CosmicLandmarkSpec[] = [
   {
-    id: 'coral',
-    labelKey: 'Swim with the coral koi',
-    whisperKey: 'Kohaku koi says: 40+ channels healthy, go pour a cup of tea.',
-    left: '8%',
-    top: '28%',
-    widthClass: 'w-[126px] sm:w-[158px]',
-    glideClass: 'tidal-koi-glide-coral',
-    bodyPrimary: '#fff8f1',
-    bodySecondary: '#ffd9c7',
-    patchColor: '#ee5228',
-    finTint: '#ff8e6b',
+    id: 'singularity',
+    code: '1.0 Rs',
+    shortTagKey: 'Singularity Core',
+    labelKey: 'Gaze at the Singularity Core',
+    whisperKey:
+      'Event Horizon reports: 40+ star systems healthy—your sprint workload is cosmic dust, go steep a cup of tea.',
+    left: '34%',
+    top: '44%',
+    targetYaw: -0.22,
+    targetPitch: 0.36,
+    accentColor: '#38bdf8',
   },
   {
-    id: 'jade',
-    labelKey: 'Swim with the jade koi',
+    id: 'dyson',
+    code: '3.8 Rs',
+    shortTagKey: 'Dyson Ring',
+    labelKey: 'Scan the Dyson Relay Ring',
     whisperKey:
-      'Celadon koi says: Token billing is settled to the cent—zero spreadsheets tonight.',
+      'Dyson Relay Ring reports: Token billing is settled to the micro-unit—zero Excel nights in this galaxy.',
+    left: '13%',
+    top: '63%',
+    targetYaw: 0.38,
+    targetPitch: 0.44,
+    accentColor: '#fbbf24',
+  },
+  {
+    id: 'stargate',
+    code: '5.1 Rs',
+    shortTagKey: 'Star-Gate',
+    labelKey: 'Lock onto the Deep-Space Star-Gate',
+    whisperKey:
+      'Deep-Space Star-Gate reports: Async video & image jobs are polling across light-years in the background.',
     left: '56%',
-    top: '48%',
-    widthClass: 'w-[108px] sm:w-[136px]',
-    glideClass: 'tidal-koi-glide-jade',
-    flipX: true,
-    bodyPrimary: '#e4fbf6',
-    bodySecondary: '#99f6e4',
-    patchColor: '#0d9488',
-    finTint: '#5eead4',
+    top: '21%',
+    targetYaw: -0.44,
+    targetPitch: 0.2,
+    accentColor: '#a78bfa',
   },
   {
-    id: 'gold',
-    labelKey: 'Swim with the golden koi',
+    id: 'pale-blue-dot',
+    code: '10⁻²⁴',
+    shortTagKey: 'You (On Break)',
+    labelKey: 'Focus on tiny you on the Pale Blue Dot',
     whisperKey:
-      'Amber koi says: Async video & image jobs are polling in the background.',
-    left: '40%',
-    top: '13%',
-    widthClass: 'w-[86px] sm:w-[108px]',
-    glideClass: 'tidal-koi-glide-gold',
-    bodyPrimary: '#fffbeb',
-    bodySecondary: '#fde68a',
-    patchColor: '#d97706',
-    finTint: '#fbbf24',
-  },
-  {
-    id: 'indigo',
-    labelKey: 'Swim with the indigo koi',
-    whisperKey:
-      'Starlight koi says: Rate limits auto-reroute upstairs; the water stays still.',
-    left: '19%',
-    top: '64%',
-    widthClass: 'w-[78px] sm:w-[96px]',
-    glideClass: 'tidal-koi-glide-indigo',
-    flipX: true,
-    bodyPrimary: '#eff6ff',
-    bodySecondary: '#bfdbfe',
-    patchColor: '#3b82f6',
-    finTint: '#93c5fd',
+      'Pale Blue Dot Capsule: Across 93 billion light-years, 429 rate-limits vanish at the shield—float back and daydream.',
+    left: '74%',
+    top: '57%',
+    targetYaw: 0.52,
+    targetPitch: 0.14,
+    accentColor: '#34d399',
+    isHumanObserver: true,
   },
 ] as const
 
-export const POND_FEED_WHISPERS: readonly string[] = [
-  'Gateway absorbed 100% of protocol translation—enjoy five quiet minutes.',
-  'Upstream 429s bounce off the surface shield; nothing reaches the pond.',
-  'Claude is refactoring the module; you are officially cleared to daydream.',
-  'Every API key is scoped and budgeted—sleep soundly tonight.',
+export const COSMIC_RADIO_WHISPERS: readonly string[] = [
+  'Across 93 billion light-years of cosmos, your busywork is a single photon—let the gateway carry it.',
+  'Upstream 429 solar flares deflect off the magnetosphere; your zero-G tea stays warm.',
+  'Gravitational time dilation active: AI finished the refactor while you took one slow breath.',
+  'Every API key is scoped and budgeted across orbits—drift off on time tonight.',
 ] as const
 
 export const TIDAL_SPECS: readonly GatewaySpecItem[] = [

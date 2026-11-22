@@ -60,7 +60,7 @@ export function CTA(props: CTAProps) {
           animation='fade-up'
           className='tidal-sanctuary-monolith relative overflow-hidden rounded-3xl px-6 py-16 sm:px-12 sm:py-20 lg:px-20'
         >
-          {/* Bioluminescent Tidal Arc + Twin Yin-Yang Koi Emblem */}
+          {/* Event-Horizon Relativistic Eclipse Arc */}
           <svg
             aria-hidden='true'
             viewBox='0 0 1200 260'
@@ -69,29 +69,29 @@ export function CTA(props: CTAProps) {
           >
             <defs>
               <linearGradient
-                id='cta-tidal-arc'
+                id='cta-eclipse-arc'
                 x1='0%'
                 y1='0%'
                 x2='100%'
                 y2='0%'
               >
-                <stop offset='0%' stopColor='#2dd4bf' stopOpacity='0' />
-                <stop offset='28%' stopColor='#2dd4bf' stopOpacity='0.75' />
-                <stop offset='52%' stopColor='#fbbf24' stopOpacity='0.9' />
-                <stop offset='75%' stopColor='#ff6e42' stopOpacity='0.75' />
-                <stop offset='100%' stopColor='#60a5fa' stopOpacity='0' />
+                <stop offset='0%' stopColor='#38bdf8' stopOpacity='0' />
+                <stop offset='26%' stopColor='#38bdf8' stopOpacity='0.78' />
+                <stop offset='50%' stopColor='#fbbf24' stopOpacity='0.95' />
+                <stop offset='74%' stopColor='#a78bfa' stopOpacity='0.78' />
+                <stop offset='100%' stopColor='#fb7185' stopOpacity='0' />
               </linearGradient>
             </defs>
             <path
               d='M 0 185 Q 600 -5 1200 185'
               fill='none'
-              stroke='url(#cta-tidal-arc)'
-              strokeWidth='1.6'
+              stroke='url(#cta-eclipse-arc)'
+              strokeWidth='1.8'
             />
             <path
               d='M 120 225 Q 600 50 1080 225'
               fill='none'
-              stroke='url(#cta-tidal-arc)'
+              stroke='url(#cta-eclipse-arc)'
               strokeOpacity='0.32'
               strokeWidth='1'
               strokeDasharray='4 8'
@@ -99,45 +99,62 @@ export function CTA(props: CTAProps) {
           </svg>
 
           <div className='relative z-10 mx-auto max-w-3xl text-center'>
-            {/* Luminous Twin-Koi Pearl Medallion */}
+            {/* Singularity Photon-Ring & Pale-Blue-Dot Orbital Medallion */}
             <div
               aria-hidden='true'
-              className='mx-auto mb-5 flex size-12 items-center justify-center rounded-full border border-teal-300/25 bg-teal-400/10 shadow-[0_0_32px_rgba(45,212,191,0.28)]'
+              className='mx-auto mb-5 flex size-12 items-center justify-center rounded-full border border-sky-300/30 bg-sky-400/10 shadow-[0_0_36px_rgba(56,189,248,0.3)]'
             >
               <svg viewBox='0 0 48 48' fill='none' className='size-7'>
-                <circle cx='24' cy='24' r='3.2' fill='#fbbf24' />
-                <path
-                  d='M 24 9 C 33 9 39 16 37 25 C 34 19 29 15 24 14 Z'
-                  fill='#2dd4bf'
+                <ellipse
+                  cx='24'
+                  cy='24'
+                  rx='18'
+                  ry='7.5'
+                  transform='rotate(-22 24 24)'
+                  stroke='#38bdf8'
+                  strokeOpacity='0.65'
+                  strokeWidth='1.4'
                 />
-                <path
-                  d='M 24 39 C 15 39 9 32 11 23 C 14 29 19 33 24 34 Z'
-                  fill='#ff6e42'
+                <circle
+                  cx='24'
+                  cy='24'
+                  r='7.2'
+                  fill='#030712'
+                  stroke='#fbbf24'
+                  strokeWidth='1.7'
+                />
+                <circle cx='39.5' cy='18' r='2.4' fill='#7dd3fc' />
+                <circle
+                  cx='39.5'
+                  cy='18'
+                  r='4.6'
+                  fill='#38bdf8'
+                  fillOpacity='0.28'
                 />
               </svg>
             </div>
 
-            <p className='mb-4 font-mono text-[11px] font-medium tracking-[0.22em] text-teal-200/75 uppercase'>
+            <p className='mb-4 font-mono text-[11px] font-medium tracking-[0.22em] text-sky-200/80 uppercase'>
               <span className='text-[#fbbf24]'>04</span>
               <span className='mx-2 opacity-40'>//</span>
-              {t('Clock Out on Time')}
+              {t('Clock Out Across Light-Years')}
             </p>
 
             <h2
               id='home-cta-heading'
-              className='text-3xl leading-[1.16] font-semibold tracking-[-0.025em] text-[#f4f7f6] sm:text-5xl'
+              className='text-3xl leading-[1.16] font-semibold tracking-[-0.025em] text-[#f8fafc] sm:text-5xl'
             >
               <span className='block'>
-                {t('Leave the rush above the waterline.')}
+                {t('Let a universe of compute roar for you.')}
               </span>
-              <span className='tidal-serif mt-1.5 block font-normal text-[#99f6e4] italic'>
-                {t('Dive into your own quiet hour.')}
+              <span className='tidal-serif mt-1.5 block font-normal text-[#bae6fd] italic'>
+                {t('Drift into your own quiet orbit.')}
               </span>
             </h2>
 
             <p className='mx-auto mt-5 max-w-lg text-sm leading-7 text-balance text-slate-300/85 sm:text-base'>
               {t(
-                'Deploy one unified AI gateway to route, meter, and guard 40+ frontier models around the clock—less busywork, more breathing room.'
+                'Deploy one unified AI gateway to route, meter, and guard 40+ model star systems around the clock—humanity stays tiny, carefree, and home on time.'
               )}
             </p>
 
@@ -145,7 +162,7 @@ export function CTA(props: CTAProps) {
               {props.isAuthenticated ? (
                 <Button
                   size='lg'
-                  className='group h-11 rounded-xl bg-[#f4f7f6] px-6 text-sm font-medium text-[#07111a] hover:bg-white'
+                  className='group h-11 rounded-xl bg-[#f8fafc] px-6 text-sm font-medium text-[#040814] hover:bg-white'
                   render={<Link to='/dashboard' />}
                 >
                   {t('Go to Dashboard')}
@@ -157,7 +174,7 @@ export function CTA(props: CTAProps) {
               ) : (
                 <Button
                   size='lg'
-                  className='group h-11 rounded-xl bg-[#f4f7f6] px-6 text-sm font-medium text-[#07111a] hover:bg-white'
+                  className='group h-11 rounded-xl bg-[#f8fafc] px-6 text-sm font-medium text-[#040814] hover:bg-white'
                   render={<Link to='/sign-up' />}
                 >
                   {t('Get Started')}
@@ -171,7 +188,7 @@ export function CTA(props: CTAProps) {
               <Button
                 size='lg'
                 variant='outline'
-                className='h-11 rounded-xl border-teal-200/20 bg-white/5 px-5 text-sm font-medium text-[#f4f7f6] hover:bg-white/12 hover:text-white'
+                className='h-11 rounded-xl border-sky-200/20 bg-white/5 px-5 text-sm font-medium text-[#f8fafc] hover:bg-white/12 hover:text-white'
                 render={<Link to='/pricing' />}
               >
                 {t('View Pricing')}
@@ -198,12 +215,12 @@ export function CTA(props: CTAProps) {
               </Button>
             </div>
 
-            <div className='mt-12 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 border-t border-teal-200/12 pt-6 font-mono text-[11px] text-slate-300/65'>
+            <div className='mt-12 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 border-t border-sky-200/12 pt-6 font-mono text-[11px] text-slate-300/65'>
               {STACK_FOOTPRINT.map((item) => (
                 <span key={item} className='flex items-center gap-2'>
                   <span
                     aria-hidden='true'
-                    className='size-1 rounded-full bg-[#2dd4bf]/80'
+                    className='size-1 rounded-full bg-[#38bdf8]/80'
                   />
                   {item}
                 </span>

@@ -31,8 +31,8 @@ import { useStatus } from '@/hooks/use-status'
 import { cn } from '@/lib/utils'
 
 import type { HomeMood, ProtocolId } from '../../constants'
+import { CosmicSingularityStage } from '../cosmic-singularity-stage'
 import { HeroButtons } from '../hero-buttons'
-import { TidalAquariumStage } from '../tidal-aquarium-stage'
 
 interface HeroProps {
   className?: string
@@ -60,23 +60,22 @@ export function Hero(props: HeroProps) {
     <section
       aria-labelledby='tidal-hero-heading'
       className={cn(
-        'relative overflow-hidden pt-8 pb-16 sm:pt-12 lg:pt-14 lg:pb-24',
+        'relative overflow-hidden pt-8 pb-16 sm:pt-11 lg:pt-12 lg:pb-24',
         props.className
       )}
     >
-      {/* Concentric water-ripple contours & bioluminescent caustic pools */}
       <div
         aria-hidden='true'
-        className='tidal-water-contours pointer-events-none absolute inset-0'
+        className='cosmic-orbital-grid pointer-events-none absolute inset-0'
       />
       <div
         aria-hidden='true'
-        className='tidal-hero-atmosphere pointer-events-none absolute inset-0'
+        className='cosmic-hero-nebula pointer-events-none absolute inset-0'
       />
 
       <div className='relative z-10 mx-auto max-w-7xl px-6 sm:px-8'>
-        {/* Top Tidal Horizon Bar + Interactive Work / Loaf Mode Switch */}
-        <div className='tidal-hairline-border mb-10 flex flex-wrap items-center justify-between gap-3 border-b pb-4 lg:mb-12'>
+        {/* Top Deep-Space Horizon Bar + Interactive Work / Loaf Mode Switch */}
+        <div className='tidal-hairline-border mb-9 flex flex-wrap items-center justify-between gap-3 border-b pb-4 lg:mb-11'>
           <div className='flex items-center gap-2.5 font-mono text-[11px] tracking-[0.16em] uppercase'>
             <span
               aria-hidden='true'
@@ -85,7 +84,7 @@ export function Hero(props: HeroProps) {
             <span className='font-semibold'>{systemName}</span>
             <span className='text-muted-foreground/45'>/</span>
             <span className='text-muted-foreground'>
-              {t('Above-Water AI Engine · Below-Water Koi Sanctuary')}
+              {t('Galactic Compute Roaring · Cosmic Speck Unwinding')}
             </span>
           </div>
 
@@ -115,7 +114,7 @@ export function Hero(props: HeroProps) {
               className={cn(
                 'inline-flex cursor-pointer items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-all outline-none focus-visible:ring-2 focus-visible:ring-ring',
                 props.mood === 'loaf'
-                  ? 'bg-[var(--tidal-jade)] text-white shadow-2xs dark:text-slate-950'
+                  ? 'bg-[var(--tidal-gold)] text-white shadow-2xs dark:text-slate-950'
                   : 'text-muted-foreground hover:text-foreground'
               )}
             >
@@ -125,24 +124,23 @@ export function Hero(props: HeroProps) {
           </div>
         </div>
 
-        {/* Main Asymmetric 12-Column Split */}
-        <div className='grid items-center gap-12 lg:grid-cols-12 lg:gap-10'>
-          {/* Left 5 Columns: "工作有条理，摸鱼有底气。" */}
-          <div className='min-w-0 lg:col-span-5'>
-            <div className='mb-6 flex flex-wrap items-center gap-2.5'>
-              <span className='font-mono text-[11px] font-medium tracking-[0.18em] text-[var(--tidal-coral)] uppercase'>
-                00 // {t('A little time, just for you')}
+        {/* Wide 12-Column Editorial Masthead */}
+        <div className='grid items-end gap-8 lg:grid-cols-12 lg:gap-10'>
+          <div className='min-w-0 lg:col-span-7'>
+            <div className='mb-5 flex flex-wrap items-center gap-2.5'>
+              <span className='font-mono text-[11px] font-medium tracking-[0.18em] text-[var(--tidal-gold)] uppercase'>
+                00 // {t('Before the vast cosmos, claim a quiet hour')}
               </span>
-              <span className='rounded-full border border-[var(--tidal-jade)]/30 bg-[var(--tidal-jade-soft)] px-2.5 py-0.5 font-mono text-[10px] font-medium text-teal-800 dark:text-teal-200'>
+              <span className='rounded-full border border-[var(--tidal-jade)]/30 bg-[var(--tidal-jade-soft)] px-2.5 py-0.5 font-mono text-[10px] font-medium text-sky-800 dark:text-sky-200'>
                 {props.mood === 'loaf'
                   ? t('Paid Daydreaming Cleared')
-                  : t('40+ Models Standing By')}
+                  : t('40+ Star Systems Standing By')}
               </span>
             </div>
 
             <h1
               id='tidal-hero-heading'
-              className='text-[clamp(2.55rem,4.7vw,4.35rem)] leading-[1.12] font-semibold tracking-[-0.03em]'
+              className='text-[clamp(2.65rem,5vw,4.6rem)] leading-[1.08] font-semibold tracking-[-0.032em]'
             >
               <span className='block'>{t('Work in order.')}</span>
               <span className='relative mt-2 inline-block'>
@@ -151,42 +149,45 @@ export function Hero(props: HeroProps) {
                 </span>
                 <svg
                   aria-hidden='true'
-                  viewBox='0 0 280 16'
+                  viewBox='0 0 300 18'
                   fill='none'
                   preserveAspectRatio='none'
-                  className='mt-1 h-3 w-full'
+                  className='mt-1.5 h-3.5 w-full'
                 >
                   <path
-                    d='M 3 9 Q 48 2 94 9 T 186 9 T 277 8'
-                    stroke='url(#hero-wave-stroke)'
-                    strokeWidth='3'
+                    d='M 4 14 Q 150 -2 296 14'
+                    stroke='url(#hero-orbit-stroke)'
+                    strokeWidth='2.5'
                     strokeLinecap='round'
                   />
+                  <circle cx='236' cy='8' r='2.8' fill='var(--tidal-gold)' />
                   <defs>
                     <linearGradient
-                      id='hero-wave-stroke'
+                      id='hero-orbit-stroke'
                       x1='0%'
                       y1='0%'
                       x2='100%'
                       y2='0%'
                     >
                       <stop offset='0%' stopColor='var(--tidal-jade)' />
-                      <stop offset='50%' stopColor='var(--tidal-gold)' />
-                      <stop offset='100%' stopColor='var(--tidal-coral)' />
+                      <stop offset='52%' stopColor='var(--tidal-gold)' />
+                      <stop offset='100%' stopColor='var(--tidal-indigo)' />
                     </linearGradient>
                   </defs>
                 </svg>
               </span>
             </h1>
 
-            <p className='text-muted-foreground mt-6 max-w-xl text-base leading-7 text-balance sm:text-[1.04rem]'>
+            <p className='text-muted-foreground mt-5 max-w-2xl text-base leading-7 text-balance sm:text-[1.05rem]'>
               {t(
-                'Models, accounts, and inspiration, all in one place. Let AI handle the busywork. Take a little time for yourself.'
+                'Trillions of tokens surge across orbital AI star systems while you float easy in one quiet corner of the galaxy. Models, accounts, and inspiration in one place—let the cosmos handle the busywork, and keep the afternoon for yourself.'
               )}
             </p>
+          </div>
 
-            {/* Live Copyable Gateway Endpoint Pill */}
-            <div className='tidal-hairline-border bg-background/85 mt-7 flex max-w-md items-center justify-between gap-2 rounded-xl border p-1.5 pl-3.5 shadow-2xs backdrop-blur-md dark:bg-[#0b1623]/90'>
+          {/* Right 5 Columns: Mission-Control Endpoint & Launch Actions */}
+          <div className='min-w-0 lg:col-span-5 lg:pb-1'>
+            <div className='tidal-hairline-border bg-background/85 flex w-full items-center justify-between gap-2 rounded-xl border p-1.5 pl-3.5 shadow-2xs backdrop-blur-md dark:bg-[#091122]/90'>
               <div className='flex min-w-0 items-center gap-2.5 font-mono text-xs'>
                 <span className='text-muted-foreground bg-muted shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase'>
                   BASE URL
@@ -206,15 +207,14 @@ export function Hero(props: HeroProps) {
               />
             </div>
 
-            <div className='mt-7'>
+            <div className='mt-5'>
               <HeroButtons
                 isAuthenticated={props.isAuthenticated}
                 docsUrl={docsUrl}
               />
             </div>
 
-            {/* 4 Modality Chips honoring the original homepage */}
-            <ul className='tidal-hairline-border text-muted-foreground mt-8 flex flex-wrap items-center gap-x-5 gap-y-2.5 border-t pt-5 text-xs'>
+            <ul className='tidal-hairline-border text-muted-foreground mt-6 flex flex-wrap items-center gap-x-5 gap-y-2.5 border-t pt-4 text-xs'>
               <li className='flex items-center gap-2'>
                 <span
                   aria-hidden='true'
@@ -253,15 +253,15 @@ export function Hero(props: HeroProps) {
               </li>
             </ul>
           </div>
+        </div>
 
-          {/* Right 7 Columns: Tidal Ecological Aquarium Stage */}
-          <div className='min-w-0 lg:col-span-7'>
-            <TidalAquariumStage
-              mood={props.mood}
-              selectedProtocolId={props.selectedProtocolId}
-              onProtocolChange={props.onProtocolChange}
-            />
-          </div>
+        {/* Full-Width 12-Column Panoramic 21:9 3D Cosmic Singularity Observatory */}
+        <div className='mt-10 lg:mt-12'>
+          <CosmicSingularityStage
+            mood={props.mood}
+            selectedProtocolId={props.selectedProtocolId}
+            onProtocolChange={props.onProtocolChange}
+          />
         </div>
       </div>
     </section>

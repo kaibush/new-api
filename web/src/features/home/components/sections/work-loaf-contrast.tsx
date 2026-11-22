@@ -31,6 +31,8 @@ import { AnimateInView } from '@/components/animate-in-view'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 
+import { CosmicTiltCard } from '../cosmic-tilt-card'
+
 interface WorkLoafContrastProps {
   className?: string
 }
@@ -44,7 +46,7 @@ const ROUTING_LANES = [
     barWidth: 'w-3/5',
     statusKey: 'ACTIVE',
     barColor: 'bg-[var(--tidal-jade)]',
-    statusColor: 'text-emerald-700 dark:text-teal-300',
+    statusColor: 'text-sky-700 dark:text-sky-300',
   },
   {
     id: 'balanced-pool',
@@ -54,7 +56,7 @@ const ROUTING_LANES = [
     barWidth: 'w-2/5',
     statusKey: 'ACTIVE',
     barColor: 'bg-[var(--tidal-indigo)]',
-    statusColor: 'text-blue-700 dark:text-blue-300',
+    statusColor: 'text-indigo-700 dark:text-indigo-300',
   },
   {
     id: 'fallback-pool',
@@ -125,14 +127,14 @@ export function WorkLoafContrast(props: WorkLoafContrastProps) {
             <p className='text-muted-foreground mb-4 font-mono text-[11px] font-medium tracking-[0.2em] uppercase'>
               <span className='text-[var(--tidal-coral)]'>01</span>
               <span className='mx-2 opacity-40'>//</span>
-              {t('Division of Labor')}
+              {t('Cosmic Division of Labor')}
             </p>
             <h2
               id='work-loaf-heading'
               className='text-3xl leading-[1.15] font-semibold tracking-[-0.025em] sm:text-4xl lg:text-[2.75rem]'
             >
               <span className='block'>
-                {t('Leave the grunt work to the gateway.')}
+                {t('Leave the galactic roar to the gateway.')}
               </span>
               <span className='tidal-serif tidal-loaf-headline mt-1 block font-normal italic'>
                 {t('Keep the unhurried hours for yourself.')}
@@ -141,7 +143,7 @@ export function WorkLoafContrast(props: WorkLoafContrastProps) {
           </div>
           <p className='text-muted-foreground max-w-md text-sm leading-6 text-balance lg:text-right'>
             {t(
-              'Less busywork. More breathing room. Every headache of running multi-provider AI in production is handled automatically upstairs.'
+              'Across 93 billion light-years of scale, production AI headaches shrink to stardust—handled automatically in orbit while you lean back on Earth.'
             )}
           </p>
         </AnimateInView>
@@ -149,9 +151,9 @@ export function WorkLoafContrast(props: WorkLoafContrastProps) {
         {/* Asymmetric 12-Col Dual-World Bento (7+5 / 5+7) */}
         <div className='grid gap-5 lg:grid-cols-12'>
           {/* Card 1 (7 cols): Auto-Failover so your tea never gets cold */}
-          <AnimateInView
-            animation='fade-up'
-            className='tidal-surface flex flex-col justify-between rounded-2xl border p-6 sm:p-7 lg:col-span-7'
+          <CosmicTiltCard
+            wrapperClassName='lg:col-span-7'
+            className='tidal-surface flex flex-col justify-between rounded-2xl border p-6 sm:p-7'
           >
             <div>
               <div className='flex flex-wrap items-center justify-between gap-2'>
@@ -164,7 +166,7 @@ export function WorkLoafContrast(props: WorkLoafContrastProps) {
                 </div>
                 <Badge
                   variant='outline'
-                  className='rounded-full border-[var(--tidal-jade)]/30 bg-[var(--tidal-jade-soft)] font-mono text-[10px] text-teal-800 dark:text-teal-200'
+                  className='rounded-full border-[var(--tidal-jade)]/30 bg-[var(--tidal-jade-soft)] font-mono text-[10px] text-sky-800 dark:text-sky-200'
                 >
                   <Coffee aria-hidden='true' className='mr-1 size-3' />
                   {t('Tea Stays Warm')}
@@ -180,7 +182,7 @@ export function WorkLoafContrast(props: WorkLoafContrastProps) {
               </p>
             </div>
 
-            <div className='tidal-hairline-border bg-background/75 mt-7 space-y-3 rounded-xl border p-4 dark:bg-[#081320]'>
+            <div className='tidal-hairline-border bg-background/75 mt-7 space-y-3 rounded-xl border p-4 dark:bg-[#060b18]'>
               <div className='text-muted-foreground flex items-center justify-between font-mono text-[10px] tracking-[0.14em] uppercase'>
                 <span>{t('Channel Pool Allocation')}</span>
                 <span>{t('Priority · Weight')}</span>
@@ -218,13 +220,13 @@ export function WorkLoafContrast(props: WorkLoafContrastProps) {
                 </div>
               ))}
             </div>
-          </AnimateInView>
+          </CosmicTiltCard>
 
           {/* Card 2 (5 cols): Atomic Ledger so no end-of-month Excel misery */}
-          <AnimateInView
-            animation='fade-up'
+          <CosmicTiltCard
             delay={60}
-            className='tidal-surface flex flex-col justify-between rounded-2xl border p-6 sm:p-7 lg:col-span-5'
+            wrapperClassName='lg:col-span-5'
+            className='tidal-surface flex flex-col justify-between rounded-2xl border p-6 sm:p-7'
           >
             <div>
               <div className='flex items-center justify-between gap-2'>
@@ -249,10 +251,10 @@ export function WorkLoafContrast(props: WorkLoafContrastProps) {
               </p>
             </div>
 
-            <div className='tidal-hairline-border bg-background/75 mt-7 rounded-xl border p-4 font-mono text-xs dark:bg-[#081320]'>
+            <div className='tidal-hairline-border bg-background/75 mt-7 rounded-xl border p-4 font-mono text-xs dark:bg-[#060b18]'>
               <div className='tidal-hairline-border text-muted-foreground flex items-center justify-between border-b pb-2.5 text-[10px] tracking-[0.14em] uppercase'>
                 <span>{t('Auto-Settled Receipt')}</span>
-                <span className='text-emerald-700 dark:text-teal-300'>
+                <span className='text-emerald-700 dark:text-emerald-300'>
                   ATOMIC
                 </span>
               </div>
@@ -268,7 +270,7 @@ export function WorkLoafContrast(props: WorkLoafContrastProps) {
                   <span className='text-muted-foreground'>
                     {t('Cache Read Hit')}
                   </span>
-                  <span className='text-emerald-700 tabular-nums dark:text-teal-300'>
+                  <span className='text-emerald-700 tabular-nums dark:text-emerald-300'>
                     980 · -75%
                   </span>
                 </div>
@@ -289,13 +291,13 @@ export function WorkLoafContrast(props: WorkLoafContrastProps) {
                 </span>
               </div>
             </div>
-          </AnimateInView>
+          </CosmicTiltCard>
 
           {/* Card 3 (5 cols): One Scoped Key instead of 15 Vendor Logins */}
-          <AnimateInView
-            animation='fade-up'
+          <CosmicTiltCard
             delay={110}
-            className='tidal-surface flex flex-col justify-between rounded-2xl border p-6 sm:p-7 lg:col-span-5'
+            wrapperClassName='lg:col-span-5'
+            className='tidal-surface flex flex-col justify-between rounded-2xl border p-6 sm:p-7'
           >
             <div>
               <div className='text-muted-foreground flex items-center gap-2 font-mono text-[11px] tracking-[0.14em] uppercase'>
@@ -315,7 +317,7 @@ export function WorkLoafContrast(props: WorkLoafContrastProps) {
               </p>
             </div>
 
-            <div className='tidal-hairline-border bg-background/75 mt-7 rounded-xl border p-4 dark:bg-[#081320]'>
+            <div className='tidal-hairline-border bg-background/75 mt-7 rounded-xl border p-4 dark:bg-[#060b18]'>
               <div className='tidal-hairline-border bg-muted/30 flex items-center justify-between gap-2 rounded-lg border px-3 py-2 font-mono text-xs'>
                 <span className='flex items-center gap-2 truncate'>
                   <KeyRound
@@ -324,7 +326,7 @@ export function WorkLoafContrast(props: WorkLoafContrastProps) {
                   />
                   <span className='truncate'>sk-moyu-••••••••7f9a</span>
                 </span>
-                <span className='shrink-0 text-[10px] text-emerald-700 dark:text-teal-300'>
+                <span className='shrink-0 text-[10px] text-emerald-700 dark:text-emerald-300'>
                   {t('SCOPED')}
                 </span>
               </div>
@@ -344,13 +346,13 @@ export function WorkLoafContrast(props: WorkLoafContrastProps) {
                 ))}
               </div>
             </div>
-          </AnimateInView>
+          </CosmicTiltCard>
 
           {/* Card 4 (7 cols): Async Multimodal Jobs — Submit & Go Slack Off */}
-          <AnimateInView
-            animation='fade-up'
+          <CosmicTiltCard
             delay={150}
-            className='tidal-surface flex flex-col justify-between rounded-2xl border p-6 sm:p-7 lg:col-span-7'
+            wrapperClassName='lg:col-span-7'
+            className='tidal-surface flex flex-col justify-between rounded-2xl border p-6 sm:p-7'
           >
             <div className='flex items-start justify-between gap-4'>
               <div>
@@ -378,7 +380,7 @@ export function WorkLoafContrast(props: WorkLoafContrastProps) {
               </Badge>
             </div>
 
-            <div className='tidal-hairline-border bg-background/75 mt-7 rounded-xl border p-4 dark:bg-[#081320]'>
+            <div className='tidal-hairline-border bg-background/75 mt-7 rounded-xl border p-4 dark:bg-[#060b18]'>
               <div className='grid grid-cols-1 gap-3 sm:grid-cols-3'>
                 {TASK_STAGES.map((stage) => (
                   <div
@@ -416,7 +418,7 @@ export function WorkLoafContrast(props: WorkLoafContrastProps) {
                 ))}
               </div>
             </div>
-          </AnimateInView>
+          </CosmicTiltCard>
         </div>
       </div>
     </section>

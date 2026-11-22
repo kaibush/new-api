@@ -59,14 +59,14 @@ export function Stats(props: StatsProps) {
               <div className='text-muted-foreground flex items-center justify-between font-mono text-[11px] tracking-[0.16em]'>
                 <span>{spec.index}</span>
                 <span aria-hidden='true' className='opacity-40'>
-                  ~
+                  ✦
                 </span>
               </div>
 
               <div className='tidal-serif mt-3 flex items-baseline gap-1 text-4xl font-semibold tracking-tight tabular-nums sm:text-[2.65rem]'>
                 <span>{formatNumber(spec.value, locale)}</span>
                 {spec.suffix && (
-                  <span className='text-2xl font-normal text-[var(--tidal-coral)]'>
+                  <span className='text-2xl font-normal text-[var(--tidal-gold)]'>
                     {spec.suffix}
                   </span>
                 )}

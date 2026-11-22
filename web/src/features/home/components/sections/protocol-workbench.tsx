@@ -48,7 +48,7 @@ const ACCENT_STYLES: Record<
   jade: {
     bar: 'bg-[var(--tidal-jade)]',
     badge:
-      'border-[var(--tidal-jade)]/30 bg-[var(--tidal-jade-soft)] text-teal-800 dark:text-teal-200',
+      'border-[var(--tidal-jade)]/30 bg-[var(--tidal-jade-soft)] text-sky-800 dark:text-sky-200',
   },
   gold: {
     bar: 'bg-[var(--tidal-gold)]',
@@ -58,12 +58,12 @@ const ACCENT_STYLES: Record<
   coral: {
     bar: 'bg-[var(--tidal-coral)]',
     badge:
-      'border-[var(--tidal-coral)]/30 bg-[var(--tidal-coral-soft)] text-[#b83b18] dark:text-[#ff9c7d]',
+      'border-[var(--tidal-coral)]/30 bg-[var(--tidal-coral-soft)] text-rose-700 dark:text-rose-300',
   },
   indigo: {
     bar: 'bg-[var(--tidal-indigo)]',
     badge:
-      'border-[var(--tidal-indigo)]/30 bg-[var(--tidal-indigo-soft)] text-blue-700 dark:text-blue-300',
+      'border-[var(--tidal-indigo)]/30 bg-[var(--tidal-indigo-soft)] text-indigo-700 dark:text-indigo-300',
   },
 }
 
@@ -102,7 +102,7 @@ function tokenizeStrings(input: string, lineId: string): ReactNode {
         key={`${lineId}-t-${start}`}
         className={
           isJsonKey
-            ? 'text-teal-700 dark:text-teal-300'
+            ? 'text-sky-700 dark:text-sky-300'
             : 'text-amber-700 dark:text-amber-300'
         }
       >
@@ -149,9 +149,7 @@ function renderHighlightedLine(line: string, lineId: string): ReactNode {
   if (trimmed.startsWith('curl ')) {
     return (
       <>
-        <span className='font-medium text-emerald-700 dark:text-teal-300'>
-          curl
-        </span>
+        <span className='font-medium text-sky-700 dark:text-sky-300'>curl</span>
         <span className='text-foreground/95 font-medium'>{line.slice(4)}</span>
       </>
     )
@@ -403,7 +401,7 @@ export function ProtocolWorkbench(props: ProtocolWorkbenchProps) {
               <div className='bg-muted/20 p-4 sm:p-5 dark:bg-white/[0.015]'>
                 <div className='mb-3 flex flex-wrap items-center justify-between gap-2 font-mono text-[10px] tracking-[0.16em] uppercase'>
                   <span className='text-muted-foreground'>{t('Response')}</span>
-                  <span className='inline-flex items-center gap-1.5 text-emerald-700 dark:text-teal-300'>
+                  <span className='inline-flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300'>
                     <Radio aria-hidden='true' className='size-3' />
                     200 OK · {t(activeProtocol.usageSummaryKey)}
                   </span>

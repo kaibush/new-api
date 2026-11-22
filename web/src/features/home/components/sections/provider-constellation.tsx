@@ -104,15 +104,15 @@ export function ProviderConstellation(props: ProviderConstellationProps) {
             <p className='text-muted-foreground mb-4 font-mono text-[11px] font-medium tracking-[0.2em] uppercase'>
               <span className='text-[var(--tidal-gold)]'>03</span>
               <span className='mx-2 opacity-40'>//</span>
-              {t('Open Waters')}
+              {t('Deep-Space Star Atlas')}
             </p>
             <h2
               id='provider-constellation-heading'
               className='text-3xl leading-[1.15] font-semibold tracking-[-0.025em] sm:text-4xl lg:text-[2.75rem]'
             >
-              <span className='block'>{t('Forty-plus AI currents.')}</span>
+              <span className='block'>{t('Forty-plus AI star systems.')}</span>
               <span className='tidal-serif tidal-loaf-headline mt-1 block font-normal italic'>
-                {t('Swimming in one calm sea.')}
+                {t('Orbiting one calm horizon.')}
               </span>
             </h2>
           </div>
