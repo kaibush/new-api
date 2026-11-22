@@ -1007,20 +1007,20 @@ export function CosmicSingularityStage(props: CosmicSingularityStageProps) {
             <span className='cosmic-photon-spark absolute size-2 rounded-full bg-amber-300 shadow-[0_0_16px_#fbbf24]' />
           </div>
         ))}
+      </div>
 
-        {/* Bottom Deep-Space Loafing Radio Transmission Bar */}
-        <div className='pointer-events-none absolute inset-x-3 bottom-3 z-20 flex items-center justify-between gap-3 rounded-xl border border-white/14 bg-slate-950/76 px-4 py-2.5 text-xs text-slate-100 shadow-lg backdrop-blur-md sm:inset-x-5'>
-          <div className='flex min-w-0 items-center gap-2'>
-            <Radio
-              aria-hidden='true'
-              className='size-3.5 shrink-0 text-amber-300'
-            />
-            <span className='truncate'>{t(whisperKey)}</span>
-          </div>
-          <span className='hidden shrink-0 font-mono text-[10px] text-sky-300/90 md:inline'>
-            {t('Drag in 3D · Scroll to zoom · Double-click to dive')}
-          </span>
+      {/* Radio stays below the viewport so the cockpit console remains visible. */}
+      <div className='cosmic-hud-divider flex items-center justify-between gap-3 border-t bg-slate-950/76 px-4 py-2.5 text-xs leading-relaxed text-slate-100 sm:px-6'>
+        <div className='flex min-w-0 items-start gap-2'>
+          <Radio
+            aria-hidden='true'
+            className='mt-0.5 size-3.5 shrink-0 text-amber-300'
+          />
+          <span className='min-w-0 break-words'>{t(whisperKey)}</span>
         </div>
+        <span className='hidden shrink-0 font-mono text-[10px] text-sky-300/90 md:inline'>
+          {t('Drag in 3D · Scroll to zoom · Double-click to dive')}
+        </span>
       </div>
 
       {/* Protocol Switcher & Live Deep-Space Telemetry Footer */}

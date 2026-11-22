@@ -239,6 +239,40 @@ describe('CosmicSingularityStage', () => {
     expect(viewport).toHaveAttribute('data-dragging', 'false')
     expect(screen.getByRole('button', { name: 'Reset 3D View' })).toBeVisible()
   })
+
+  it('keeps radio messages outside the canvas and allows them to wrap in every camera view', () => {
+    const { container } = render(<CosmicSingularityStage mood='work' />)
+    const viewport = container.querySelector('.cosmic-imax-viewport')
+    const viewGroup = screen.getByRole('group', { name: 'Camera view' })
+
+    for (const view of [
+      {
+        label: 'Inside the Pod',
+        message:
+          'Pod Cabin: Tea floats past the canopy while the singularity relays every request outside.',
+      },
+      {
+        label: 'Galaxy Scale',
+        message:
+          'Galaxy Scale: Four spiral arms, one blinking pixel of you—the routes still settle themselves.',
+      },
+      {
+        label: 'Orbit View',
+        message:
+          'Across 93 billion light-years of cosmos, your busywork is a single photon—let the gateway carry it.',
+      },
+    ]) {
+      fireEvent.click(
+        within(viewGroup).getByRole('button', { name: view.label })
+      )
+
+      const message = screen.getByText(view.message)
+      expect(message).toBeVisible()
+      expect(viewport).not.toContainElement(message)
+      expect(message).toHaveClass('break-words')
+      expect(message).not.toHaveClass('truncate')
+    }
+  })
 })
 
 describe('Hero', () => {
