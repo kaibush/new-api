@@ -113,8 +113,10 @@ func (p *Plan) capture(c *gin.Context, group, model string, channelType int, bou
 		p.response = &responseCapture{socket: true}
 		return
 	}
-	p.response = &responseCapture{ResponseWriter: c.Writer}
-	c.Writer = p.response
+	service.WrapPublicErrorOutput(c, func(writer gin.ResponseWriter) gin.ResponseWriter {
+		p.response = &responseCapture{ResponseWriter: writer}
+		return p.response
+	})
 }
 
 // The record a report hook receives; docs/plugin-api/v1.md describes it.
@@ -317,6 +319,9 @@ func Report(c *gin.Context, format types.RelayFormat, info *relaycommon.RelayInf
 	job.record.Cost.USD = float64(job.record.Cost.Quota) / common.QuotaPerUnit
 	if apiErr != nil {
 		job.record.Error = newReportError(format, apiErr, common.UpstreamAddresses(c))
+	}
+	if public, ok := service.PublicErrorResult(c); ok {
+		job.record.Error = &reportError{Status: public.Status, Message: public.Message, Type: public.Type, Code: public.Code}
 	}
 	reports.push(job)
 }

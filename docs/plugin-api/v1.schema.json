@@ -216,7 +216,8 @@
           "submit-sse-delta@1",
           "json-order@1",
           "keyword-policy@1",
-          "user-allowlist@1"
+          "user-allowlist@1",
+          "error-response@1"
         ]
       }
     },
@@ -1341,6 +1342,13 @@
         }
       ],
       "description": "The result of a stage hook (ingress, request, outbound, egress)."
+    },
+    "errorResponseResult": {
+      "description": "Final public error decision. Replacement message is additionally limited to 4096 UTF-8 bytes by the host.",
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["action"], "properties": {"action": {"const": "continue"}}},
+        {"type": "object", "additionalProperties": false, "required": ["action", "message"], "properties": {"action": {"enum": ["replace", "redact"]}, "message": {"type": "string", "maxLength": 4096}}}
+      ]
     },
     "replyResult": {
       "oneOf": [

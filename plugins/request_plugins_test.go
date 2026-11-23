@@ -1,6 +1,7 @@
 package plugins_test
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -14,12 +15,17 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/pkg/errorfilter"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/pkg/requestpatch"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/requestplugin"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/request_plugin_setting"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -1559,4 +1565,306 @@ func BenchmarkRequestPolicyStructuredContext(b *testing.B) {
 			}
 		})
 	}
+}
+
+// errorMaskInstances installs normalized configs without a database; production
+// uses the same validation before publishing the immutable settings snapshot.
+func errorMaskInstances(t testing.TB, configs ...string) {
+	t.Helper()
+	plugin, ok := jsplugin.DefaultRegistry.GetIgnoringMasterSwitch("error-mask")
+	require.True(t, ok)
+	instances := make([]request_plugin_setting.Instance, 0, len(configs))
+	for i, raw := range configs {
+		validated, err := plugin.ValidateConfig([]byte(raw))
+		require.NoError(t, err)
+		instances = append(instances, request_plugin_setting.Instance{ID: fmt.Sprintf("mask-%d", i), Name: "Mask", Plugin: "error-mask", Enabled: true, Global: true, Config: validated})
+	}
+	previous := request_plugin_setting.GetInstances()
+	previousPolicy := setting.ErrorFilterConfig()
+	encoded, err := common.Marshal(instances)
+	require.NoError(t, err)
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: string(encoded), setting.ErrorFilterOptionKey: "{}"}))
+	t.Cleanup(func() {
+		encoded, err := common.Marshal(previous)
+		require.NoError(t, err)
+		require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: string(encoded), setting.ErrorFilterOptionKey: previousPolicy}))
+	})
+}
+
+func TestErrorMaskKeywordsAndOrdering(t *testing.T) {
+	errorMaskInstances(t, `{"keywords":" quota exceeded\r\nrate limit\n\n", "replacement":"Please retry"}`, `{"matchAll":true,"replacement":"Fallback"}`)
+	for _, tc := range []struct{ message, expected string }{
+		{"QUOTA EXCEEDED upstream", "Please retry"},
+		{"upstream rate limit reached", "Please retry"},
+		{"another error", "Fallback"},
+	} {
+		t.Run(tc.message, func(t *testing.T) {
+			result := requestplugin.DryRun(t.Context(), requestplugin.DryRunInput{Format: "openai", Model: "gpt", Body: []byte(`{}`), Error: &jsplugin.ErrorResponse{Status: 429, Message: tc.message}})
+			require.NotNil(t, result.Error)
+			assert.Equal(t, tc.expected, result.Error.Message)
+			assert.Equal(t, 429, result.Error.Status)
+			assert.Equal(t, "replace", result.Error.Action)
+		})
+	}
+}
+
+func TestErrorMaskScopeAndCase(t *testing.T) {
+	plugin, _ := jsplugin.DefaultRegistry.GetIgnoringMasterSwitch("error-mask")
+	for _, tc := range []struct {
+		config, message, code string
+		status                int
+		action                string
+	}{
+		{`{"keywords":"Limit", "caseSensitive":true}`, "limit", "", 429, "preserve"},
+		{`{"keywords":"Limit", "caseSensitive":true}`, "Limit", "", 429, "replace"},
+		{`{"keywords":"rate", "field":"code", "statuses":[429]}`, "unrelated", "rate_limit", 429, "replace"},
+		{`{"keywords":"rate", "field":"code", "statuses":[429]}`, "unrelated", "rate_limit", 500, "preserve"},
+		{`{"keywords":"\n  \n"}`, "anything", "", 500, "preserve"},
+	} {
+		t.Run(tc.config+tc.message+fmt.Sprint(tc.status), func(t *testing.T) {
+			validated, err := plugin.ValidateConfig([]byte(tc.config))
+			require.NoError(t, err)
+			result := requestplugin.DryRun(t.Context(), requestplugin.DryRunInput{Format: "openai", Model: "gpt", Body: []byte(`{}`), Instance: &request_plugin_setting.Instance{Plugin: "error-mask", Config: validated}, Error: &jsplugin.ErrorResponse{Status: tc.status, Message: tc.message, Code: tc.code}})
+			require.NotNil(t, result.Error)
+			assert.Equal(t, tc.action, result.Error.Action)
+		})
+	}
+}
+
+func TestErrorMaskHTTPAndStream(t *testing.T) {
+	errorMaskInstances(t, `{"keywords":"secret\nlimit", "replacement":"Try later"}`)
+	for _, tc := range []struct {
+		name, body string
+		status     int
+		stream     bool
+		expected   string
+	}{
+		{"openai", `{"error":{"message":"secret", "type":"vendor", "extra":"private"}, "debug":"private"}`, 429, false, `{"error":{"message":"Try later","type":"rate_limit_error"}}`},
+		{"claude", `{"type":"error","error":{"message":"limit", "type":"overloaded_error"}}`, 503, false, `{"type":"error","error":{"message":"Try later","type":"overloaded_error"}}`},
+		{"gemini", `{"error":{"message":"secret", "code":429, "status":"RESOURCE_EXHAUSTED"}}`, 429, false, `{"error":{"message":"Try later","code":429,"status":"RESOURCE_EXHAUSTED","type":"rate_limit_error"}}`},
+		{"success", `{"choices":[{"message":{"content":"secret"}}]}`, 200, false, `{"choices":[{"message":{"content":"secret"}}]}`},
+		{"sse", "data: {\"choices\":[{\"delta\":{\"content\":\"secret\"}}]}\n\ndata: {\"error\":{\"message\":\"secret\"}}\n\ndata: [DONE]\n\n", 200, true, "data: {\"choices\":[{\"delta\":{\"content\":\"secret\"}}]}\n\ndata: {\"error\":{\"message\":\"Try later\",\"type\":\"api_error\"}}\n\ndata: [DONE]\n\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+			finish := requestplugin.FilterErrors(c, types.RelayFormatOpenAI)
+			if tc.stream {
+				c.Header("Content-Type", "text/event-stream")
+			} else {
+				c.Header("Content-Type", "application/json")
+			}
+			c.Status(tc.status)
+			split := len(tc.body) / 2
+			_, err := c.Writer.WriteString(tc.body[:split])
+			require.NoError(t, err)
+			_, err = c.Writer.WriteString(tc.body[split:])
+			require.NoError(t, err)
+			finish()
+			finish()
+			assert.Equal(t, tc.status, recorder.Code)
+			if tc.stream {
+				assert.Equal(t, tc.expected, recorder.Body.String())
+			} else {
+				assert.JSONEq(t, tc.expected, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestErrorResponseInvalidResultsFailClosed(t *testing.T) {
+	errorMaskInstances(t)
+	for i, body := range []string{`for (;;) {}`, `throw new Error("private")`, `return {action:"replace",message:"private",status:200}`, `return {action:"replace",message:42}`, `return {action:"replace",message:"x".repeat(4097)}`, `utils.fetch({url:"https://example.com"}); return {action:"continue"}`} {
+		key := fmt.Sprintf("error-invalid-%d", i)
+		source := fmt.Sprintf(`export const meta={apiVersion:1,key:%q,name:"test",version:"1.0.0",author:{name:"test"},requiredCapabilities:["error-response@1"]}; export function errorResponse(){%s}`, key, body)
+		plugin, err := jsplugin.DefaultRegistry.Register(source, jsplugin.Options{})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = jsplugin.DefaultRegistry.Unregister(plugin.Meta.Key) })
+		result := requestplugin.DryRun(t.Context(), requestplugin.DryRunInput{Format: "openai", Model: "gpt", Body: []byte(`{}`), Instance: &request_plugin_setting.Instance{Plugin: key}, Error: &jsplugin.ErrorResponse{Status: 502, Message: "private"}})
+		require.NotNil(t, result.Error)
+		assert.Equal(t, errorfilter.DefaultMessage, result.Error.Message)
+		assert.Equal(t, 502, result.Error.Status)
+		require.Len(t, result.Steps, 1)
+		assert.Equal(t, "fail", result.Steps[0].Action)
+	}
+}
+
+func TestErrorMaskDisabledAndRequestSnapshot(t *testing.T) {
+	errorMaskInstances(t)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	original := c.Writer
+	finish := requestplugin.FilterErrors(c, types.RelayFormatOpenAI)
+	assert.Same(t, original, c.Writer, "disabled error processing must install no writer")
+	finish()
+
+	errorMaskInstances(t, `{"keywords":"secret", "replacement":"Pinned"}`)
+	recorder = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	finish = requestplugin.FilterErrors(c, types.RelayFormatOpenAI)
+	// Configuration updates affect new requests only.
+	errorMaskInstances(t, `{"keywords":"secret", "replacement":"Updated"}`)
+	c.JSON(502, gin.H{"error": gin.H{"message": "secret"}})
+	finish()
+	assert.Equal(t, "Pinned", gjson.GetBytes(recorder.Body.Bytes(), "error.message").String())
+}
+
+func TestErrorMaskOptionalFailureAndPlacement(t *testing.T) {
+	errorMaskInstances(t)
+	source := `export const meta={apiVersion:1,key:"error-optional",name:"test",version:"1.0.0",author:{name:"test"},optional:true,requiredCapabilities:["error-response@1"]}; export function errorResponse(){throw new Error("private")}`
+	plugin, err := jsplugin.DefaultRegistry.Register(source, jsplugin.Options{})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = jsplugin.DefaultRegistry.Unregister(plugin.Meta.Key) })
+	masker, _ := jsplugin.DefaultRegistry.GetIgnoringMasterSwitch("error-mask")
+	validated, err := masker.ValidateConfig([]byte(`{"matchAll":true,"replacement":"Matched"}`))
+	require.NoError(t, err)
+	instances := []request_plugin_setting.Instance{
+		{ID: "optional", Name: "Optional", Plugin: "error-optional", Enabled: true, Global: true},
+		{ID: "scoped", Name: "Scoped", Plugin: "error-mask", Enabled: true, Groups: []string{"paid"}, Models: []string{"gpt"}, UserIDs: []int{7}, Config: validated},
+	}
+	encoded, err := common.Marshal(instances)
+	require.NoError(t, err)
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: string(encoded)}))
+	for _, tc := range []struct {
+		group, model string
+		user         int
+		action       string
+	}{
+		{"paid", "gpt", 7, "replace"}, {"default", "gpt", 7, "preserve"}, {"paid", "other", 7, "preserve"}, {"paid", "gpt", 8, "preserve"},
+	} {
+		result := requestplugin.DryRun(t.Context(), requestplugin.DryRunInput{Format: "openai", Model: tc.model, Group: tc.group, User: jsplugin.TransformUser{ID: tc.user}, Body: []byte(`{}`), Error: &jsplugin.ErrorResponse{Status: 502, Message: "private"}})
+		require.NotNil(t, result.Error)
+		assert.Equal(t, tc.action, result.Error.Action)
+		require.NotEmpty(t, result.Steps)
+		assert.Equal(t, "fail", result.Steps[0].Action)
+	}
+}
+
+func TestErrorMaskReportCapturesPublicWireResponse(t *testing.T) {
+	errorMaskInstances(t, `{"keywords":"secret", "replacement":"Public"}`)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	finish := requestplugin.FilterErrors(c, types.RelayFormatOpenAI)
+	// Use the same observer insertion point as report capture.
+	observed := &errorResponseObserver{}
+	service.WrapPublicErrorOutput(c, func(writer gin.ResponseWriter) gin.ResponseWriter { observed.ResponseWriter = writer; return observed })
+	service.SetErrorFilterSource(c, "secret")
+	c.JSON(200, gin.H{"error": gin.H{"message": "previously masked"}})
+	finish()
+	assert.Equal(t, recorder.Body.String(), observed.body.String())
+	assert.NotContains(t, observed.body.String(), "secret")
+	public, ok := service.PublicErrorResult(c)
+	require.True(t, ok)
+	assert.Equal(t, "Public", public.Message)
+	assert.Equal(t, 200, recorder.Code)
+}
+
+type errorResponseObserver struct {
+	gin.ResponseWriter
+	body strings.Builder
+}
+
+func (w *errorResponseObserver) Write(data []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(data)
+	w.body.Write(data[:n])
+	return n, err
+}
+
+func TestErrorMaskLegacyFallbackAndCancellation(t *testing.T) {
+	errorMaskInstances(t, `{"keywords":"match only", "replacement":"Plugin"}`)
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{setting.ErrorFilterOptionKey: `{"enabled":true,"fallback":"replace","fallback_message":"Legacy"}`}))
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	finish := requestplugin.FilterErrors(c, types.RelayFormatOpenAI)
+	c.JSON(502, gin.H{"error": gin.H{"message": "unmatched"}})
+	finish()
+	assert.Equal(t, "Legacy", gjson.GetBytes(recorder.Body.Bytes(), "error.message").String())
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	result := requestplugin.DryRun(ctx, requestplugin.DryRunInput{Format: "openai", Model: "gpt", Body: []byte(`{}`), Error: &jsplugin.ErrorResponse{Status: 502, Message: "private"}})
+	require.NotNil(t, result.Error)
+	assert.Equal(t, errorfilter.DefaultMessage, result.Error.Message)
+}
+
+func BenchmarkErrorMaskHTTP(b *testing.B) {
+	gin.SetMode(gin.TestMode)
+	for _, mode := range []string{"disabled-success", "legacy-success", "plugin-success", "plugin-error"} {
+		b.Run(mode, func(b *testing.B) {
+			if strings.HasPrefix(mode, "plugin") {
+				errorMaskInstances(b, `{"keywords":"quota exceeded\nrate limit","replacement":"Try later"}`)
+			} else {
+				errorMaskInstances(b)
+			}
+			if mode == "legacy-success" {
+				require.NoError(b, config.GlobalConfig.LoadFromDB(map[string]string{setting.ErrorFilterOptionKey: `{"enabled":true}`}))
+			}
+			status, body := 200, `{"choices":[{"message":{"content":"Hello"}}]}`
+			if mode == "plugin-error" {
+				status, body = 429, `{"error":{"message":"rate limit exceeded"}}`
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				recorder := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(recorder)
+				c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+				finish := requestplugin.FilterErrors(c, types.RelayFormatOpenAI)
+				c.Status(status)
+				_, _ = c.Writer.WriteString(body)
+				finish()
+			}
+		})
+	}
+}
+
+func TestErrorResponseCapabilityAndNetworkBoundary(t *testing.T) {
+	source := `export const meta={apiVersion:1,key:"error-contract",name:"test",version:"1.0.0",author:{name:"test"}}; export function errorResponse(){utils.fetch({url:"https://example.com"}); return {action:"continue"}}`
+	_, err := jsplugin.NewRegistry().Register(source, jsplugin.Options{})
+	require.ErrorContains(t, err, "error-response@1")
+	source = strings.Replace(source, `author:{name:"test"}`, `author:{name:"test"},requiredCapabilities:["error-response@1"]`, 1)
+	plugin, err := jsplugin.NewRegistry().Register(source, jsplugin.Options{})
+	require.NoError(t, err)
+	fetched := false
+	ctx := jsplugin.WithFetcher(t.Context(), func(context.Context, jsplugin.FetchRequest) (jsplugin.FetchResponse, error) {
+		fetched = true
+		return jsplugin.FetchResponse{Status: 200}, nil
+	})
+	_, err = plugin.CallErrorResponse(ctx, jsplugin.TransformContext{}, jsplugin.ErrorResponse{Status: 500, Message: "private"})
+	require.Error(t, err)
+	assert.False(t, fetched, "error hooks must not inherit a caller's network capability")
+}
+
+func TestErrorMaskPartialReplacement(t *testing.T) {
+	plugin, ok := jsplugin.DefaultRegistry.GetIgnoringMasterSwitch("error-mask")
+	require.True(t, ok)
+	for _, tc := range []struct{ config, message, expected string }{
+		{`{"match":"regex","pattern":"https?://\\S+","action":"redact","replacement":"[链接已隐藏]"}`, "See https://example.com/a and HTTP://example.com/b now", "See [链接已隐藏] and [链接已隐藏] now"},
+		{`{"keywords":"devin:","action":"redact","replacement":"上游供应商"}`, "Devin: error devin:", "上游供应商 error 上游供应商"},
+		{`{"keywords":"a.b\nb","action":"redact","replacement":"$1"}`, "a.b and B", "$1 and $1"},
+	} {
+		t.Run(tc.config, func(t *testing.T) {
+			config, err := plugin.ValidateConfig([]byte(tc.config))
+			require.NoError(t, err)
+			result, err := plugin.CallErrorResponse(t.Context(), jsplugin.TransformContext{Config: config}, jsplugin.ErrorResponse{Status: 500, Message: tc.message})
+			require.NoError(t, err)
+			assert.Equal(t, "redact", result.Action)
+			assert.Equal(t, tc.expected, result.Message)
+		})
+	}
+	_, err := plugin.ValidateConfig([]byte(`{"match":"regex","pattern":"["}`))
+	require.Error(t, err)
+	words := make([]string, 33)
+	for i := range words {
+		words[i] = fmt.Sprintf("word%d", i)
+	}
+	raw, err := common.Marshal(map[string]any{"keywords": strings.Join(words, "\n"), "action": "redact"})
+	require.NoError(t, err)
+	_, err = plugin.ValidateConfig(raw)
+	require.Error(t, err)
 }

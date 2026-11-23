@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/QuantumNous/new-api/common"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/MoeForge/moego/regexp"
 	"github.com/MoeForge/moejs"
+	"github.com/QuantumNous/new-api/common"
 )
 
 // TransformStages are the stage hooks of the request processing part, in the
@@ -28,6 +28,9 @@ const ReportHook = "report"
 // client and may stop it or mask parts of it, never write into it. It gives
 // a plugin a request processing part, as a stage hook does.
 const ReplyHook = "reply"
+
+// ErrorResponseHook rewrites only final public errors, never retry decisions.
+const ErrorResponseHook = "errorResponse"
 
 // Limits on a stage hook result, part of the published plugin contract
 // (docs/plugin-api/v1.md).
@@ -120,14 +123,14 @@ func (p *LoadedPlugin) SupportsUserAllowlist() bool {
 }
 
 // TransformHooks returns the stage hooks the plugin exports, in
-// TransformStages order, then ReplyHook and ReportHook when it exports them;
+// TransformStages order, then ReplyHook, ErrorResponseHook and ReportHook;
 // nil when it has no request processing part.
 func (m Meta) TransformHooks() []string {
 	return slices.Clone(m.transformHooks)
 }
 
 // TransformHooks returns the stage hooks the plugin exports, in
-// TransformStages order, then ReplyHook and ReportHook when it exports them;
+// TransformStages order, then ReplyHook, ErrorResponseHook and ReportHook;
 // nil when it has no request processing part.
 func (p *LoadedPlugin) TransformHooks() []string {
 	return p.Meta.TransformHooks()
@@ -756,4 +759,62 @@ func (c *runtimeCall) paramOverride(r *moejs.Realm, body, override moejs.Value) 
 		return moejs.Undefined(), err
 	}
 	return c.runtime.ParseJSONString(string(result))
+}
+
+// ErrorResponse is the bounded, protocol-independent error exposed to a plugin.
+type ErrorResponse struct {
+	Status  int    `json:"status"`
+	Message string `json:"message"`
+	Type    string `json:"type"`
+	Code    string `json:"code"`
+}
+
+type ErrorResponseResult struct {
+	Action  string `json:"action"`
+	Message string `json:"message,omitempty"`
+}
+
+// CallErrorResponse allows a literal message replacement only. HTTP status,
+// protocol framing, diagnostic errors and accounting remain host-owned.
+// No fetcher is provided by the host for this final response hook.
+func (p *LoadedPlugin) CallErrorResponse(ctx context.Context, tctx TransformContext, response ErrorResponse) (ErrorResponseResult, error) {
+	failure := &TransformError{Plugin: p.Meta.Key, Hook: ErrorResponseHook, Class: TransformErrorFailed}
+	if !slices.Contains(p.Meta.transformHooks, ErrorResponseHook) {
+		failure.reason = "the plugin does not export it"
+		return ErrorResponseResult{}, failure
+	}
+	if err := ctx.Err(); err != nil {
+		failure.classify(err)
+		return ErrorResponseResult{}, failure
+	}
+	if len(response.Message) > 1<<20 || len(response.Type) > 4096 || len(response.Code) > 4096 {
+		failure.reason = "error input exceeds the size limit"
+		return ErrorResponseResult{}, failure
+	}
+	tctx.Media = nil
+	tctx.Stage = ErrorResponseHook
+	tctx.keywordFields = p.Meta.ConfigSchema.KeywordFields()
+	callCtx := context.WithValue(WithFetcher(ctx, nil), transformContextKey{}, &tctx)
+	result, _, err := p.Engine.call(callCtx, callOptions{}, ErrorResponseHook, nil, p.transformHookContext(&tctx), response)
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err != nil {
+		failure.classify(err)
+		return ErrorResponseResult{}, failure
+	}
+	object, ok := result.(map[string]any)
+	failure.Class, failure.reason = TransformErrorResult, "expected {action: continue} or {action: replace|redact, message: string}"
+	if !ok {
+		return ErrorResponseResult{}, failure
+	}
+	action, _ := object["action"].(string)
+	if action == "continue" && len(object) == 1 {
+		return ErrorResponseResult{Action: action}, nil
+	}
+	message, valid := object["message"].(string)
+	if (action != "replace" && action != "redact") || len(object) != 2 || !valid || !utf8.ValidString(message) || len(message) > 4096 {
+		return ErrorResponseResult{}, failure
+	}
+	return ErrorResponseResult{Action: action, Message: message}, nil
 }

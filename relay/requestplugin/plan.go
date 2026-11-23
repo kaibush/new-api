@@ -90,6 +90,7 @@ type Plan struct {
 	socket bool
 	// replies is set when an instance's plugin exports the reply hook.
 	replies bool
+	errors  bool
 	// unavailable maps the key of a plugin this node should run but has not
 	// loaded to its load error; its instances fail the request at ingress.
 	unavailable map[string]string
@@ -201,6 +202,7 @@ func newPlanOf(instances []request_plugin_setting.Instance) *Plan {
 		}
 		plan.reports = plan.reports || slices.Contains(plugin.TransformHooks(), jsplugin.ReportHook)
 		plan.replies = plan.replies || slices.Contains(plugin.TransformHooks(), jsplugin.ReplyHook)
+		plan.errors = plan.errors || slices.Contains(plugin.TransformHooks(), jsplugin.ErrorResponseHook)
 	}
 	return plan
 }

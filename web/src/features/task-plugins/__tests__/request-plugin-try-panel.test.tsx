@@ -576,3 +576,53 @@ test('an effort a plugin sets shows next to the effort the request had', async (
   expect(effort).toHaveTextContent('Not set')
   expect(effort).toHaveTextContent('Extra high')
 })
+
+test.each(['replace', 'redact'])(
+  'error masking %s displays the public replacement',
+  async (action) => {
+    const { post, panel, user } = renderPanel(
+      result({
+        error_response: { status: 429, message: 'Try later', action },
+      }),
+      { ...instance, plugin: 'error-mask' },
+      { ...plugin, key: 'error-mask', transform_hooks: ['errorResponse'] }
+    )
+    expect(within(panel).getByText('Error response')).toBeInTheDocument()
+    await user.click(within(panel).getByRole('button', { name: 'Run' }))
+    await waitFor(() => expect(post).toHaveBeenCalled())
+    expect(post.mock.calls[0][1]).toMatchObject({
+      error_response: {
+        status: 429,
+        message: 'rate limit exceeded',
+        type: '',
+        code: '',
+      },
+    })
+    expect(
+      await within(panel).findByText(
+        (_, element) =>
+          element?.tagName === 'P' && element.textContent === 'Try later'
+      )
+    ).toBeVisible()
+    expect(within(panel).getByText('Sent to the client')).toBeInTheDocument()
+    expect(
+      within(panel).queryByText('No changes. The request is sent as it is.')
+    ).toBeNull()
+  }
+)
+
+test('an invalid error sample is refused before sending a dry run', async () => {
+  const { post, panel, user } = renderPanel(result({}), instance, {
+    ...plugin,
+    transform_hooks: ['errorResponse'],
+  })
+  fireEvent.input(
+    within(panel).getByRole('textbox', { name: 'Error response' }),
+    {
+      target: { value: '{"status":999,"message":"test","type":"","code":""}' },
+    }
+  )
+  await user.click(within(panel).getByRole('button', { name: 'Run' }))
+  expect(within(panel).getByText('Invalid parameters')).toBeVisible()
+  expect(post).not.toHaveBeenCalled()
+})

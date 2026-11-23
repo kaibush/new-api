@@ -59,3 +59,10 @@ test('a plugin that only reports says nothing about failures', () => {
   expect(screen.getByText('After the request')).toBeVisible()
   expect(screen.queryByText(/when it fails/)).toBeNull()
 })
+
+test('an error masking plugin describes its generic error fallback', () => {
+  render(<RequestPluginRunLine plugin={plugin(['errorResponse'])} />)
+  expect(screen.getByText('Error masking')).toBeVisible()
+  expect(screen.getByText('Uses a generic error when it fails')).toBeVisible()
+  expect(screen.queryByText('Refuses the request when it fails')).toBeNull()
+})

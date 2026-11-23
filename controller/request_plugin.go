@@ -205,7 +205,8 @@ type requestPluginDryRunRequest struct {
 	ChannelID int             `json:"channel_id"`
 	Body      json.RawMessage `json:"body"`
 	// Reply is an answer text to run the reply checks on.
-	Reply *string `json:"reply"`
+	Reply *string                 `json:"reply"`
+	Error *jsplugin.ErrorResponse `json:"error_response"`
 	// Instance is an unsaved instance to run alone instead of the saved ones.
 	Instance *request_plugin_setting.Instance `json:"instance"`
 }
@@ -228,6 +229,10 @@ func DryRunRequestPlugins(c *gin.Context) {
 		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("A dry run reply must not exceed {{max}} bytes", map[string]any{"max": maxRequestPluginDryRunReplyBytes}))
 		return
 	}
+	if request.Error != nil && (request.Error.Status < 100 || request.Error.Status > 599 || len(request.Error.Message) > maxRequestPluginDryRunReplyBytes || len(request.Error.Type) > 128 || len(request.Error.Code) > 128) {
+		common.ApiErrorStatus(c, http.StatusBadRequest, common.NewMessage("Invalid parameters"))
+		return
+	}
 	input := requestplugin.DryRunInput{
 		Format:         request.Format,
 		Path:           request.Path,
@@ -237,6 +242,7 @@ func DryRunRequestPlugins(c *gin.Context) {
 		ModifierEffort: helper.ModelModifierEffort(request.Model),
 		User:           jsplugin.TransformUser{ID: c.GetInt("id"), Username: c.GetString("username")},
 		Reply:          request.Reply,
+		Error:          request.Error,
 	}
 	if request.Instance != nil {
 		instance := *request.Instance

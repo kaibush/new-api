@@ -17,6 +17,7 @@ var expectedKeys = []string{"alibaba", "doubao", "google", "hailuo", "jimeng", "
 
 // The built-in request processing plugins and the stage hooks each exports.
 var requestPluginHooks = map[string][]string{
+	"error-mask":         {"errorResponse"},
 	"auto-reasoning":     {"request"},
 	"content-moderation": {"ingress", "reply"},
 	"image-compress":     {"outbound"},

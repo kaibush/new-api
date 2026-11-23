@@ -56,13 +56,18 @@ export function RequestPluginRunLine(props: {
   // stages listed is taken to change requests.
   const checksRequest =
     hooks.length === 0 ||
-    hooks.some((hook) => hook !== 'reply' && hook !== 'report')
+    hooks.some(
+      (hook) =>
+        hook !== 'reply' && hook !== 'report' && hook !== 'errorResponse'
+    )
   const checksReply = hooks.includes('reply')
+  const checksError = hooks.includes('errorResponse')
   let failure: string | null = null
-  if (checksRequest || checksReply) {
+  if (checksRequest || checksReply || checksError) {
     if (props.plugin.optional) failure = t('Skipped when it fails')
     else if (checksRequest) failure = t('Refuses the request when it fails')
-    else failure = t('Stops the reply when it fails')
+    else if (checksReply) failure = t('Stops the reply when it fails')
+    else failure = t('Uses a generic error when it fails')
   }
   return (
     <span

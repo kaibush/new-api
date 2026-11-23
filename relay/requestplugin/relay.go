@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
@@ -17,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/pkg/errorfilter"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/pkg/requestpatch"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -46,7 +48,10 @@ func planOf(c *gin.Context) *Plan {
 // the request, it starts capturing the response for Report; Reply starts it
 // for those a channel attempt brings.
 func Ingress(c *gin.Context, format types.RelayFormat) ([]relaycommon.RequestPluginStep, []relaycommon.RequestPluginRecord, *types.NewAPIError) {
-	plan := NewPlan(common.GetContextKeyInt(c, constant.ContextKeyUserId))
+	plan := planOf(c)
+	if _, prepared := c.Get(planContextKey); !prepared {
+		plan = NewPlan(common.GetContextKeyInt(c, constant.ContextKeyUserId))
+	}
 	if plan == nil {
 		return nil, nil, nil
 	}
@@ -596,6 +601,7 @@ type DryRunInput struct {
 	// Reply, when set, is an answer text the reply checks run on, as on a
 	// non-stream answer in Format.
 	Reply *string
+	Error *jsplugin.ErrorResponse
 	// Instance, when set, is the only instance that runs, on every request,
 	// instead of the saved ones: an editor tries its settings before saving.
 	Instance *request_plugin_setting.Instance
@@ -628,7 +634,8 @@ type DryRunResult struct {
 	ReasoningEffortBefore string `json:"reasoning_effort_before"`
 	// Reply is a DryRunReply when the input has a reply, null when the
 	// request stopped before it.
-	Reply json.RawMessage `json:"reply,omitempty"`
+	Reply json.RawMessage     `json:"reply,omitempty"`
+	Error *errorfilter.Result `json:"error_response,omitempty"`
 }
 
 // DryRun runs the four stages on input without sending or charging
@@ -641,6 +648,9 @@ func DryRun(ctx context.Context, input DryRunInput) DryRunResult {
 	}
 	if input.Reply != nil {
 		result.Reply, _ = common.Marshal(DryRunReply{Text: *input.Reply})
+	}
+	if input.Error != nil {
+		result.Error = &errorfilter.Result{Input: errorfilter.Input{Status: input.Error.Status, Message: input.Error.Message, Type: input.Error.Type, Code: input.Error.Code}, Action: "preserve"}
 	}
 	plan := NewPlan()
 	if plan != nil {
@@ -694,6 +704,14 @@ func DryRun(ctx context.Context, input DryRunInput) DryRunResult {
 			call.Channel, call.Bound = input.Channel, input.Bound
 			result.Reply, _ = common.Marshal(dryRunReply(ctx, plan, call, *input.Reply, &result))
 		}
+	}
+	if result.Error != nil {
+		call.Channel, call.Bound = input.Channel, input.Bound
+		errorCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		rewritten, steps := plan.errorResponse(errorCtx, call, result.Error.Input)
+		cancel()
+		result.Error = &rewritten
+		result.Steps = append(result.Steps, steps...)
 	}
 	result.Record = relaycommon.CapRequestPluginRecord(result.Record)
 	for _, effect := range call.Headers {

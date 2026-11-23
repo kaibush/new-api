@@ -30,6 +30,7 @@ export const REQUEST_PLUGIN_STAGE_LABELS: Record<string, string> = {
   outbound: 'Before sending',
   egress: 'Final check',
   reply: 'Reply check',
+  errorResponse: 'Error masking',
   report: 'After the request',
 }
 

@@ -61,6 +61,7 @@ import {
 import { diffText } from '../lib/text-diff'
 import type {
   RequestPluginDryRunResult,
+  RequestPluginErrorResponse,
   RequestPluginInstance,
   RequestPluginSample,
 } from '../types'
@@ -363,6 +364,7 @@ function TryResult(props: {
   sent: unknown
   /** The answer the reply checks read, when the run had one. */
   sentReply?: string
+  sentError?: string
   result: RequestPluginDryRunResult
 }) {
   const { t, i18n } = useTranslation()
@@ -383,6 +385,8 @@ function TryResult(props: {
   const replyMasked =
     reply && props.sentReply !== undefined && reply.text !== props.sentReply
   const changed =
+    result.error_response?.action === 'replace' ||
+    result.error_response?.action === 'redact' ||
     replyMasked ||
     reply?.stopped ||
     entries.some(
@@ -406,7 +410,9 @@ function TryResult(props: {
   // request.
   const failedOnReply = failedStep?.stage === 'reply'
   let failedTitle = t('The plugin failed, so the request would be refused')
-  if (failedOnReply && props.plugin.optional) {
+  if (failedStep?.stage === 'errorResponse') {
+    failedTitle = t('Error masking failed')
+  } else if (failedOnReply && props.plugin.optional) {
     failedTitle = t(
       'The plugin failed, so the reply goes on without its changes'
     )
@@ -477,6 +483,14 @@ function TryResult(props: {
   return (
     <div className='space-y-2'>
       {outcome}
+      {result.error_response && (
+        <TextChange
+          before={props.sentError ?? ''}
+          after={result.error_response.message}
+          beforeLabel={t('Error response')}
+          afterLabel={t('Sent to the client')}
+        />
+      )}
       {!result.rejected &&
         media.map((change) => {
           const saved = 1 - change.to.bytes / change.from.bytes
@@ -555,13 +569,29 @@ export function RequestPluginTryPanel(props: RequestPluginTryPanelProps) {
     )
   )
   const [pastedReply, setPastedReply] = useState('')
+  const [errorInput, setErrorInput] = useState(() =>
+    JSON.stringify(
+      {
+        status: 429,
+        message: 'rate limit exceeded',
+        type: '',
+        code: '',
+      },
+      null,
+      2
+    )
+  )
   const [inputError, setInputError] = useState('')
   const [run, setRun] = useState<{
     body: unknown
     reply?: string
+    error?: string
     instance: string
   }>()
   const image = useMemo(drawSampleImage, [])
+  const checksErrors = Boolean(
+    props.plugin.transform_hooks?.includes('errorResponse')
+  )
   const checksReplies = Boolean(props.plugin.transform_hooks?.includes('reply'))
   const genericReply = t(
     'Yes, the soft colors and wide frame suit a phone wallpaper. I sent the full answer to alex@example.com; call +14155550123 if you would like a different crop.'
@@ -642,6 +672,34 @@ export function RequestPluginTryPanel(props: RequestPluginTryPanelProps) {
       runFormat = format
       reply = checksReplies && pastedReply.trim() ? pastedReply : undefined
     }
+    let error: RequestPluginErrorResponse | undefined
+    if (checksErrors) {
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(errorInput)
+      } catch {
+        parsed = null
+      }
+      if (
+        !isObject(parsed) ||
+        typeof parsed.status !== 'number' ||
+        !Number.isInteger(parsed.status) ||
+        parsed.status < 100 ||
+        parsed.status > 599 ||
+        typeof parsed.message !== 'string' ||
+        typeof parsed.type !== 'string' ||
+        typeof parsed.code !== 'string'
+      ) {
+        setInputError('Invalid parameters')
+        return
+      }
+      error = {
+        status: parsed.status,
+        message: parsed.message,
+        type: parsed.type,
+        code: parsed.code,
+      }
+    }
     setInputError('')
     const bodyModel = (body as { model?: unknown }).model
     const model =
@@ -650,7 +708,7 @@ export function RequestPluginTryPanel(props: RequestPluginTryPanelProps) {
         : (REQUEST_PLUGIN_DRY_RUN_FORMATS.find(
             (item) => item.value === runFormat
           )?.model ?? SAMPLE_FORMAT.model)
-    setRun({ body, reply, instance: instanceKey })
+    setRun({ body, reply, error: error?.message, instance: instanceKey })
     mutation.mutate({
       format: runFormat,
       path: requestPluginDryRunPath(runFormat, model),
@@ -658,6 +716,7 @@ export function RequestPluginTryPanel(props: RequestPluginTryPanelProps) {
       body,
       instance: props.instance,
       reply,
+      error_response: error,
     })
   }
 
@@ -728,7 +787,6 @@ export function RequestPluginTryPanel(props: RequestPluginTryPanelProps) {
             onChange={setPasted}
             heightClassName='h-48 min-h-48 max-h-48'
           />
-          {inputError && <FieldError>{t(inputError)}</FieldError>}
           {checksReplies && (
             <Field className='gap-1.5'>
               <FieldLabel
@@ -805,6 +863,18 @@ export function RequestPluginTryPanel(props: RequestPluginTryPanelProps) {
           )}
         </div>
       )}
+      {checksErrors && (
+        <Field className='gap-1.5'>
+          <FieldLabel>{t('Error response')}</FieldLabel>
+          <JsonCodeEditor
+            ariaLabel={t('Error response')}
+            value={errorInput}
+            onChange={setErrorInput}
+            heightClassName='h-36 min-h-36 max-h-36'
+          />
+        </Field>
+      )}
+      {inputError && <FieldError>{t(inputError)}</FieldError>}
       {!props.instance && (
         <p className='text-muted-foreground text-xs'>
           {t('Fix the settings first, then run.')}
@@ -829,6 +899,7 @@ export function RequestPluginTryPanel(props: RequestPluginTryPanelProps) {
           plugin={props.plugin}
           sent={run.body}
           sentReply={run.reply}
+          sentError={run.error}
           result={mutation.data}
         />
       )}

@@ -67,9 +67,10 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
 }
 
 func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+	finishErrors := func() {}
 	if relayFormat != types.RelayFormatOpenAIRealtime {
-		finish := service.FilterRelayErrors(c)
-		defer finish()
+		finishErrors = requestplugin.FilterErrors(c, relayFormat)
+		defer finishErrors()
 	}
 
 	requestId := c.GetString(common.RequestIdKey)
@@ -97,6 +98,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	// hooks receive the request once the client has the whole response and
 	// the request has settled.
 	defer func() {
+		finishErrors()
 		requestplugin.Report(c, relayFormat, relayInfo, ingressRecord, newAPIError)
 	}()
 

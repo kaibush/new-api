@@ -172,6 +172,13 @@ export type RequestPluginSample = {
   reply?: string
 }
 
+export type RequestPluginErrorResponse = {
+  status: number
+  message: string
+  type: string
+  code: string
+}
+
 export type RequestPluginDryRunRequest = {
   format: string
   path?: string
@@ -183,6 +190,7 @@ export type RequestPluginDryRunRequest = {
   instance?: RequestPluginInstance
   /** An answer from the model for the reply checks to read. */
   reply?: string
+  error_response?: RequestPluginErrorResponse
 }
 
 export type RequestPluginDryRunStep = {
@@ -198,6 +206,7 @@ export type RequestPluginDryRunStep = {
 }
 
 export type RequestPluginDryRunResult = {
+  error_response?: { status: number; message: string; action: string }
   rejected: { code: string; message: string; instance: string } | null
   failed: { instance: string; error: string } | null
   steps: RequestPluginDryRunStep[] | null

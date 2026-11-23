@@ -42,16 +42,23 @@ func PublicErrorPolicy() *errorfilter.Policy {
 	return policy
 }
 
+// PublicErrorTransform returns preserve to use the built-in policy.
+type PublicErrorTransform func(errorfilter.Input) errorfilter.Result
+
 // FilterRelayErrors runs at the final response boundary, after retry decisions
 // and accounting. Internal consumers continue to see the original error.
-func FilterRelayErrors(c *gin.Context) func() {
+func FilterRelayErrors(c *gin.Context, transforms ...PublicErrorTransform) func() {
+	var transform PublicErrorTransform
+	if len(transforms) > 0 {
+		transform = transforms[0]
+	}
 	policy := PublicErrorPolicy()
-	if !policy.Enabled() {
+	if !policy.Enabled() && transform == nil {
 		return func() {}
 	}
-	w := &errorFilterWriter{ResponseWriter: c.Writer, context: c, policy: policy}
+	w := &errorFilterWriter{ResponseWriter: c.Writer, context: c, policy: policy, transform: transform}
 	c.Writer = w
-	return func() { w.finish(); c.Writer = w.ResponseWriter }
+	return sync.OnceFunc(func() { w.finish(); c.Writer = w.ResponseWriter })
 }
 
 func ErrorFilterInput(c *gin.Context, status int, message, kind, code string) errorfilter.Input {
@@ -60,6 +67,14 @@ func ErrorFilterInput(c *gin.Context, status int, message, kind, code string) er
 }
 
 const errorFilterSourceMessage = "public_error_filter_source_message"
+const publicErrorResultKey = "public_error_filter_result"
+
+// PublicErrorResult is the final rewritten error for report observers.
+func PublicErrorResult(c *gin.Context) (errorfilter.Result, bool) {
+	value, exists := c.Get(publicErrorResultKey)
+	result, ok := value.(errorfilter.Result)
+	return result, exists && ok
+}
 
 // SetErrorFilterSource lets rules match the original upstream message before
 // New API's built-in URL masking. The original stays in process only.
@@ -75,8 +90,12 @@ func SetErrorFilterSource(c *gin.Context, message string) {
 // RewritePublicError is shared by wire responses and the administrator's
 // preview, so a preview uses the same matching and error shape as a real call.
 func RewritePublicError(policy *errorfilter.Policy, in errorfilter.Input, body []byte, force bool) ([]byte, errorfilter.Result) {
+	return rewritePublicError(policy, nil, in, body, force)
+}
+
+func rewritePublicError(policy *errorfilter.Policy, transform PublicErrorTransform, in errorfilter.Input, body []byte, force bool) ([]byte, errorfilter.Result) {
 	result := errorfilter.Result{Input: in, Action: "preserve"}
-	if !policy.Enabled() {
+	if !policy.Enabled() && transform == nil {
 		return body, result
 	}
 	var envelope map[string]any
@@ -124,7 +143,12 @@ func RewritePublicError(policy *errorfilter.Policy, in errorfilter.Input, body [
 	if code := fields["code"]; code != nil {
 		in.Code = fmt.Sprint(code)
 	}
-	result = policy.Apply(in)
+	if transform != nil {
+		result = transform(in)
+	}
+	if result.Action == "preserve" {
+		result = policy.Apply(in)
+	}
 	if result.Action == "preserve" {
 		return body, result
 	}
@@ -250,6 +274,7 @@ type errorFilterWriter struct {
 	gin.ResponseWriter
 	context         *gin.Context
 	policy          *errorfilter.Policy
+	transform       PublicErrorTransform
 	mu              sync.Mutex
 	status          int
 	body            bytes.Buffer
@@ -399,10 +424,11 @@ func (w *errorFilterWriter) rewriteEvent(event []byte) []byte {
 			}
 		}
 	}
-	rewritten, result := RewritePublicError(w.policy, in, data, eventName == "error" || eventName == "response.failed")
+	rewritten, result := rewritePublicError(w.policy, w.transform, in, data, eventName == "error" || eventName == "response.failed")
 	if result.Action == "preserve" {
 		return event
 	}
+	w.context.Set(publicErrorResultKey, result)
 	var out strings.Builder
 	if result.StripDetails {
 		if eventName == "error" || eventName == "response.failed" {
@@ -459,7 +485,10 @@ func (w *errorFilterWriter) finish() {
 			data = []byte(`{"error":{"message":"Unable to read upstream error response","type":"api_error"}}`)
 			in.Message = ""
 		}
-		rewritten, result := RewritePublicError(w.policy, in, data, true)
+		rewritten, result := rewritePublicError(w.policy, w.transform, in, data, true)
+		if result.Action != "preserve" {
+			w.context.Set(publicErrorResultKey, result)
+		}
 		if w.streamFailure {
 			// Headers were committed by earlier events, so finish with an SSE error.
 			if w.stream.Len() > 0 {
@@ -478,4 +507,14 @@ func (w *errorFilterWriter) finish() {
 	} else if w.stream.Len() > 0 && !w.streamAborted {
 		_, _ = w.ResponseWriter.Write(w.rewriteEvent(w.stream.Bytes()))
 	}
+}
+
+// WrapPublicErrorOutput places observers below error rewriting so they capture
+// the actual client response. It is used before any response bytes are written.
+func WrapPublicErrorOutput(c *gin.Context, wrap func(gin.ResponseWriter) gin.ResponseWriter) {
+	if writer, ok := c.Writer.(*errorFilterWriter); ok {
+		writer.ResponseWriter = wrap(writer.ResponseWriter)
+		return
+	}
+	c.Writer = wrap(c.Writer)
 }
