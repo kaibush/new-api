@@ -472,3 +472,34 @@ test('user restrictions require a selection, deduplicate picks and can return to
   await user.click(within(dialog).getByRole('button', { name: 'Save' }))
   expect(onSave.mock.lastCall?.[0].user_ids).toEqual([])
 })
+
+test('on a phone, rule fields have visible labels in cards and edits save in order', async () => {
+  const matchMedia = window.matchMedia.bind(window)
+  vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+    ...matchMedia(query),
+    matches: query === '(max-width: 639px)',
+  }))
+  const { user, dialog, onSave } = await openEditor('Request filter')
+  await user.click(within(dialog).getByRole('button', { name: 'Add Rule' }))
+  await user.click(within(dialog).getByRole('button', { name: 'Add Rule' }))
+  const first = within(dialog).getByRole('listitem', { name: 'Rule 1' })
+  const second = within(dialog).getByRole('listitem', { name: 'Rule 2' })
+  for (const [row, pattern] of [
+    [first, 'alpha'],
+    [second, 'beta'],
+  ] as const) {
+    const input = within(row).getByRole('textbox', { name: 'Pattern' })
+    expect(within(row).getByText('Pattern')).not.toHaveClass('sr-only')
+    fireEvent.change(input, { target: { value: pattern } })
+    expect(within(row).getByText('Match type')).not.toHaveClass('sr-only')
+    expect(within(row).getByText('Rule ID')).not.toHaveClass('sr-only')
+  }
+  await user.click(
+    within(second).getByRole('button', { name: 'Move Rule 2 up' })
+  )
+  await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+  expect(onSave.mock.lastCall?.[0].config.rules).toEqual([
+    { pattern: 'beta', type: 'keyword' },
+    { pattern: 'alpha', type: 'keyword' },
+  ])
+})

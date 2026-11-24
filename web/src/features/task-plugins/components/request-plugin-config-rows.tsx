@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { FieldDescription, FieldLegend, FieldSet } from '@/components/ui/field'
+import { useMediaQuery } from '@/hooks/use-media-query'
 import { resolveLocalizedText } from '@/lib/localized-text'
 import { cn } from '@/lib/utils'
 
@@ -84,7 +85,8 @@ export function RequestPluginConfigRows(props: RequestPluginConfigRowsProps) {
   const fields = Object.entries(items?.properties ?? {})
   const properties = items?.properties ?? {}
   const required = new Set(items?.required ?? [])
-  const table = requestPluginRowsAsTable(items)
+  const mobile = useMediaQuery('(max-width: 639px)')
+  const table = !mobile && requestPluginRowsAsTable(items)
   const full =
     props.field.maxItems !== undefined &&
     props.rows.length >= props.field.maxItems
@@ -178,7 +180,7 @@ export function RequestPluginConfigRows(props: RequestPluginConfigRowsProps) {
   }
 
   return (
-    <FieldSet className={cn('gap-3', props.className)}>
+    <FieldSet className={cn('min-w-0 gap-3', props.className)}>
       <div className='space-y-0.5'>
         <FieldLegend variant='label' className='mb-0'>
           {title}
