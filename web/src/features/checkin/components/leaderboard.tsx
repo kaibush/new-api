@@ -21,11 +21,14 @@ import {
   Award,
   BarChart3,
   Calendar,
+  CalendarCheck,
   Clock,
+  Flame,
   Globe,
   History,
   RefreshCw,
   Sparkles,
+  Target,
   Trophy,
   Users,
   Wallet,
@@ -55,6 +58,7 @@ import {
   computeBoardMetrics,
   computeMyRankInsight,
   extractTierSummaries,
+  formatHourWindow,
   formatResetCountdownClock,
   getEntryDisplayName,
   getTierToneStyles,
@@ -459,11 +463,24 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
   }
 
   const todayTopQuota = board.top?.[0]?.quota_awarded
+  const todayCheckins = board.today_checkins ?? board.top?.length ?? 0
+  const topN = board.top_n ?? 0
   const canOfferCheckinAction =
     Boolean(props.onOpenCheckin) &&
     props.checkinPrompt?.checkedIn !== true &&
     props.checkinPrompt?.allowed !== false
 
+  interface LeaderboardKpiCard {
+    id: string
+    label: string
+    value: string
+    subtext?: string
+    tone: IconBadgeTone
+    icon: typeof Trophy
+    glowClass: string
+  }
+
+  // Board-scoped metrics: computed only from the visible leaderboard entries.
   const avgSubtext = t('Avg {{amount}}', {
     amount: formatQuotaWithCurrency(metrics.avgQuota),
   })
@@ -474,15 +491,7 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
     winnersSubtext = t('{{count}} tiers', { count: tierSummaries.length })
   }
 
-  const kpiCards: Array<{
-    id: string
-    label: string
-    value: string
-    subtext?: string
-    tone: IconBadgeTone
-    icon: typeof Trophy
-    glowClass: string
-  }> =
+  const kpiCards: LeaderboardKpiCard[] =
     activeTab === 'highlights'
       ? [
           {
@@ -569,6 +578,191 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
           },
         ]
 
+  // Participation insights: counts only, never site-wide quota aggregates.
+  let boardPopulation = metrics.entryCount
+  if (activeTab === 'today') boardPopulation = todayCheckins
+  else if (activeTab === 'total') {
+    boardPopulation = board.recent_participants ?? metrics.entryCount
+  }
+  const boardIsFull =
+    topN > 0 &&
+    (boardPopulation > metrics.entryCount || metrics.entryCount >= topN)
+
+  let capacityCard: LeaderboardKpiCard | null = null
+  if (boardIsFull) {
+    capacityCard = {
+      id: 'cutoff',
+      label: t('Board cutoff'),
+      value: formatQuotaWithCurrency(metrics.cutoffQuota),
+      subtext: t('Rank #{{rank}}', {
+        rank: formatNumber(metrics.cutoffRank, locale),
+      }),
+      tone: 'success',
+      icon: Target,
+      glowClass: 'from-emerald-400/18 to-transparent',
+    }
+  } else if (topN > 0) {
+    capacityCard = {
+      id: 'spots',
+      label: t('Board spots'),
+      value: `${formatNumber(metrics.entryCount, locale)} / ${formatNumber(topN, locale)}`,
+      subtext: t('{{count}} spots open', {
+        count: formatNumber(Math.max(0, topN - metrics.entryCount), locale),
+      }),
+      tone: 'success',
+      icon: Award,
+      glowClass: 'from-emerald-400/18 to-transparent',
+    }
+  }
+
+  const insightCards: LeaderboardKpiCard[] = []
+  if (activeTab === 'today') {
+    let checkinsSubtext: string | undefined
+    if (
+      board.yesterday_checkins !== undefined &&
+      board.yesterday_checkins > 0
+    ) {
+      checkinsSubtext = t('Yesterday: {{count}}', {
+        count: formatNumber(board.yesterday_checkins, locale),
+      })
+    } else if (topN > 0) {
+      checkinsSubtext = t('Top {{count}} ranked', {
+        count: formatNumber(topN, locale),
+      })
+    }
+    insightCards.push({
+      id: 'today-checkins',
+      label: t("Today's check-ins"),
+      value: formatNumber(todayCheckins, locale),
+      subtext: checkinsSubtext,
+      tone: 'primary',
+      icon: CalendarCheck,
+      glowClass: 'from-primary/18 to-transparent',
+    })
+    if (todayCheckins > 0) {
+      insightCards.push({
+        id: 'coverage',
+        label: t('Board coverage'),
+        value: `${formatNumber(metrics.entryCount, locale)} / ${formatNumber(todayCheckins, locale)}`,
+        subtext: t('{{percent}} of check-ins', {
+          percent: formatCheckinPercent(
+            Math.min(100, (metrics.entryCount * 100) / todayCheckins),
+            locale
+          ),
+        }),
+        tone: 'info',
+        icon: Users,
+        glowClass: 'from-sky-400/18 to-transparent',
+      })
+    }
+    if (capacityCard) insightCards.push(capacityCard)
+    if (board.today_peak_hour !== undefined) {
+      const peakCount = board.today_peak_hour_checkins ?? 0
+      insightCards.push({
+        id: 'peak-hour',
+        label: t('Peak hour'),
+        value: formatHourWindow(board.today_peak_hour),
+        subtext:
+          peakCount > 0
+            ? t('{{count}} check-ins', {
+                count: formatNumber(peakCount, locale),
+              })
+            : undefined,
+        tone: 'warning',
+        icon: Flame,
+        glowClass: 'from-amber-400/20 to-transparent',
+      })
+    }
+  } else if (activeTab === 'highlights') {
+    insightCards.push({
+      id: 'lucky-winners',
+      label: t('Lucky winners'),
+      value: formatNumber(metrics.uniqueWinners, locale),
+      subtext:
+        metrics.maxHitCount > 1
+          ? t('Most hits: ×{{count}}', {
+              count: formatNumber(metrics.maxHitCount, locale),
+            })
+          : undefined,
+      tone: 'primary',
+      icon: Users,
+      glowClass: 'from-primary/18 to-transparent',
+    })
+    if (metrics.topTierName) {
+      insightCards.push({
+        id: 'top-tier',
+        label: t('Top tier'),
+        value: metrics.topTierName,
+        subtext: t('{{count}} hits', {
+          count: formatNumber(metrics.topTierCount, locale),
+        }),
+        tone: 'warning',
+        icon: Sparkles,
+        glowClass: 'from-amber-400/20 to-transparent',
+      })
+    }
+    let latestValue = metrics.latestDate || '-'
+    if (metrics.latestDate && metrics.latestDate === board.today) {
+      latestValue = t('Today')
+    }
+    insightCards.push({
+      id: 'latest',
+      label: t('Latest jackpot'),
+      value: latestValue,
+      subtext:
+        metrics.activeDaysCount > 0
+          ? t('{{count}} active days', {
+              count: formatNumber(metrics.activeDaysCount, locale),
+            })
+          : undefined,
+      tone: 'info',
+      icon: Calendar,
+      glowClass: 'from-sky-400/18 to-transparent',
+    })
+    if (capacityCard) insightCards.push(capacityCard)
+  } else {
+    const recentParticipants = board.recent_participants ?? metrics.entryCount
+    const recentCheckins = board.recent_checkins ?? metrics.entryCount
+    insightCards.push({
+      id: 'participants',
+      label: t('Active participants'),
+      value: formatNumber(recentParticipants, locale),
+      subtext: t('Last {{count}} days', { count: retentionDays }),
+      tone: 'primary',
+      icon: Users,
+      glowClass: 'from-primary/18 to-transparent',
+    })
+    insightCards.push({
+      id: 'checkins',
+      label: t('Total check-ins'),
+      value: formatNumber(recentCheckins, locale),
+      subtext:
+        board.today_checkins !== undefined
+          ? t('Today: {{count}}', {
+              count: formatNumber(board.today_checkins, locale),
+            })
+          : undefined,
+      tone: 'info',
+      icon: CalendarCheck,
+      glowClass: 'from-sky-400/18 to-transparent',
+    })
+    if (recentParticipants > 0) {
+      insightCards.push({
+        id: 'per-user',
+        label: t('Check-ins per user'),
+        value: formatNumber(
+          Math.round((recentCheckins * 10) / recentParticipants) / 10,
+          locale
+        ),
+        subtext: t('Last {{count}} days', { count: retentionDays }),
+        tone: 'warning',
+        icon: Flame,
+        glowClass: 'from-amber-400/20 to-transparent',
+      })
+    }
+    if (capacityCard) insightCards.push(capacityCard)
+  }
+
   const tabDefinitions: Array<{
     value: LeaderboardTab
     label: string
@@ -610,6 +804,14 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
             <span className='bg-muted/55 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 tabular-nums'>
               <Calendar className='size-3.5 shrink-0' aria-hidden='true' />
               {board.today}
+            </span>
+          )}
+          {board.today_checkins !== undefined && (
+            <span className='bg-muted/55 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 tabular-nums'>
+              <Users className='size-3.5 shrink-0' aria-hidden='true' />
+              {t('{{count}} checked in today', {
+                count: formatNumber(board.today_checkins, locale),
+              })}
             </span>
           )}
           {board.timezone && (
@@ -662,6 +864,7 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
         locale={locale}
         checkinPrompt={props.checkinPrompt}
         todayTopQuota={todayTopQuota}
+        todayCheckins={board.today_checkins}
         showRecordsAction={isDialog}
         justClaimed={props.justClaimed}
         onLocateMe={handleLocateMe}
@@ -806,6 +1009,42 @@ export function CheckinLeaderboard(props: CheckinLeaderboardProps = {}) {
                           </IconBadge>
                         </CardContent>
                       </Card>
+                    )
+                  })}
+                </div>
+              )}
+
+              {insightCards.length > 0 && (
+                <div
+                  role='group'
+                  aria-label={t('Activity')}
+                  className='grid grid-cols-2 gap-2 lg:grid-cols-4'
+                >
+                  {insightCards.map((item) => {
+                    const InsightIcon = item.icon
+                    return (
+                      <div
+                        key={item.id}
+                        data-insight-id={item.id}
+                        className='bg-muted/35 ring-foreground/8 flex min-w-0 items-center gap-2.5 rounded-xl px-3 py-2 ring-1'
+                      >
+                        <IconBadge tone={item.tone} size='sm'>
+                          <InsightIcon />
+                        </IconBadge>
+                        <div className='min-w-0'>
+                          <p className='text-muted-foreground truncate text-[11px]'>
+                            {item.label}
+                          </p>
+                          <p className='truncate text-sm font-semibold tabular-nums'>
+                            {item.value}
+                          </p>
+                          {item.subtext && (
+                            <p className='text-muted-foreground truncate text-[11px] tabular-nums'>
+                              {item.subtext}
+                            </p>
+                          )}
+                        </div>
+                      </div>
                     )
                   })}
                 </div>

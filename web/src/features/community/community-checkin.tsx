@@ -136,14 +136,26 @@ export function CommunityCheckin(props: { showLeaderboard?: boolean } = {}) {
                       {t("Today's check-in leaderboard")}
                     </span>
                   </p>
-                  {leaderboard.data.my_rank !== undefined && (
-                    <Badge
-                      variant='secondary'
-                      className='h-5 shrink-0 px-1.5 text-[11px] tabular-nums'
-                    >
-                      #{formatNumber(leaderboard.data.my_rank, locale)}
-                    </Badge>
-                  )}
+                  <div className='flex shrink-0 items-center gap-1.5'>
+                    {leaderboard.data.today_checkins !== undefined && (
+                      <span className='text-muted-foreground text-xs tabular-nums'>
+                        {t('{{count}} checked in', {
+                          count: formatNumber(
+                            leaderboard.data.today_checkins,
+                            locale
+                          ),
+                        })}
+                      </span>
+                    )}
+                    {leaderboard.data.my_rank !== undefined && (
+                      <Badge
+                        variant='secondary'
+                        className='h-5 shrink-0 px-1.5 text-[11px] tabular-nums'
+                      >
+                        #{formatNumber(leaderboard.data.my_rank, locale)}
+                      </Badge>
+                    )}
+                  </div>
                 </div>
                 <CheckinLeaderboardPreview
                   entries={leaderboard.data.top ?? []}

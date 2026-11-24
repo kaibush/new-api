@@ -32,9 +32,15 @@ export interface BoardMetrics {
   totalQuota: number
   avgQuota: number
   medianQuota: number
+  topThreeSharePercent: number
+  cutoffQuota: number
+  cutoffRank: number
+  topWinnerName: string
   topTierName: string
   topTierCount: number
-  topThreeSharePercent: number
+  maxHitCount: number
+  activeDaysCount: number
+  latestDate: string
 }
 
 export interface MyRankInsight {
@@ -438,44 +444,76 @@ export function computeBoardMetrics(
       totalQuota: 0,
       avgQuota: 0,
       medianQuota: 0,
+      topThreeSharePercent: 0,
+      cutoffQuota: 0,
+      cutoffRank: 0,
+      topWinnerName: '',
       topTierName: '',
       topTierCount: 0,
-      topThreeSharePercent: 0,
+      maxHitCount: 0,
+      activeDaysCount: 0,
+      latestDate: '',
     }
   }
-  const uniqueKeys = new Set<string>()
-  const quotas: number[] = []
-  let totalQuota = 0
-  let topQuota = 0
+  const hitCounts = new Map<string, number>()
+  const dates = new Set<string>()
+  let topEntry = entries[0]
+  let latestDate = ''
+  let maxHitCount = 0
   for (const entry of entries) {
-    uniqueKeys.add(getEntryUserKey(entry))
-    quotas.push(entry.quota_awarded)
-    totalQuota += entry.quota_awarded
-    if (entry.quota_awarded > topQuota) topQuota = entry.quota_awarded
+    const key = getEntryUserKey(entry)
+    const nextCount = (hitCounts.get(key) ?? 0) + 1
+    hitCounts.set(key, nextCount)
+    if (nextCount > maxHitCount) maxHitCount = nextCount
+    if (entry.quota_awarded > topEntry.quota_awarded) {
+      topEntry = entry
+    }
+    const date = (entry.checkin_date || '').trim()
+    if (date) {
+      dates.add(date)
+      if (date > latestDate) latestDate = date
+    }
   }
-  quotas.sort((left, right) => left - right)
+
+  const quotas = entries
+    .map((entry) => entry.quota_awarded)
+    .sort((left, right) => left - right)
+  const totalQuota = quotas.reduce((sum, quota) => sum + quota, 0)
   const middle = Math.floor(quotas.length / 2)
   const medianQuota =
     quotas.length % 2 === 0
       ? (quotas[middle - 1] + quotas[middle]) / 2
       : quotas[middle]
-
   const topThreeSum = entries
     .slice(0, 3)
     .reduce((sum, entry) => sum + entry.quota_awarded, 0)
+
+  const lastEntry = entries.at(-1)
   const topTier = tierSummaries[0]
 
   return {
     entryCount: entries.length,
-    uniqueWinners: uniqueKeys.size,
-    topQuota,
+    uniqueWinners: hitCounts.size,
+    topQuota: topEntry.quota_awarded,
     totalQuota,
     avgQuota: totalQuota / entries.length,
     medianQuota,
+    topThreeSharePercent: totalQuota > 0 ? (topThreeSum * 100) / totalQuota : 0,
+    cutoffQuota: lastEntry?.quota_awarded ?? 0,
+    cutoffRank: lastEntry?.rank || entries.length,
+    topWinnerName: getEntryDisplayName(topEntry),
     topTierName: topTier?.name ?? '',
     topTierCount: topTier?.count ?? 0,
-    topThreeSharePercent: totalQuota > 0 ? (topThreeSum * 100) / totalQuota : 0,
+    maxHitCount,
+    activeDaysCount: dates.size,
+    latestDate,
   }
+}
+
+export function formatHourWindow(hour: number): string {
+  const normalized = ((Math.trunc(hour) % 24) + 24) % 24
+  const next = (normalized + 1) % 24
+  return `${String(normalized).padStart(2, '0')}:00–${String(next).padStart(2, '0')}:00`
 }
 
 export function computeMyRankInsight(

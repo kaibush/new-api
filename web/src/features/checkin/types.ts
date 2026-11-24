@@ -214,6 +214,13 @@ export interface CheckinLeaderboard {
   today?: string
   timezone?: string
   retention_days?: number
+  top_n?: number
+  today_checkins?: number
+  yesterday_checkins?: number
+  today_peak_hour?: number
+  today_peak_hour_checkins?: number
+  recent_participants?: number
+  recent_checkins?: number
   top?: CheckinLeaderboardEntry[]
   recent_highlights?: CheckinLeaderboardEntry[]
   recent_totals?: CheckinLeaderboardEntry[]

@@ -316,9 +316,15 @@ type CheckinLeaderboardEntry struct {
 }
 
 type checkinPublicLeaderboard struct {
-	Top        []CheckinLeaderboardEntry
-	Highlights []CheckinLeaderboardEntry
-	Totals     []CheckinLeaderboardEntry
+	Top                   []CheckinLeaderboardEntry
+	Highlights            []CheckinLeaderboardEntry
+	Totals                []CheckinLeaderboardEntry
+	TodayCheckins         int64
+	YesterdayCheckins     int64
+	TodayPeakHour         *int
+	TodayPeakHourCheckins int64
+	RecentParticipants    int64
+	RecentCheckins        int64
 }
 
 var checkinLeaderboardCache struct {
@@ -330,7 +336,7 @@ var checkinLeaderboardCache struct {
 	data    checkinPublicLeaderboard
 }
 
-func publicCheckinLeaderboard(config CheckinConfiguration, today, cutoff string) (checkinPublicLeaderboard, error) {
+func publicCheckinLeaderboard(config CheckinConfiguration, today, yesterday, cutoff string) (checkinPublicLeaderboard, error) {
 	checkinLeaderboardCache.Lock()
 	defer checkinLeaderboardCache.Unlock()
 	if checkinLeaderboardCache.db == DB && checkinLeaderboardCache.version == config.Version && checkinLeaderboardCache.date == today && time.Since(checkinLeaderboardCache.builtAt) < 15*time.Second {
@@ -342,6 +348,46 @@ func publicCheckinLeaderboard(config CheckinConfiguration, today, cutoff string)
 	if err := query.Session(&gorm.Session{}).Select("u.username, u.display_name, d.quota_awarded, d.checkin_date, d.tier_name").Where("d.checkin_date = ?", today).Order("d.quota_awarded DESC, d.created_at ASC, d.id ASC").Limit(setting.TopN).Scan(&result.Top).Error; err != nil {
 		return result, err
 	}
+	if err := query.Session(&gorm.Session{}).Where("d.checkin_date = ?", today).Count(&result.TodayCheckins).Error; err != nil {
+		return result, err
+	}
+	if config.Settings.Pool.StatsRetentionDays >= 2 {
+		if err := query.Session(&gorm.Session{}).Where("d.checkin_date = ?", yesterday).Count(&result.YesterdayCheckins).Error; err != nil {
+			return result, err
+		}
+	}
+	if result.TodayCheckins > 0 {
+		var peak struct {
+			CheckinHour int   `gorm:"column:checkin_hour"`
+			Count       int64 `gorm:"column:cnt"`
+		}
+		if err := query.Session(&gorm.Session{}).
+			Select("d.checkin_hour, COUNT(*) AS cnt").
+			Where("d.checkin_date = ?", today).
+			Group("d.checkin_hour").
+			Order("COUNT(*) DESC, d.checkin_hour ASC").
+			Limit(1).
+			Scan(&peak).Error; err != nil {
+			return result, err
+		}
+		if peak.Count > 0 {
+			hour := peak.CheckinHour
+			result.TodayPeakHour = &hour
+			result.TodayPeakHourCheckins = peak.Count
+		}
+	}
+	var recentSummary struct {
+		TotalCheckins int64 `gorm:"column:total_checkins"`
+		Participants  int64 `gorm:"column:participants"`
+	}
+	if err := query.Session(&gorm.Session{}).
+		Select("COUNT(*) AS total_checkins, COUNT(DISTINCT d.user_id) AS participants").
+		Where("d.checkin_date >= ? AND d.checkin_date <= ?", cutoff, today).
+		Scan(&recentSummary).Error; err != nil {
+		return result, err
+	}
+	result.RecentCheckins = recentSummary.TotalCheckins
+	result.RecentParticipants = recentSummary.Participants
 	if setting.ShowRecentJackpots {
 		if err := query.Session(&gorm.Session{}).Select("u.username, u.display_name, d.quota_awarded, d.checkin_date, d.tier_name").Where("d.checkin_date >= ? AND d.checkin_date <= ? AND d.tier_rank > 0", cutoff, today).Order("d.quota_awarded DESC, d.created_at DESC, d.id ASC").Limit(setting.TopN).Scan(&result.Highlights).Error; err != nil {
 			return result, err
@@ -381,13 +427,36 @@ func GetCheckinLeaderboard(userID int) (map[string]any, error) {
 		return nil, err
 	}
 	localNow := time.Now().In(location)
-	today := localNow.Format("2006-01-02")
-	cutoff := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, location).AddDate(0, 0, -(config.Settings.Pool.StatsRetentionDays - 1)).Format("2006-01-02")
-	public, err := publicCheckinLeaderboard(config, today, cutoff)
+	todayStart := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, location)
+	today := todayStart.Format("2006-01-02")
+	yesterday := todayStart.AddDate(0, 0, -1).Format("2006-01-02")
+	cutoff := todayStart.AddDate(0, 0, -(config.Settings.Pool.StatsRetentionDays - 1)).Format("2006-01-02")
+	public, err := publicCheckinLeaderboard(config, today, yesterday, cutoff)
 	if err != nil {
 		return nil, err
 	}
-	result := map[string]any{"enabled": true, "today": today, "timezone": config.Settings.Pool.Timezone, "retention_days": config.Settings.Pool.StatsRetentionDays, "top": public.Top, "recent_totals": public.Totals}
+	todayCheckins := public.TodayCheckins
+	recentCheckins := public.RecentCheckins
+	recentParticipants := public.RecentParticipants
+	result := map[string]any{
+		"enabled":             true,
+		"today":               today,
+		"timezone":            config.Settings.Pool.Timezone,
+		"retention_days":      config.Settings.Pool.StatsRetentionDays,
+		"top_n":               setting.TopN,
+		"today_checkins":      todayCheckins,
+		"recent_checkins":     recentCheckins,
+		"recent_participants": recentParticipants,
+		"top":                 public.Top,
+		"recent_totals":       public.Totals,
+	}
+	if config.Settings.Pool.StatsRetentionDays >= 2 {
+		result["yesterday_checkins"] = public.YesterdayCheckins
+	}
+	if public.TodayPeakHour != nil {
+		result["today_peak_hour"] = *public.TodayPeakHour
+		result["today_peak_hour_checkins"] = public.TodayPeakHourCheckins
+	}
 	if setting.ShowRecentJackpots {
 		result["recent_highlights"] = public.Highlights
 	}
@@ -406,6 +475,11 @@ func GetCheckinLeaderboard(userID int) (map[string]any, error) {
 			result["my_rank"], result["my_quota"] = ahead+1, mine.QuotaAwarded
 			if total > 0 {
 				result["surpassed_bps"] = (total - ahead - 1) * 10000 / total
+			}
+			if total > todayCheckins {
+				result["today_checkins"] = total
+				result["recent_checkins"] = max(recentCheckins, total)
+				result["recent_participants"] = max(recentParticipants, total)
 			}
 		} else if !errors.Is(found.Error, gorm.ErrRecordNotFound) {
 			return nil, found.Error

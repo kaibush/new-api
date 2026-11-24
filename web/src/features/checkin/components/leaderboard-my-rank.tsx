@@ -7,6 +7,7 @@ import {
   Sparkles,
   TrendingUp,
   Trophy,
+  Users,
 } from 'lucide-react'
 import { motion, useReducedMotion } from 'motion/react'
 import { useTranslation } from 'react-i18next'
@@ -41,6 +42,7 @@ interface LeaderboardMyRankProps {
   locale?: string
   checkinPrompt?: LeaderboardCheckinPrompt
   todayTopQuota?: number
+  todayCheckins?: number
   showRecordsAction?: boolean
   justClaimed?: boolean
   onLocateMe?: () => void
@@ -66,6 +68,8 @@ export function LeaderboardMyRank(props: LeaderboardMyRankProps) {
       prompt.maxQuota > 0
     const hasTodayTop =
       props.todayTopQuota !== undefined && props.todayTopQuota > 0
+    const hasTodayCheckins =
+      props.todayCheckins !== undefined && props.todayCheckins > 0
     return (
       <Card
         data-card-hover='false'
@@ -89,6 +93,24 @@ export function LeaderboardMyRank(props: LeaderboardMyRankProps) {
                 <p className='text-sm font-semibold'>
                   {t('Not checked in today')}
                 </p>
+                {hasTodayCheckins && (
+                  <Badge
+                    variant='outline'
+                    className='bg-background/80 h-5 px-2 text-[11px] tabular-nums'
+                  >
+                    <Users
+                      data-icon='inline-start'
+                      aria-hidden='true'
+                      className='size-2.5'
+                    />
+                    {t('{{count}} checked in today', {
+                      count: formatNumber(
+                        props.todayCheckins ?? 0,
+                        props.locale
+                      ),
+                    })}
+                  </Badge>
+                )}
                 {hasTodayTop && (
                   <Badge
                     variant='outline'
@@ -243,6 +265,12 @@ export function LeaderboardMyRank(props: LeaderboardMyRankProps) {
             <div className='mt-0.5 flex flex-wrap items-baseline gap-2.5'>
               <p className='text-2xl font-bold tracking-tight tabular-nums sm:text-3xl'>
                 #{formatNumber(insight.rank, props.locale)}
+                {props.todayCheckins !== undefined &&
+                  props.todayCheckins > 0 && (
+                    <span className='text-muted-foreground ml-1 text-sm font-medium'>
+                      / {formatNumber(props.todayCheckins, props.locale)}
+                    </span>
+                  )}
               </p>
               <span className='bg-background/70 inline-flex items-center rounded-md border px-2 py-0.5 text-sm font-semibold tabular-nums sm:text-base'>
                 {formatQuotaWithCurrency(insight.quota)}

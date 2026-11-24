@@ -14,6 +14,7 @@ import { getCheckinLeaderboard } from '@/features/checkin/api'
 import { CheckinLeaderboardPreview } from '@/features/checkin/components/leaderboard-preview'
 import { useStatus } from '@/hooks/use-status'
 import { toIntlLocale } from '@/i18n/languages'
+import { formatNumber } from '@/lib/format'
 
 import type { BoardBlock } from './schema'
 
@@ -51,13 +52,22 @@ export function BoardLeaderboard(props: { block?: BoardBlock }) {
   return (
     <Card size='sm'>
       <CardHeader>
-        <CardTitle className='flex items-center gap-1.5'>
-          <HeaderIcon
-            className='size-4 shrink-0 text-amber-600 dark:text-amber-400'
-            aria-hidden='true'
-          />
-          <span className='truncate'>{props.block?.title || title}</span>
-        </CardTitle>
+        <div className='flex items-center justify-between gap-2'>
+          <CardTitle className='flex min-w-0 items-center gap-1.5'>
+            <HeaderIcon
+              className='size-4 shrink-0 text-amber-600 dark:text-amber-400'
+              aria-hidden='true'
+            />
+            <span className='truncate'>{props.block?.title || title}</span>
+          </CardTitle>
+          {tab === 'today' && query.data?.today_checkins !== undefined && (
+            <span className='text-muted-foreground shrink-0 text-xs tabular-nums'>
+              {t('{{count}} checked in', {
+                count: formatNumber(query.data.today_checkins, locale),
+              })}
+            </span>
+          )}
+        </div>
       </CardHeader>
       <CardContent className='space-y-3'>
         {query.isPending && <LoadingState size='sm' />}

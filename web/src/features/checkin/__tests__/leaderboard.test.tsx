@@ -11,10 +11,12 @@ import { CheckinLeaderboardPage } from '../components/leaderboard-page'
 import { CheckinRewardRevealBanner } from '../components/reward-celebration'
 import {
   buildTierToneMap,
+  computeBoardMetrics,
   computeCheckinStreak,
   computeMyRankInsight,
   evaluateCheckinRoll,
   extractTierSummaries,
+  formatHourWindow,
   formatResetCountdownClock,
   getTimeUntilNextReset,
   selectPodiumEntries,
@@ -84,6 +86,13 @@ const sampleBoard: CheckinLeaderboardData = {
   today: '2030-05-15',
   timezone: 'Asia/Shanghai',
   retention_days: 30,
+  top_n: 20,
+  today_checkins: 48,
+  yesterday_checkins: 36,
+  today_peak_hour: 9,
+  today_peak_hour_checkins: 14,
+  recent_participants: 120,
+  recent_checkins: 860,
   my_rank: 4,
   my_quota: 250000,
   surpassed_bps: 7500,
@@ -256,6 +265,31 @@ describe('leaderboard-utils', () => {
     })
   })
 
+  test('computeBoardMetrics and formatHourWindow compute non-sensitive board stats', () => {
+    const highlights = sampleBoard.recent_highlights ?? []
+    const summaries = extractTierSummaries(highlights)
+    const metrics = computeBoardMetrics(highlights, summaries)
+    expect(metrics).toEqual({
+      entryCount: 5,
+      uniqueWinners: 3,
+      topQuota: 3000000,
+      totalQuota: 12700000,
+      avgQuota: 2540000,
+      medianQuota: 2600000,
+      topThreeSharePercent: (8400000 * 100) / 12700000,
+      cutoffQuota: 1900000,
+      cutoffRank: 5,
+      topWinnerName: 'RepeatChamp',
+      topTierName: 'Jackpot',
+      topTierCount: 4,
+      maxHitCount: 3,
+      activeDaysCount: 5,
+      latestDate: '2030-05-15',
+    })
+    expect(formatHourWindow(9)).toBe('09:00–10:00')
+    expect(formatHourWindow(23)).toBe('23:00–00:00')
+  })
+
   test('getTimeUntilNextReset computes remaining time in target timezone', () => {
     const now = new Date('2030-05-15T14:30:15Z')
     expect(getTimeUntilNextReset('Asia/Shanghai', now)).toEqual({
@@ -314,6 +348,19 @@ describe('CheckinLeaderboard', () => {
     renderWithQuery(<CheckinLeaderboard />)
 
     expect(await screen.findByText('#4')).toBeInTheDocument()
+    expect(screen.getByText('/ 48')).toBeInTheDocument()
+    expect(screen.getByText('48 checked in today')).toBeInTheDocument()
+    expect(screen.getByText('Board total')).toBeInTheDocument()
+    expect(screen.getByText('Median')).toBeInTheDocument()
+    const insights = screen.getByRole('group', { name: 'Activity' })
+    expect(within(insights).getByText("Today's check-ins")).toBeInTheDocument()
+    expect(within(insights).getByText('Yesterday: 36')).toBeInTheDocument()
+    expect(within(insights).getByText('Board coverage')).toBeInTheDocument()
+    expect(within(insights).getByText('4 / 48')).toBeInTheDocument()
+    expect(within(insights).getByText('Board cutoff')).toBeInTheDocument()
+    expect(within(insights).getByText('Peak hour')).toBeInTheDocument()
+    expect(within(insights).getByText('09:00–10:00')).toBeInTheDocument()
+    expect(within(insights).getByText('14 check-ins')).toBeInTheDocument()
     expect(screen.getByText('You')).toBeInTheDocument()
     expect(screen.getByText('Live lucky feed')).toBeInTheDocument()
     expect(screen.getByText('Hall of fortune')).toBeInTheDocument()
@@ -343,7 +390,18 @@ describe('CheckinLeaderboard', () => {
     expect(screen.queryByText('No results found')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('tab', { name: 'Recent total rewards' }))
+    expect(screen.getByText('Board total')).toBeInTheDocument()
     expect(screen.getAllByText(/Last 30 days ·/)).toHaveLength(3)
+    const totalInsights = screen.getByRole('group', { name: 'Activity' })
+    expect(
+      within(totalInsights).getByText('Active participants')
+    ).toBeInTheDocument()
+    expect(within(totalInsights).getByText('120')).toBeInTheDocument()
+    expect(within(totalInsights).getByText('860')).toBeInTheDocument()
+    expect(
+      within(totalInsights).getByText('Check-ins per user')
+    ).toBeInTheDocument()
+    expect(within(totalInsights).getByText('7.2')).toBeInTheDocument()
 
     const scrollSpy = vi.fn()
     const originalScroll = Element.prototype.scrollIntoView
@@ -368,6 +426,23 @@ describe('CheckinLeaderboard', () => {
 
     expect(await screen.findByText('Jackpot hits')).toBeInTheDocument()
     expect(screen.getByText('3 unique winners')).toBeInTheDocument()
+    expect(screen.getByText('Board total')).toBeInTheDocument()
+    expect(screen.getByText('Median')).toBeInTheDocument()
+    const highlightInsights = screen.getByRole('group', { name: 'Activity' })
+    expect(
+      within(highlightInsights).getByText('Lucky winners')
+    ).toBeInTheDocument()
+    expect(
+      within(highlightInsights).getByText('Most hits: ×3')
+    ).toBeInTheDocument()
+    expect(within(highlightInsights).getByText('Top tier')).toBeInTheDocument()
+    expect(within(highlightInsights).getByText('4 hits')).toBeInTheDocument()
+    expect(
+      within(highlightInsights).getByText('Latest jackpot')
+    ).toBeInTheDocument()
+    expect(
+      within(highlightInsights).getByText('5 active days')
+    ).toBeInTheDocument()
     expect(screen.getByText('×3')).toBeInTheDocument()
     const filterGroup = screen.getByRole('group', { name: 'Filter by tier' })
     expect(
