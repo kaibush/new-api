@@ -32,7 +32,7 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     server: {
-      deps: { inline: [/@lobehub\//, /antd-style/] },
+      deps: { inline: [/@lobehub\//, /antd-style/, 'zod'] },
     },
     setupFiles: ['./src/test-setup.ts'],
     // Several heavy jsdom suites (channel-configuration, visual-billing-editor)
