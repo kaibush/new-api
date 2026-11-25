@@ -1,11 +1,13 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/tidwall/gjson"
 )
@@ -73,6 +75,21 @@ func (builder *inputAuditEvidenceBuilder) matchRequestJSON(role, kind, path, cal
 		}
 		return
 	}
+	if kind == "tool_definition" {
+		// A schema is one definition, not a conversation made of its leaf
+		// values. Keep keys and values together so types and constraints
+		// remain understandable and do not consume the message count cap.
+		name = item.Get("name").Str
+		if name == "" {
+			name = item.Get("function.name").Str
+		}
+		definition := builder.matchRequestStructure(item, depth, visited)
+		encoded, err := common.Marshal(definition)
+		if err == nil {
+			builder.add(role, kind, path, callID, name, string(encoded))
+		}
+		return
+	}
 	for _, key := range []string{"mimeType", "mime_type", "media_type", "mime"} {
 		if inputAuditMediaType(item.Get(key).Str) {
 			builder.omit("media_not_retained")
@@ -80,7 +97,10 @@ func (builder *inputAuditEvidenceBuilder) matchRequestJSON(role, kind, path, cal
 		}
 	}
 	blockType := item.Get("type").Str
+	metadata := item.Get("role").Exists() && (item.Get("content").Exists() || item.Get("parts").Exists())
 	switch blockType {
+	case "message", "text", "input_text", "output_text", "refusal":
+		metadata = true
 	case "image", "image_url", "input_image", "input_audio", "audio", "video", "input_video", "file", "input_file", "document", "base64":
 		builder.omit("media_not_retained")
 		return
@@ -88,8 +108,10 @@ func (builder *inputAuditEvidenceBuilder) matchRequestJSON(role, kind, path, cal
 		builder.omit("reasoning_not_retained")
 		return
 	case "function_call_output", "custom_tool_call_output", "tool_result":
+		metadata = true
 		role, kind = "tool", "tool_result"
 	case "tool_use", "function_call", "custom_tool_call":
+		metadata = true
 		role, kind = "assistant", "tool_call"
 	}
 	if candidate := item.Get("role").Str; candidate != "" {
@@ -122,6 +144,14 @@ func (builder *inputAuditEvidenceBuilder) matchRequestJSON(role, kind, path, cal
 			builder.omit("media_not_retained")
 			return true
 		}
+		// Protocol metadata belongs on the evidence entry, not in its body.
+		// Do not filter by value: actual text such as "user" is valid content.
+		if metadata {
+			switch key.Str {
+			case "role", "type", "tool_call_id", "tool_use_id", "call_id", "id", "name":
+				return true
+			}
+		}
 		nextRole, nextKind := role, kind
 		switch key.Str {
 		case "system", "instructions", "systemInstruction", "system_instruction":
@@ -141,6 +171,62 @@ func (builder *inputAuditEvidenceBuilder) matchRequestJSON(role, kind, path, cal
 		builder.matchRequestJSON(nextRole, nextKind, path+"/"+boundedAuditText(escapedKey, 128), callID, name, value, depth+1, visited)
 		return *visited <= 32768
 	})
+}
+
+// matchRequestStructure retains a bounded, media-free JSON definition instead
+// of interpreting schema property names as conversation roles or tool calls.
+func (builder *inputAuditEvidenceBuilder) matchRequestStructure(item gjson.Result, depth int, visited *int) any {
+	(*visited)++
+	if depth > 32 || *visited > 32768 {
+		builder.omit("request_structure_limit")
+		builder.document.Truncated = true
+		return nil
+	}
+	if item.IsArray() {
+		values := []any{}
+		item.ForEach(func(_, value gjson.Result) bool {
+			values = append(values, builder.matchRequestStructure(value, depth+1, visited))
+			return *visited <= 32768
+		})
+		return values
+	}
+	if !item.IsObject() {
+		if item.Type == gjson.Number {
+			return json.Number(item.Raw)
+		}
+		return item.Value()
+	}
+	for _, key := range []string{"mimeType", "mime_type", "media_type", "mime"} {
+		if inputAuditMediaType(item.Get(key).Str) {
+			builder.omit("media_not_retained")
+			return nil
+		}
+	}
+	switch item.Get("type").Str {
+	case "image", "image_url", "input_image", "input_audio", "audio", "video", "input_video", "file", "input_file", "document", "base64":
+		builder.omit("media_not_retained")
+		return nil
+	case "reasoning", "thinking", "redacted_thinking":
+		builder.omit("reasoning_not_retained")
+		return nil
+	}
+	values := map[string]any{}
+	fields := 0
+	item.ForEach(func(key, value gjson.Result) bool {
+		fields++
+		if fields > 128 {
+			builder.omit("object_field_limit")
+			builder.document.Truncated = true
+			return false
+		}
+		if inputAuditMediaField(key.Str) {
+			builder.omit("media_not_retained")
+			return true
+		}
+		values[key.Str] = builder.matchRequestStructure(value, depth+1, visited)
+		return *visited <= 32768
+	})
+	return values
 }
 
 // Allocate a minimum quote for every user instruction and prompt before tools

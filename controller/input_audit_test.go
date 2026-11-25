@@ -1873,6 +1873,65 @@ type inputAuditLegacyMatch struct {
 func (inputAuditLegacyMatch) TableName() string { return "input_audit_matches" }
 
 func TestInputAuditMatchRequestBudgetAndMedia(t *testing.T) {
+	t.Run("protocol metadata does not become message text", func(t *testing.T) {
+		for _, body := range []string{
+			`{"input":[{"type":"message","id":"m1","role":"developer","content":[{"type":"input_text","text":"policy"}]},{"role":"user","content":[{"type":"input_text","text":"user"}]}]}`,
+			`{"messages":[{"role":"developer","content":"policy"},{"role":"user","content":[{"type":"text","text":"user"}]}]}`,
+			`{"systemInstruction":{"parts":[{"text":"policy"}]},"contents":[{"role":"user","parts":[{"text":"user"}]}]}`,
+		} {
+			document := service.ExtractInputAuditMatchRequest([]byte(body), 131072)
+			require.Len(t, document.Messages, 2)
+			assert.Equal(t, "policy", document.Messages[0].Text)
+			assert.Equal(t, "user", document.Messages[1].Role)
+			assert.Equal(t, "user", document.Messages[1].Text)
+			assert.Equal(t, "message", document.Messages[1].Kind)
+			assert.False(t, document.Truncated)
+		}
+	})
+	t.Run("tool schemas stay structured without exhausting message count", func(t *testing.T) {
+		properties := map[string]any{}
+		for i := range 100 {
+			properties[fmt.Sprintf("field_%d", i)] = map[string]any{"type": "string", "description": "Question to ask", "nullable": true}
+		}
+		properties["role"] = map[string]any{"type": "string", "enum": []string{"user", "system"}}
+		parameters := map[string]any{"type": "object", "properties": properties, "additionalProperties": false}
+		expectedParameters, err := common.Marshal(parameters)
+		require.NoError(t, err)
+		body, err := common.Marshal(map[string]any{
+			"input": []any{map[string]any{"role": "user", "content": "actual instruction"}},
+			"tools": []any{
+				map[string]any{"type": "function", "name": "ask_user_question", "parameters": parameters},
+				map[string]any{"type": "function", "function": map[string]any{"name": "ask_again", "parameters": parameters}},
+			},
+		})
+		require.NoError(t, err)
+		document := service.ExtractInputAuditMatchRequest(body, 131072)
+		require.Len(t, document.Messages, 3)
+		assert.Equal(t, "actual instruction", document.Messages[0].Text)
+		for i, name := range []string{"ask_user_question", "ask_again"} {
+			message := document.Messages[i+1]
+			assert.Equal(t, "system", message.Role)
+			assert.Equal(t, "tool_definition", message.Kind)
+			assert.Equal(t, name, message.Name)
+			var definition map[string]any
+			require.NoError(t, common.UnmarshalJsonStr(message.Text, &definition))
+			if i == 1 {
+				definition = definition["function"].(map[string]any)
+			}
+			actualParameters, err := common.Marshal(definition["parameters"])
+			require.NoError(t, err)
+			assert.JSONEq(t, string(expectedParameters), string(actualParameters))
+		}
+		assert.NotContains(t, document.Omitted, "message_limit")
+		assert.False(t, document.Truncated)
+	})
+	t.Run("structured definitions preserve numbers and exclude media", func(t *testing.T) {
+		document := service.ExtractInputAuditMatchRequest([]byte(`{"tools":[{"name":"inspect","parameters":{"type":"object","properties":{"id":{"type":"integer","const":9007199254740993}},"examples":[{"type":"image","data":"SECRET_MEDIA"},{"mime_type":"image/png","data":"SECRET_MEDIA"},{"image_url":"SECRET_MEDIA"}]}}]}`), 131072)
+		require.Len(t, document.Messages, 1)
+		assert.Contains(t, document.Messages[0].Text, "9007199254740993")
+		assert.NotContains(t, document.Messages[0].Text, "SECRET_MEDIA")
+		assert.Contains(t, document.Omitted, "media_not_retained")
+	})
 	for _, tc := range []struct {
 		name, body, wantRole, wantText string
 	}{
