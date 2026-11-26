@@ -25,6 +25,10 @@ var communityWeChatClient = &http.Client{Timeout: 15 * time.Second, CheckRedirec
 // SendCommunityWeChat uses fixed official endpoints: administrators cannot supply a webhook URL.
 // Template fields: sender, content, time. Receivers must follow the configured test account.
 func SendCommunityWeChat(ctx context.Context, config model.CommunityConfig, message model.CommunityMessage) error {
+	return sendWeChatTemplate(ctx, config, message, "")
+}
+
+func sendWeChatTemplate(ctx context.Context, config model.CommunityConfig, message model.CommunityMessage, target string) error {
 	if !config.BotEnabled || config.AppID == "" || config.AppSecret == "" || config.TemplateID == "" || config.Receiver == "" {
 		return errors.New("WeChat bot is not configured")
 	}
@@ -65,6 +69,9 @@ func SendCommunityWeChat(ctx context.Context, config model.CommunityConfig, mess
 	}
 	payload := map[string]any{"touser": config.Receiver, "template_id": config.TemplateID, "data": map[string]any{
 		"sender": map[string]string{"value": message.Name}, "content": map[string]string{"value": content}, "time": map[string]string{"value": time.Unix(message.CreatedAt, 0).UTC().Format(time.RFC3339)}}}
+	if target != "" {
+		payload["url"] = target
+	}
 	data, err := common.Marshal(payload)
 	if err != nil {
 		return err

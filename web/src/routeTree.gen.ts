@@ -30,6 +30,7 @@ import { Route as AuthenticatedChat2linkRouteImport } from './routes/_authentica
 import { Route as AuthenticatedCheckinRouteImport } from './routes/_authenticated/checkin'
 import { Route as AuthenticatedCheckinLeaderboardRouteImport } from './routes/_authenticated/checkin-leaderboard'
 import { Route as AuthenticatedSystemSettingsRouteRouteImport } from './routes/_authenticated/system-settings/route'
+import { Route as AuthenticatedTicketsRouteImport } from './routes/_authenticated/tickets'
 import { Route as AuthenticatedVisitAnalyticsRouteImport } from './routes/_authenticated/visit-analytics'
 import { Route as AboutIndexRouteImport } from './routes/about/index'
 import { Route as HelpCenterIndexRouteImport } from './routes/help-center/index'
@@ -185,6 +186,11 @@ const AuthenticatedSystemSettingsRouteRoute =
     path: '/system-settings',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedTicketsRoute = AuthenticatedTicketsRouteImport.update({
+  id: '/tickets',
+  path: '/tickets',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedVisitAnalyticsRoute =
   AuthenticatedVisitAnalyticsRouteImport.update({
     id: '/visit-analytics',
@@ -489,6 +495,7 @@ export interface FileRoutesByFullPath {
   '/chat2link': typeof AuthenticatedChat2linkRoute
   '/checkin': typeof AuthenticatedCheckinRoute
   '/checkin-leaderboard': typeof AuthenticatedCheckinLeaderboardRoute
+  '/tickets': typeof AuthenticatedTicketsRoute
   '/visit-analytics': typeof AuthenticatedVisitAnalyticsRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
@@ -558,6 +565,7 @@ export interface FileRoutesByTo {
   '/chat2link': typeof AuthenticatedChat2linkRoute
   '/checkin': typeof AuthenticatedCheckinRoute
   '/checkin-leaderboard': typeof AuthenticatedCheckinLeaderboardRoute
+  '/tickets': typeof AuthenticatedTicketsRoute
   '/visit-analytics': typeof AuthenticatedVisitAnalyticsRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about': typeof AboutIndexRoute
@@ -631,6 +639,7 @@ export interface FileRoutesById {
   '/_authenticated/chat2link': typeof AuthenticatedChat2linkRoute
   '/_authenticated/checkin': typeof AuthenticatedCheckinRoute
   '/_authenticated/checkin-leaderboard': typeof AuthenticatedCheckinLeaderboardRoute
+  '/_authenticated/tickets': typeof AuthenticatedTicketsRoute
   '/_authenticated/visit-analytics': typeof AuthenticatedVisitAnalyticsRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
@@ -703,6 +712,7 @@ export interface FileRouteTypes {
     | '/chat2link'
     | '/checkin'
     | '/checkin-leaderboard'
+    | '/tickets'
     | '/visit-analytics'
     | '/oauth/$provider'
     | '/about/'
@@ -772,6 +782,7 @@ export interface FileRouteTypes {
     | '/chat2link'
     | '/checkin'
     | '/checkin-leaderboard'
+    | '/tickets'
     | '/visit-analytics'
     | '/oauth/$provider'
     | '/about'
@@ -844,6 +855,7 @@ export interface FileRouteTypes {
     | '/_authenticated/chat2link'
     | '/_authenticated/checkin'
     | '/_authenticated/checkin-leaderboard'
+    | '/_authenticated/tickets'
     | '/_authenticated/visit-analytics'
     | '/oauth/$provider'
     | '/about/'
@@ -1062,6 +1074,13 @@ declare module '@tanstack/react-router' {
       path: '/system-settings'
       fullPath: '/system-settings'
       preLoaderRoute: typeof AuthenticatedSystemSettingsRouteRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/tickets': {
+      id: '/_authenticated/tickets'
+      path: '/tickets'
+      fullPath: '/tickets'
+      preLoaderRoute: typeof AuthenticatedTicketsRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/visit-analytics': {
@@ -1504,6 +1523,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedChat2linkRoute: typeof AuthenticatedChat2linkRoute
   AuthenticatedCheckinRoute: typeof AuthenticatedCheckinRoute
   AuthenticatedCheckinLeaderboardRoute: typeof AuthenticatedCheckinLeaderboardRoute
+  AuthenticatedTicketsRoute: typeof AuthenticatedTicketsRoute
   AuthenticatedVisitAnalyticsRoute: typeof AuthenticatedVisitAnalyticsRoute
   AuthenticatedChatChatIdRoute: typeof AuthenticatedChatChatIdRoute
   AuthenticatedDashboardSectionRoute: typeof AuthenticatedDashboardSectionRoute
@@ -1536,6 +1556,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedChat2linkRoute: AuthenticatedChat2linkRoute,
   AuthenticatedCheckinRoute: AuthenticatedCheckinRoute,
   AuthenticatedCheckinLeaderboardRoute: AuthenticatedCheckinLeaderboardRoute,
+  AuthenticatedTicketsRoute: AuthenticatedTicketsRoute,
   AuthenticatedVisitAnalyticsRoute: AuthenticatedVisitAnalyticsRoute,
   AuthenticatedChatChatIdRoute: AuthenticatedChatChatIdRoute,
   AuthenticatedDashboardSectionRoute: AuthenticatedDashboardSectionRoute,

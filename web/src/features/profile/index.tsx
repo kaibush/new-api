@@ -21,6 +21,9 @@ import {
   CardStaggerContainer,
   CardStaggerItem,
 } from '@/components/page-transition'
+import { Card, CardContent } from '@/components/ui/card'
+import { TicketSettingsForm } from '@/features/tickets/settings'
+import { useIsAdmin } from '@/hooks/use-admin'
 import { useStatus } from '@/hooks/use-status'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -32,6 +35,7 @@ import { SidebarModulesCard } from './components/sidebar-modules-card'
 import { useProfile } from './hooks'
 
 export function Profile() {
+  const admin = useIsAdmin()
   const { profile, loading, refreshProfile } = useProfile()
   const { status } = useStatus()
   const permissions = useAuthStore((s) => s.auth.user?.permissions)
@@ -72,6 +76,13 @@ export function Profile() {
                   turnstileSiteKey={turnstileSiteKey}
                 />
                 {canConfigureSidebar && <SidebarModulesCard />}
+                {admin && (
+                  <Card>
+                    <CardContent>
+                      <TicketSettingsForm inline />
+                    </CardContent>
+                  </Card>
+                )}
               </div>
             </div>
           </CardStaggerItem>

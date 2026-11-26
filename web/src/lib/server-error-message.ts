@@ -27,6 +27,15 @@ import { formatQuotaWithCurrency } from './currency'
 export const safeServerErrorMessage = Symbol('safeServerErrorMessage')
 
 const serverErrorMessageKeys = {
+  TICKET_INVALID_SETTINGS: 'Invalid ticket settings.',
+  TICKET_DISABLED: 'Support tickets are disabled.',
+  TICKET_INVALID_FILTER: 'Invalid ticket filter.',
+  TICKET_INVALID_MESSAGE: 'Enter a message of up to 4,000 characters.',
+  TICKET_INVALID_TITLE: 'Enter a title of up to 120 characters.',
+  TICKET_INVALID_STATUS: 'Invalid ticket status.',
+  TICKET_NOT_FOUND: 'Ticket not found.',
+  TICKET_CLOSED: 'This ticket is closed.',
+  TICKET_UNAVAILABLE: 'Could not update or load tickets.',
   MONTHLY_TOPUP_LIMIT_EXCEEDED:
     'Monthly top-up limit reached (including pending orders). Reduce the amount or try again next month.',
   REGISTRATION_INVITATION_REQUIRED:

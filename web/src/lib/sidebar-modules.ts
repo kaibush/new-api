@@ -49,6 +49,7 @@ export const DEFAULT_SIDEBAR_MODULES: SidebarModulesAdminConfig = {
   },
   personal: {
     enabled: true,
+    tickets: true,
     topup: true,
     personal: true,
     security: true,
@@ -113,6 +114,7 @@ const URL_TO_CONFIG_MAP: Record<string, { section: string; module: string }> = {
     module: 'checkin_leaderboard',
   },
   '/wallet': { section: 'personal', module: 'topup' },
+  '/tickets': { section: 'personal', module: 'tickets' },
   '/profile': { section: 'personal', module: 'personal' },
   '/security': { section: 'personal', module: 'security' },
   '/channels': { section: 'admin', module: 'channel' },

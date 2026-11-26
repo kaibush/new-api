@@ -19,6 +19,13 @@ For commercial licensing, please contact support@quantumnous.com
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
+  'Invalid ticket settings.',
+  'Invalid ticket filter.',
+  'Enter a message of up to 4,000 characters.',
+  'Enter a title of up to 120 characters.',
+  'Invalid ticket status.',
+  'Ticket not found.',
+  'Could not update or load tickets.',
   // Plugin scopes and cache pricing labels.
   '5 minutes / 1 hour',
   'All channels',

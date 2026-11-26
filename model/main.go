@@ -347,6 +347,8 @@ func migrateDB() error {
 		&AuthFlow{},
 		&RegistrationInvitation{},
 		&CommunityConfig{},
+		&SupportTicket{},
+		&SupportTicketMessage{},
 		&CommunityMessage{},
 		&CommunityProfile{},
 		&CommunityBotFeedback{},

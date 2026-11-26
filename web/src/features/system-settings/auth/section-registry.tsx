@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { CommunitySettings } from '@/features/community/settings'
+import { TicketSettingsForm } from '@/features/tickets/settings'
 
 import type { AuthSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
@@ -32,6 +33,11 @@ const AUTH_SECTIONS = [
     id: 'community',
     titleKey: 'Community chat',
     build: () => <CommunitySettings />,
+  },
+  {
+    id: 'tickets',
+    titleKey: 'Support tickets',
+    build: () => <TicketSettingsForm />,
   },
   {
     id: 'basic-auth',

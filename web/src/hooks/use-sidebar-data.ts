@@ -34,6 +34,7 @@ import {
   Settings,
   ShieldCheck,
   Ticket,
+  Tickets,
   Trophy,
   User,
   Users,
@@ -44,6 +45,7 @@ import { useTranslation } from 'react-i18next'
 
 import type { SidebarData } from '@/components/layout/types'
 import { getChatStatus } from '@/features/community/api'
+import { ticketSettingsQuery } from '@/features/tickets/api'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -56,6 +58,7 @@ import { useAuthStore } from '@/stores/auth-store'
 export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
   const userID = useAuthStore((s) => s.auth.user?.id)
+  const tickets = useQuery({ ...ticketSettingsQuery, enabled: Boolean(userID) })
   const community = useQuery({
     queryKey: ['community-status'],
     queryFn: getChatStatus,
@@ -137,6 +140,15 @@ export function useSidebarData(): SidebarData {
         id: 'personal',
         title: t('Personal'),
         items: [
+          ...(tickets.data?.enabled && !tickets.isError
+            ? [
+                {
+                  title: tickets.data.name || t('Support tickets'),
+                  url: '/tickets' as const,
+                  icon: Tickets,
+                },
+              ]
+            : []),
           {
             title: t('Wallet'),
             url: '/wallet',

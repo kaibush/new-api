@@ -184,6 +184,10 @@ export function SidebarModulesSection({
         title: t('Check-in leaderboard'),
         description: t('Show daily winners and recent high rewards to users.'),
       },
+      tickets: {
+        title: t('Support tickets'),
+        description: t('Ticket conversation'),
+      },
     },
     admin: {
       channel: {
