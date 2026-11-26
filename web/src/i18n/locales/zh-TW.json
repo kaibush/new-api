@@ -7421,6 +7421,7 @@
     "This user account no longer exists.": "此使用者帳號已不存在。",
     "this user group": "此用戶分組",
     "This user has no bindings": "該用戶無任何連結",
+    "This user is already on the allowlist. Edit their existing entry.": "該使用者已在白名單中，請編輯現有項目。",
     "This verification has already been used. Please verify again.": "此驗證憑證已使用，請重新驗證。",
     "This verification method is currently unavailable.": "此驗證方式目前無法使用。",
     "This verification method is not allowed for this action.": "此操作不允許使用該驗證方式。",

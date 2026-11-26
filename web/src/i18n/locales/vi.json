@@ -7421,6 +7421,7 @@
     "This user account no longer exists.": "Tài khoản người dùng này không còn tồn tại.",
     "this user group": "nhóm người dùng này",
     "This user has no bindings": "Người dùng này không có liên kết nào",
+    "This user is already on the allowlist. Edit their existing entry.": "Người dùng này đã có trong danh sách cho phép. Hãy sửa mục hiện có.",
     "This verification has already been used. Please verify again.": "Xác minh này đã được sử dụng. Vui lòng xác minh lại.",
     "This verification method is currently unavailable.": "Phương thức xác minh này hiện không khả dụng.",
     "This verification method is not allowed for this action.": "Thao tác này không cho phép sử dụng phương thức xác minh này.",

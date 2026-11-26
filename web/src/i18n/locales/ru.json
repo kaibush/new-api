@@ -7421,6 +7421,7 @@
     "This user account no longer exists.": "Эта учётная запись пользователя больше не существует.",
     "this user group": "эта группа пользователей",
     "This user has no bindings": "У этого пользователя нет привязок",
+    "This user is already on the allowlist. Edit their existing entry.": "Этот пользователь уже в списке разрешённых. Измените существующую запись.",
     "This verification has already been used. Please verify again.": "Это подтверждение уже использовано. Подтвердите личность ещё раз.",
     "This verification method is currently unavailable.": "Этот способ подтверждения сейчас недоступен.",
     "This verification method is not allowed for this action.": "Этот способ подтверждения не разрешён для данной операции.",

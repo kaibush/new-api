@@ -884,17 +884,25 @@ it('allowlisting a user keeps audit collection and only selects content filterin
   await userEvent.click(
     within(dialog).getByRole('button', { name: 'Add to allowlist' })
   )
+  expect(
+    within(dialog).queryByRole('tab', { name: 'Edit' })
+  ).not.toBeInTheDocument()
+  const addForm = await screen.findByRole('dialog', {
+    name: 'Add to allowlist',
+  })
   await userEvent.click(
-    within(dialog).getByRole('combobox', { name: 'Search users by name or ID' })
+    within(addForm).getByRole('combobox', {
+      name: 'Search users by name or ID',
+    })
   )
   await userEvent.click(
     await screen.findByRole('option', { name: 'alice (#4)' })
   )
-  fireEvent.change(within(dialog).getByRole('textbox', { name: 'Reason' }), {
+  fireEvent.change(within(addForm).getByRole('textbox', { name: 'Reason' }), {
     target: { value: 'Approved test account' },
   })
   await userEvent.click(
-    within(dialog).getByRole('combobox', {
+    within(addForm).getByRole('combobox', {
       name: 'Content filtering instances',
     })
   )
@@ -907,7 +915,7 @@ it('allowlisting a user keeps audit collection and only selects content filterin
   ).not.toBeInTheDocument()
   await userEvent.keyboard('{Escape}')
   await userEvent.click(
-    within(dialog).getByRole('button', { name: 'Add to allowlist' })
+    within(addForm).getByRole('button', { name: 'Add to allowlist' })
   )
   await waitFor(() =>
     expect(put).toHaveBeenCalledWith('/api/input-audit/allowlist', {
@@ -926,6 +934,76 @@ it('allowlisting a user keeps audit collection and only selects content filterin
     expect.anything()
   )
   expect(await within(dialog).findByText('Approved test account')).toBeVisible()
+  await waitFor(() => expect(addForm).not.toBeInTheDocument())
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Edit' }))
+  const editForm = await screen.findByRole('dialog', { name: 'Edit' })
+  expect(within(editForm).getByRole('textbox', { name: 'Reason' })).toHaveValue(
+    'Approved test account'
+  )
+  expect(
+    within(editForm).getByRole('combobox', {
+      name: 'Search users by name or ID',
+    })
+  ).toBeDisabled()
+  fireEvent.change(within(editForm).getByRole('textbox', { name: 'Reason' }), {
+    target: { value: 'Updated approval' },
+  })
+  put.mockRejectedValueOnce(new Error('offline'))
+  await userEvent.click(
+    within(editForm).getByRole('button', { name: 'Save changes' })
+  )
+  await waitFor(() =>
+    expect(
+      within(editForm).getByRole('button', { name: 'Save changes' })
+    ).toBeEnabled()
+  )
+  expect(within(editForm).getByRole('textbox', { name: 'Reason' })).toHaveValue(
+    'Updated approval'
+  )
+  await userEvent.click(
+    within(editForm).getByRole('button', { name: 'Save changes' })
+  )
+  expect(await within(dialog).findByText('Updated approval')).toBeVisible()
+  await userEvent.click(
+    within(dialog).getByRole('button', { name: 'Add to allowlist' })
+  )
+  const freshForm = await screen.findByRole('dialog', {
+    name: 'Add to allowlist',
+  })
+  expect(
+    within(freshForm).getByRole('textbox', { name: 'Reason' })
+  ).toHaveValue('')
+  await userEvent.click(
+    within(freshForm).getByRole('combobox', {
+      name: 'Search users by name or ID',
+    })
+  )
+  await userEvent.click(
+    await screen.findByRole('option', { name: 'alice (#4)' })
+  )
+  fireEvent.change(within(freshForm).getByRole('textbox', { name: 'Reason' }), {
+    target: { value: 'Duplicate approval' },
+  })
+  await userEvent.click(
+    within(freshForm).getByRole('combobox', {
+      name: 'Content filtering instances',
+    })
+  )
+  await userEvent.click(await screen.findByRole('option', { name: 'Policy A' }))
+  await userEvent.keyboard('{Escape}')
+  const savedCalls = put.mock.calls.length
+  await userEvent.click(
+    within(freshForm).getByRole('button', { name: 'Add to allowlist' })
+  )
+  expect(
+    await within(freshForm).findByText(
+      'This user is already on the allowlist. Edit their existing entry.'
+    )
+  ).toBeVisible()
+  expect(put.mock.calls).toHaveLength(savedCalls)
+  await userEvent.click(
+    within(freshForm).getByRole('button', { name: 'Cancel' })
+  )
   await userEvent.click(within(dialog).getByRole('button', { name: 'Revoke' }))
   const confirm = screen.getByRole('alertdialog')
   await userEvent.click(within(confirm).getByRole('button', { name: 'Revoke' }))
@@ -1407,12 +1485,15 @@ it('allowlist capability discovery failure prevents adding exemptions', async ()
   await userEvent.click(
     within(dialog).getByRole('button', { name: 'Add to allowlist' })
   )
+  const addForm = await screen.findByRole('dialog', {
+    name: 'Add to allowlist',
+  })
   expect(
-    within(dialog).getByRole('combobox', {
+    within(addForm).getByRole('combobox', {
       name: 'Content filtering instances',
     })
   ).toBeDisabled()
   expect(
-    within(dialog).getByRole('button', { name: 'Add to allowlist' })
+    within(addForm).getByRole('button', { name: 'Add to allowlist' })
   ).toBeDisabled()
 })

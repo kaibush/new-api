@@ -7421,6 +7421,7 @@
     "This user account no longer exists.": "This user account no longer exists.",
     "this user group": "this user group",
     "This user has no bindings": "This user has no bindings",
+    "This user is already on the allowlist. Edit their existing entry.": "This user is already on the allowlist. Edit their existing entry.",
     "This verification has already been used. Please verify again.": "This verification has already been used. Please verify again.",
     "This verification method is currently unavailable.": "This verification method is currently unavailable.",
     "This verification method is not allowed for this action.": "This verification method is not allowed for this action.",

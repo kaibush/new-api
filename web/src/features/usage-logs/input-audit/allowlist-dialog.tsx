@@ -24,6 +24,7 @@ import { useTranslation } from 'react-i18next'
 import { z } from 'zod'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { Dialog } from '@/components/dialog'
 import { MultiSelect } from '@/components/multi-select'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -77,6 +78,8 @@ export function InputAuditAllowlistDialog(props: {
 }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
+  const [editorOpen, setEditorOpen] = useState(false)
+  const [editing, setEditing] = useState<InputAuditAllowlistEntry>()
   const [tab, setTab] = useState('entries')
   const [revoke, setRevoke] = useState<InputAuditAllowlistEntry>()
   const userID = useAuthStore((state) => state.auth.user?.id)
@@ -131,6 +134,8 @@ export function InputAuditAllowlistDialog(props: {
       })
       setRevoke(undefined)
       setTab('entries')
+      setEditorOpen(false)
+      setEditing(undefined)
       form.reset({
         user_id: undefined,
         reason: '',
@@ -191,140 +196,24 @@ export function InputAuditAllowlistDialog(props: {
           </Alert>
         )}
         <Tabs value={tab} onValueChange={(value) => setTab(String(value))}>
-          <TabsList className='grid w-full grid-cols-3'>
+          <TabsList className='grid w-full grid-cols-2'>
             <TabsTrigger value='entries'>{t('User allowlist')}</TabsTrigger>
-            <TabsTrigger value='edit'>{t('Edit')}</TabsTrigger>
             <TabsTrigger value='history'>{t('Allowlist history')}</TabsTrigger>
           </TabsList>
-          <TabsContent value='edit' className='pt-4'>
-            <form
-              aria-label={t('User allowlist')}
-              onSubmit={form.handleSubmit((values) => {
-                if (
-                  !policy.data ||
-                  !props.collectionEnabled ||
-                  instances.isError
-                ) {
-                  return
-                }
-                const previous = policy.data.entries.find(
-                  (entry) => entry.user_id === values.user_id
-                )
-                mutation.mutate({
-                  version: policy.data.version,
-                  entries: [
-                    ...policy.data.entries.filter(
-                      (entry) =>
-                        entry.user_id !== values.user_id &&
-                        entry.expires_at > Date.now() / 1000
-                    ),
-                    {
-                      ...previous,
-                      id: previous?.id ?? '',
-                      ...values,
-                      expires_at: Math.floor(
-                        new Date(values.expires_at).getTime() / 1000
-                      ),
-                    },
-                  ],
-                })
-              })}
-            >
-              <FieldGroup className='grid gap-4 sm:grid-cols-2'>
-                <Field>
-                  <FieldLabel htmlFor='allowlist-user'>{t('User')}</FieldLabel>
-                  <UserSelector
-                    id='allowlist-user'
-                    value={form.watch('user_id')}
-                    onChange={(id) =>
-                      form.setValue('user_id', id ?? 0, {
-                        shouldValidate: true,
-                      })
-                    }
-                    disabled={mutation.isPending}
-                    aria-invalid={!!form.formState.errors.user_id}
-                  />
-                  {form.formState.errors.user_id && (
-                    <FieldError>{t('Invalid user ID')}</FieldError>
-                  )}
-                </Field>
-                <Field className='sm:col-span-2'>
-                  <FieldLabel htmlFor='allowlist-reason'>
-                    {t('Reason')}
-                  </FieldLabel>
-                  <Textarea
-                    id='allowlist-reason'
-                    maxLength={500}
-                    disabled={mutation.isPending}
-                    {...form.register('reason')}
-                  />
-                  {form.formState.errors.reason && (
-                    <FieldError>{t('A reason is required')}</FieldError>
-                  )}
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor='allowlist-instances'>
-                    {t('Content filtering instances')}
-                  </FieldLabel>
-                  <MultiSelect
-                    id='allowlist-instances'
-                    placeholder={t('Content filtering instances')}
-                    options={options}
-                    selected={form.watch('instances')}
-                    onChange={(value) =>
-                      form.setValue('instances', value, {
-                        shouldValidate: true,
-                      })
-                    }
-                    disabled={
-                      mutation.isPending ||
-                      instances.isPending ||
-                      instances.isError
-                    }
-                  />
-                  {form.formState.errors.instances && (
-                    <FieldError>
-                      {t('Select at least one content filtering instance')}
-                    </FieldError>
-                  )}
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor='allowlist-expiry'>
-                    {t('Expires at')}
-                  </FieldLabel>
-                  <Input
-                    id='allowlist-expiry'
-                    type='datetime-local'
-                    disabled={mutation.isPending}
-                    {...form.register('expires_at')}
-                  />
-                  {form.formState.errors.expires_at && (
-                    <FieldError>
-                      {t('Choose an expiry within the next 365 days')}
-                    </FieldError>
-                  )}
-                </Field>
-                <Button
-                  type='submit'
-                  disabled={
-                    mutation.isPending ||
-                    !policy.data ||
-                    policy.isError ||
-                    instances.isError ||
-                    !props.collectionEnabled
-                  }
-                >
-                  {t('Add to allowlist')}
-                </Button>
-              </FieldGroup>
-            </form>
-          </TabsContent>
           <TabsContent value='entries' className='pt-3'>
             <div className='flex justify-end'>
               <Button
                 onClick={() => {
-                  form.reset()
-                  setTab('edit')
+                  setEditing(undefined)
+                  form.reset({
+                    user_id: undefined,
+                    reason: '',
+                    instances: [],
+                    expires_at: dayjs()
+                      .add(7, 'day')
+                      .format('YYYY-MM-DDTHH:mm'),
+                  })
+                  setEditorOpen(true)
                 }}
               >
                 {t('Add to allowlist')}
@@ -366,7 +255,8 @@ export function InputAuditAllowlistDialog(props: {
                       variant='outline'
                       disabled={mutation.isPending}
                       onClick={() => {
-                        setTab('edit')
+                        setEditing(entry)
+                        setEditorOpen(true)
                         form.reset({
                           ...entry,
                           expires_at: dayjs
@@ -431,6 +321,151 @@ export function InputAuditAllowlistDialog(props: {
           </TabsContent>
         </Tabs>
       </AuditFeatureSurface>
+      <Dialog
+        open={editorOpen}
+        onOpenChange={(value) => {
+          if (!mutation.isPending) setEditorOpen(value)
+        }}
+        title={editing ? t('Edit') : t('Add to allowlist')}
+      >
+        <form
+          aria-label={editing ? t('Edit') : t('Add to allowlist')}
+          onSubmit={form.handleSubmit((values) => {
+            if (!policy.data || !props.collectionEnabled || instances.isError) {
+              return
+            }
+            if (
+              !editing &&
+              policy.data.entries.some(
+                (entry) => entry.user_id === values.user_id
+              )
+            ) {
+              form.setError('user_id', {
+                type: 'duplicate',
+                message: t(
+                  'This user is already on the allowlist. Edit their existing entry.'
+                ),
+              })
+              return
+            }
+            const previous = editing
+            mutation.mutate({
+              version: policy.data.version,
+              entries: [
+                ...policy.data.entries.filter(
+                  (entry) =>
+                    entry.user_id !== values.user_id &&
+                    entry.expires_at > Date.now() / 1000
+                ),
+                {
+                  ...previous,
+                  id: previous?.id ?? '',
+                  ...values,
+                  expires_at: Math.floor(
+                    new Date(values.expires_at).getTime() / 1000
+                  ),
+                },
+              ],
+            })
+          })}
+        >
+          <FieldGroup className='grid gap-4 sm:grid-cols-2'>
+            <Field>
+              <FieldLabel htmlFor='allowlist-user'>{t('User')}</FieldLabel>
+              <UserSelector
+                id='allowlist-user'
+                value={form.watch('user_id')}
+                onChange={(id) =>
+                  form.setValue('user_id', id ?? 0, {
+                    shouldValidate: true,
+                  })
+                }
+                disabled={mutation.isPending || !!editing}
+                aria-invalid={!!form.formState.errors.user_id}
+              />
+              {form.formState.errors.user_id && (
+                <FieldError>
+                  {form.formState.errors.user_id.type === 'duplicate'
+                    ? form.formState.errors.user_id.message
+                    : t('Invalid user ID')}
+                </FieldError>
+              )}
+            </Field>
+            <Field className='sm:col-span-2'>
+              <FieldLabel htmlFor='allowlist-reason'>{t('Reason')}</FieldLabel>
+              <Textarea
+                id='allowlist-reason'
+                maxLength={500}
+                disabled={mutation.isPending}
+                {...form.register('reason')}
+              />
+              {form.formState.errors.reason && (
+                <FieldError>{t('A reason is required')}</FieldError>
+              )}
+            </Field>
+            <Field>
+              <FieldLabel htmlFor='allowlist-instances'>
+                {t('Content filtering instances')}
+              </FieldLabel>
+              <MultiSelect
+                id='allowlist-instances'
+                placeholder={t('Content filtering instances')}
+                options={options}
+                selected={form.watch('instances')}
+                onChange={(value) =>
+                  form.setValue('instances', value, {
+                    shouldValidate: true,
+                  })
+                }
+                disabled={
+                  mutation.isPending || instances.isPending || instances.isError
+                }
+              />
+              {form.formState.errors.instances && (
+                <FieldError>
+                  {t('Select at least one content filtering instance')}
+                </FieldError>
+              )}
+            </Field>
+            <Field>
+              <FieldLabel htmlFor='allowlist-expiry'>
+                {t('Expires at')}
+              </FieldLabel>
+              <Input
+                id='allowlist-expiry'
+                type='datetime-local'
+                disabled={mutation.isPending}
+                {...form.register('expires_at')}
+              />
+              {form.formState.errors.expires_at && (
+                <FieldError>
+                  {t('Choose an expiry within the next 365 days')}
+                </FieldError>
+              )}
+            </Field>
+            <Button
+              type='submit'
+              disabled={
+                mutation.isPending ||
+                !policy.data ||
+                policy.isError ||
+                instances.isError ||
+                !props.collectionEnabled
+              }
+            >
+              {editing ? t('Save changes') : t('Add to allowlist')}
+            </Button>
+            <Button
+              type='button'
+              variant='outline'
+              disabled={mutation.isPending}
+              onClick={() => setEditorOpen(false)}
+            >
+              {t('Cancel')}
+            </Button>
+          </FieldGroup>
+        </form>
+      </Dialog>
       <ConfirmDialog
         open={!!revoke}
         onOpenChange={(value) => {

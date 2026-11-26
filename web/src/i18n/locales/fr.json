@@ -7421,6 +7421,7 @@
     "This user account no longer exists.": "Ce compte utilisateur n’existe plus.",
     "this user group": "ce groupe d'utilisateurs",
     "This user has no bindings": "Cet utilisateur n'a aucune liaison",
+    "This user is already on the allowlist. Edit their existing entry.": "Cet utilisateur figure déjà dans la liste autorisée. Modifiez son entrée existante.",
     "This verification has already been used. Please verify again.": "Cette vérification a déjà été utilisée. Veuillez vous authentifier à nouveau.",
     "This verification method is currently unavailable.": "Cette méthode de vérification est actuellement indisponible.",
     "This verification method is not allowed for this action.": "Cette méthode de vérification n’est pas autorisée pour cette action.",

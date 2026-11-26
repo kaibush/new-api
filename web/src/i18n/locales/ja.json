@@ -7421,6 +7421,7 @@
     "This user account no longer exists.": "このユーザーアカウントは存在しません。",
     "this user group": "このユーザーグループ",
     "This user has no bindings": "このユーザーには連携がありません",
+    "This user is already on the allowlist. Edit their existing entry.": "このユーザーはすでに許可リストに登録されています。既存の項目を編集してください。",
     "This verification has already been used. Please verify again.": "この認証はすでに使用されています。もう一度認証してください。",
     "This verification method is currently unavailable.": "この確認方法は現在利用できません。",
     "This verification method is not allowed for this action.": "この操作ではこの確認方法を使用できません。",
