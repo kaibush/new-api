@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -665,4 +666,182 @@ func TestSetupLoginDoesNotTouchPasswordWhenPasswordFieldOmitted(t *testing.T) {
 	var stored model.User
 	require.NoError(t, db.First(&stored, user.Id).Error)
 	assert.Equal(t, hashedPassword, stored.Password)
+}
+
+func TestCrossGroupCatalogPermissionListingAndRouting(t *testing.T) {
+	withSelfUseModeEnabled(t)
+	db := setupModelListControllerTestDB(t)
+
+	originalMemoryCache := common.MemoryCacheEnabled
+	originalUsableGroups := setting.UserUsableGroups2JSONString()
+	originalRatios := ratio_setting.GroupRatio2JSONString()
+	originalAutoGroups := setting.AutoGroups2JsonString()
+	common.MemoryCacheEnabled = true
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","openai":"OpenAI","auto":"Auto"}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"openai":1}`))
+	require.NoError(t, setting.UpdateAutoGroupsByJsonString(`["openai","default"]`))
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = originalMemoryCache
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalUsableGroups))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalRatios))
+		require.NoError(t, setting.UpdateAutoGroupsByJsonString(originalAutoGroups))
+		require.NoError(t, setting.UpdateCatalogVisibility(`{"audiences":{},"models":{},"groups":{}}`))
+		model.InvalidatePricingCache()
+	})
+
+	for _, uid := range []int{11, 22, 33} {
+		require.NoError(t, db.Create(&model.User{
+			Id:       uid,
+			Username: fmt.Sprintf("user-%d", uid),
+			Password: "pw",
+			Group:    "default",
+			AffCode:  fmt.Sprintf("aff-%d", uid),
+			Status:   common.UserStatusEnabled,
+		}).Error)
+	}
+
+	priority := int64(0)
+	weight := uint(100)
+	require.NoError(t, db.Create(&[]model.Channel{
+		{
+			Id: 901, Type: constant.ChannelTypeOpenAI, Key: "k1", Status: common.ChannelStatusEnabled,
+			Name: "regular-openai", Group: "openai", Models: "gpt-4o-mini", Priority: &priority, Weight: &weight,
+		},
+		{
+			Id: 902, Type: constant.ChannelTypeOpenAI, Key: "k2", Status: common.ChannelStatusEnabled,
+			Name: "private-sol", Group: "gpt不降智", Models: "gpt-6.1-sol,gpt-6.2-sol", Priority: &priority, Weight: &weight,
+		},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{Group: "openai", Model: "gpt-4o-mini", ChannelId: 901, Enabled: true, Priority: &priority, Weight: weight},
+		{Group: "gpt不降智", Model: "gpt-6.1-sol", ChannelId: 902, Enabled: true, Priority: &priority, Weight: weight},
+		{Group: "gpt不降智", Model: "gpt-6.2-sol", ChannelId: 902, Enabled: true, Priority: &priority, Weight: weight},
+	}).Error)
+	model.InitChannelCache()
+
+	// Admin group list includes channel-only groups such as "gpt不降智"
+	groupRecorder := httptest.NewRecorder()
+	groupCtx, _ := gin.CreateTestContext(groupRecorder)
+	GetGroups(groupCtx)
+	var adminGroups struct {
+		Data []string `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(groupRecorder.Body.Bytes(), &adminGroups))
+	assert.Contains(t, adminGroups.Data, "gpt不降智")
+
+	// gpt-6.1-sol: open to all logged-in users except user 11
+	// gpt-6.2-sol: allowlisted directly to user 22
+	require.NoError(t, setting.UpdateCatalogVisibility(`{
+		"audiences": {},
+		"models": {},
+		"groups": {},
+		"open_models": ["gpt-6.1-sol"],
+		"model_exclusions": {"gpt-6.1-sol": [11]},
+		"model_users": {"gpt-6.2-sol": [22]}
+	}`))
+
+	cases := []struct {
+		viewer     int
+		tokenGroup string
+		expect61   bool
+		expect62   bool
+	}{
+		{viewer: 0, tokenGroup: "openai", expect61: false, expect62: false},
+		{viewer: 11, tokenGroup: "openai", expect61: false, expect62: false},
+		{viewer: 22, tokenGroup: "openai", expect61: true, expect62: true},
+		{viewer: 22, tokenGroup: "default", expect61: true, expect62: true},
+		{viewer: 22, tokenGroup: "auto", expect61: true, expect62: true},
+		{viewer: 33, tokenGroup: "openai", expect61: true, expect62: false},
+	}
+
+	for _, tc := range cases {
+		// 1. /v1/models
+		listRec := httptest.NewRecorder()
+		listCtx, _ := gin.CreateTestContext(listRec)
+		listCtx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+		listCtx.Set("id", tc.viewer)
+		common.SetContextKey(listCtx, constant.ContextKeyUserGroup, "default")
+		common.SetContextKey(listCtx, constant.ContextKeyTokenGroup, tc.tokenGroup)
+		ListModels(listCtx, constant.ChannelTypeOpenAI)
+		ids := decodeListModelsResponse(t, listRec)
+		assert.Equal(t, tc.expect61, hasKey(ids, "gpt-6.1-sol"), "viewer=%d group=%s gpt-6.1-sol", tc.viewer, tc.tokenGroup)
+		assert.Equal(t, tc.expect62, hasKey(ids, "gpt-6.2-sol"), "viewer=%d group=%s gpt-6.2-sol", tc.viewer, tc.tokenGroup)
+
+		// 2. /api/pricing
+		priceRec := httptest.NewRecorder()
+		priceCtx, _ := gin.CreateTestContext(priceRec)
+		priceCtx.Set("id", tc.viewer)
+		if tc.viewer > 0 {
+			common.SetContextKey(priceCtx, constant.ContextKeyUserGroup, "default")
+		}
+		GetPricing(priceCtx)
+		var priceBody struct {
+			Data        []model.Pricing    `json:"data"`
+			UsableGroup map[string]string  `json:"usable_group"`
+			GroupRatio  map[string]float64 `json:"group_ratio"`
+		}
+		require.NoError(t, common.Unmarshal(priceRec.Body.Bytes(), &priceBody))
+		pricingModels := map[string]bool{}
+		for _, item := range priceBody.Data {
+			pricingModels[item.ModelName] = true
+		}
+		assert.Equal(t, tc.expect61, pricingModels["gpt-6.1-sol"])
+		assert.Equal(t, tc.expect62, pricingModels["gpt-6.2-sol"])
+		if tc.expect61 || tc.expect62 {
+			assert.Contains(t, priceBody.UsableGroup, "gpt不降智")
+			assert.Equal(t, 1.0, priceBody.GroupRatio["gpt不降智"])
+		} else {
+			assert.NotContains(t, priceBody.UsableGroup, "gpt不降智")
+		}
+
+		// 3. /api/user/models (Playground)
+		if tc.viewer > 0 {
+			umRec := httptest.NewRecorder()
+			umCtx, _ := gin.CreateTestContext(umRec)
+			umCtx.Request = httptest.NewRequest(http.MethodGet, "/api/user/models?group=default", nil)
+			umCtx.Set("id", tc.viewer)
+			GetUserModels(umCtx)
+			var um userModelsResponse
+			require.NoError(t, common.Unmarshal(umRec.Body.Bytes(), &um))
+			assert.Equal(t, tc.expect61, slices.Contains(um.Data, "gpt-6.1-sol"))
+			assert.Equal(t, tc.expect62, slices.Contains(um.Data, "gpt-6.2-sol"))
+		}
+
+		// 4. Actual channel routing regardless of regular token group
+		for _, targetModel := range []struct {
+			name    string
+			allowed bool
+		}{
+			{"gpt-6.1-sol", tc.expect61},
+			{"gpt-6.2-sol", tc.expect62},
+		} {
+			routeCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			routeCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			routeCtx.Set("id", tc.viewer)
+			common.SetContextKey(routeCtx, constant.ContextKeyUserGroup, "default")
+			retry := 0
+			ch, selectedGroup, selectErr := service.SelectChannelForRequest(routeCtx, targetModel.name, &service.RetryParam{
+				Ctx:         routeCtx,
+				TokenGroup:  tc.tokenGroup,
+				ModelName:   targetModel.name,
+				RequestPath: "/v1/chat/completions",
+				Retry:       &retry,
+			})
+			if targetModel.allowed {
+				require.Nil(t, selectErr, "viewer=%d group=%s model=%s", tc.viewer, tc.tokenGroup, targetModel.name)
+				require.NotNil(t, ch)
+				assert.Equal(t, 902, ch.Id)
+				assert.Equal(t, "gpt不降智", selectedGroup)
+				assert.Equal(t, "gpt不降智", common.GetContextKeyString(routeCtx, constant.ContextKeyAutoGroup))
+			} else {
+				require.NotNil(t, selectErr, "viewer=%d group=%s model=%s", tc.viewer, tc.tokenGroup, targetModel.name)
+				assert.True(t, selectErr.NoAvailableChannel)
+			}
+		}
+	}
+}
+
+func hasKey(set map[string]struct{}, key string) bool {
+	_, ok := set[key]
+	return ok
 }

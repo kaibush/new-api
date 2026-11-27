@@ -18,18 +18,19 @@ func filterPricingByUsableGroups(pricing []model.Pricing, userID int, usableGrou
 	if len(pricing) == 0 {
 		return pricing
 	}
-	if len(usableGroup) == 0 {
-		return []model.Pricing{}
-	}
 
 	filtered := make([]model.Pricing, 0, len(pricing))
 	for _, item := range pricing {
 		if !setting.CatalogModelAllowed(userID, item.ModelName) {
 			continue
 		}
+		modelGranted := setting.CatalogModelGranted(userID, item.ModelName)
 		visible := make([]string, 0, len(item.EnableGroup))
 		for _, group := range item.EnableGroup {
-			if _, ok := usableGroup[group]; ok || group == "all" && setting.CatalogGroupAllowed(userID, group) {
+			if !setting.CatalogGroupAllowed(userID, group) {
+				continue
+			}
+			if _, ok := usableGroup[group]; ok || group == "all" || modelGranted || setting.CatalogGroupGranted(userID, group) {
 				visible = append(visible, group)
 			}
 		}
@@ -42,9 +43,10 @@ func filterPricingByUsableGroups(pricing []model.Pricing, userID int, usableGrou
 }
 
 func GetPricing(c *gin.Context) {
+	userID := c.GetInt("id")
 	pricing := model.GetPricing()
 	group := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-	usableGroup := service.GetUserUsableGroups(c.GetInt("id"), group)
+	usableGroup := service.GetUserUsableGroups(userID, group)
 	groupRatio := map[string]float64{}
 	maps.Copy(groupRatio, ratio_setting.GetGroupRatioCopy())
 	for target := range groupRatio {
@@ -52,11 +54,22 @@ func GetPricing(c *gin.Context) {
 			groupRatio[target] = ratio
 		}
 	}
-	pricing = filterPricingByUsableGroups(pricing, c.GetInt("id"), usableGroup)
+	pricing = filterPricingByUsableGroups(pricing, userID, usableGroup)
+	for _, item := range pricing {
+		for _, enableGroup := range item.EnableGroup {
+			if enableGroup == "" || enableGroup == "all" {
+				continue
+			}
+			if _, ok := usableGroup[enableGroup]; !ok {
+				usableGroup[enableGroup] = setting.GetUsableGroupDescription(enableGroup)
+			}
+			groupRatio[enableGroup] = service.GetUserGroupRatio(group, enableGroup)
+		}
+	}
 	// check groupRatio contains usableGroup
-	for group := range ratio_setting.GetGroupRatioCopy() {
-		if _, ok := usableGroup[group]; !ok {
-			delete(groupRatio, group)
+	for target := range ratio_setting.GetGroupRatioCopy() {
+		if _, ok := usableGroup[target]; !ok {
+			delete(groupRatio, target)
 		}
 	}
 
@@ -78,7 +91,7 @@ func GetPricing(c *gin.Context) {
 		"group_ratio":        groupRatio,
 		"usable_group":       usableGroup,
 		"supported_endpoint": endpoints,
-		"auto_groups":        service.GetUserAutoGroup(c.GetInt("id"), group),
+		"auto_groups":        service.GetUserAutoGroup(userID, group),
 		"pricing_version":    "a42d372ccf0b5dd13ecf71203521f9d2",
 	})
 }

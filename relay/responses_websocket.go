@@ -30,6 +30,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 
 	"github.com/MoeForge/moego/ojson"
 	"github.com/gin-gonic/gin"
@@ -697,12 +698,18 @@ func (s *responsesWSSession) restoreConnectionContext(c *gin.Context, model stri
 		}
 	} else {
 		group := common.GetContextKeyString(c, appconstant.ContextKeyUsingGroup)
-		if group == "auto" {
-			if !slices.Contains(service.GetRequestAutoGroups(c, common.GetContextKeyString(c, appconstant.ContextKeyUserGroup)), s.lockedGroup) {
+		if !setting.CatalogModelAllowed(c.GetInt("id"), model) {
+			return types.NewErrorWithStatusCode(errors.New("the connection model is no longer allowed"), types.ErrorCodeAccessDenied, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+		}
+		if group == "auto" || group != s.lockedGroup {
+			candidates := service.PermittedCandidateGroupsForRequest(c, common.GetContextKeyString(c, appconstant.ContextKeyUserGroup), group, model)
+			if !slices.Contains(candidates, s.lockedGroup) {
 				return types.NewErrorWithStatusCode(errors.New("the connection group is no longer allowed"), types.ErrorCodeAccessDenied, http.StatusForbidden, types.ErrOptionWithSkipRetry())
 			}
 			group = s.lockedGroup
 			common.SetContextKey(c, appconstant.ContextKeyAutoGroup, group)
+		} else if !setting.CatalogGroupAllowed(c.GetInt("id"), group) {
+			return types.NewErrorWithStatusCode(errors.New("the connection group is no longer allowed"), types.ErrorCodeAccessDenied, http.StatusForbidden, types.ErrOptionWithSkipRetry())
 		}
 		if !appmodel.IsChannelEnabledForGroupModel(group, model, s.lockedChannelID) {
 			return types.NewErrorWithStatusCode(errors.New("the connection channel is no longer allowed for this group and model"), types.ErrorCodeAccessDenied, http.StatusForbidden, types.ErrOptionWithSkipRetry())

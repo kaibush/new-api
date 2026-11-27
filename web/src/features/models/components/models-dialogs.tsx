@@ -16,6 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { nameOptions } from '@/features/users/permission-groups/lib/policy'
+import { ResourceRuleForm } from '@/features/users/permission-groups/rule-form'
+import { useCatalogVisibility } from '@/features/users/permission-groups/use-catalog-visibility'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
+
 import { DescriptionDialog } from './dialogs/description-dialog'
 import { MissingModelsDialog } from './dialogs/missing-models-dialog'
 import { PrefillGroupManagement } from './dialogs/prefill-group-management'
@@ -30,10 +36,17 @@ export function ModelsDialogs() {
     open,
     setOpen,
     currentRow,
+    permissionTargets,
+    setPermissionTargets,
     currentVendor,
     descriptionData,
     setDescriptionData,
   } = useModels()
+  const role = useAuthStore((state) => state.auth.user?.role)
+  const isSuperAdmin = role === ROLE.SUPER_ADMIN
+  const catalog = useCatalogVisibility({
+    enabled: isSuperAdmin && open === 'permission-model',
+  })
 
   return (
     <>
@@ -52,6 +65,29 @@ export function ModelsDialogs() {
         onOpenChange={(v) => !v && setOpen(null)}
         currentRow={currentRow}
       />
+
+      {open === 'permission-model' &&
+        isSuperAdmin &&
+        catalog.policy &&
+        permissionTargets.length > 0 && (
+          <ResourceRuleForm
+            kind='models'
+            names={permissionTargets}
+            policy={catalog.policy}
+            targets={nameOptions(permissionTargets)}
+            pending={catalog.isSaving}
+            onClose={() => {
+              setOpen(null)
+              setPermissionTargets([])
+            }}
+            onSave={(next) =>
+              catalog.savePolicy(next, () => {
+                setOpen(null)
+                setPermissionTargets([])
+              })
+            }
+          />
+        )}
 
       {/* Vendor Create/Update Dialog */}
       <VendorMutateDialog

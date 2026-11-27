@@ -65,6 +65,13 @@ export const Route = createFileRoute('/_authenticated/models/$section')({
         params: { section: MODELS_DEFAULT_SECTION },
       })
     }
+
+    if (params.section === 'permissions' && auth.user.role < ROLE.SUPER_ADMIN) {
+      throw redirect({
+        to: '/models/$section',
+        params: { section: MODELS_DEFAULT_SECTION },
+      })
+    }
   },
   validateSearch: modelsSearchSchema,
   component: Models,

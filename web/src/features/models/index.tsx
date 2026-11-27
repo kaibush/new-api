@@ -19,13 +19,16 @@ For commercial licensing, please contact support@quantumnous.com
 import { useQueryClient } from '@tanstack/react-query'
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { PermissionGroups } from '@/features/users/permission-groups'
+import { ROLE } from '@/lib/roles'
 import { requireServerSuccess } from '@/lib/server-error-message'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { listDeployments } from './api'
 import { DeploymentAccessGuard } from './components/deployment-access-guard'
@@ -59,11 +62,17 @@ const SECTION_META: Record<
     titleKey: 'Deployments',
     tabKey: 'Deployments',
   },
+  permissions: {
+    titleKey: 'Access permissions',
+    tabKey: 'Permissions',
+  },
 }
 
 function ModelsContent() {
   const { t } = useTranslation()
   const navigate = useNavigate({ from: '/models/$section' })
+  const role = useAuthStore((state) => state.auth.user?.role)
+  const isSuperAdmin = role === ROLE.SUPER_ADMIN
   const { tabCategory, setTabCategory, setOpen, setCurrentVendor } = useModels()
   const params = route.useParams()
   const activeSection = (params.section ??
@@ -90,10 +99,13 @@ function ModelsContent() {
     [navigate]
   )
 
+  const visibleSections = MODELS_SECTION_IDS.filter(
+    (section) => section !== 'permissions' || isSuperAdmin
+  )
   const meta = SECTION_META[activeSection] ?? SECTION_META.metadata
 
-  let actions = <ModelsPrimaryButtons />
-  let content = <ModelsTable />
+  let actions: ReactNode = <ModelsPrimaryButtons />
+  let content: ReactNode = <ModelsTable />
   if (activeSection === 'vendors') {
     actions = (
       <Button
@@ -116,6 +128,9 @@ function ModelsContent() {
       </Button>
     )
     content = <DeploymentsSection />
+  } else if (activeSection === 'permissions') {
+    actions = null
+    content = <PermissionGroups embedded />
   }
 
   return (
@@ -130,7 +145,7 @@ function ModelsContent() {
           <div className='flex h-full min-h-0 flex-col gap-4'>
             <Tabs value={activeSection} onValueChange={handleSectionChange}>
               <TabsList className='max-w-full flex-wrap justify-start group-data-horizontal/tabs:h-auto'>
-                {MODELS_SECTION_IDS.map((section) => (
+                {visibleSections.map((section) => (
                   <TabsTrigger key={section} value={section}>
                     {t(SECTION_META[section].tabKey)}
                   </TabsTrigger>

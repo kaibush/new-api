@@ -13,6 +13,72 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func enabledModelGroupsMap() map[string][]string {
+	if model.DB == nil {
+		return nil
+	}
+	if common.MemoryCacheEnabled {
+		pricing := model.GetPricing()
+		result := make(map[string][]string, len(pricing))
+		for _, item := range pricing {
+			groups := slices.Clone(item.EnableGroup)
+			slices.Sort(groups)
+			result[item.ModelName] = groups
+		}
+		return result
+	}
+	abilities := model.GetAllEnableAbilities()
+	seen := make(map[string]map[string]struct{})
+	for _, ability := range abilities {
+		if ability.Group == "" || ability.Model == "" {
+			continue
+		}
+		groupSet, ok := seen[ability.Model]
+		if !ok {
+			groupSet = make(map[string]struct{})
+			seen[ability.Model] = groupSet
+		}
+		groupSet[ability.Group] = struct{}{}
+	}
+	result := make(map[string][]string, len(seen))
+	for modelName, groupSet := range seen {
+		groups := slices.Collect(maps.Keys(groupSet))
+		slices.Sort(groups)
+		result[modelName] = groups
+	}
+	return result
+}
+
+func activeCatalogGroupSet() map[string]struct{} {
+	active := make(map[string]struct{})
+	for name := range ratio_setting.GetGroupRatioCopy() {
+		if name != "" && name != "auto" {
+			active[name] = struct{}{}
+		}
+	}
+	for name := range setting.GetUserUsableGroupsCopy() {
+		if name != "" && name != "auto" {
+			active[name] = struct{}{}
+		}
+	}
+	for _, groups := range enabledModelGroupsMap() {
+		for _, name := range groups {
+			if name != "" && name != "auto" {
+				active[name] = struct{}{}
+			}
+		}
+	}
+	return active
+}
+
+// AllConfiguredGroups returns all routing groups configured in group ratios,
+// usable groups, or enabled channel abilities (excluding "auto").
+func AllConfiguredGroups() []string {
+	groups := slices.Collect(maps.Keys(activeCatalogGroupSet()))
+	slices.Sort(groups)
+	return groups
+}
+
 func GetUserUsableGroups(userID int, userGroup string) map[string]string {
 	groupsCopy := setting.GetUserUsableGroupsCopy()
 	if userGroup != "" {
@@ -39,6 +105,17 @@ func GetUserUsableGroups(userID int, userGroup string) map[string]string {
 			groupsCopy[userGroup] = "用户分组"
 		}
 	}
+	if permitted := setting.CatalogPermittedGroups(userID); len(permitted) > 0 {
+		active := activeCatalogGroupSet()
+		for _, groupName := range permitted {
+			if _, isActive := active[groupName]; !isActive {
+				continue
+			}
+			if _, ok := groupsCopy[groupName]; !ok {
+				groupsCopy[groupName] = setting.GetUsableGroupDescription(groupName)
+			}
+		}
+	}
 	maps.DeleteFunc(groupsCopy, func(name, _ string) bool { return !setting.CatalogGroupAllowed(userID, name) })
 	return groupsCopy
 }
@@ -53,6 +130,116 @@ func VisibleCatalogModels(userID int, groups []string) []string {
 	return slices.DeleteFunc(GetGroupsEnabledModels(visibleGroups), func(name string) bool { return !setting.CatalogModelAllowed(userID, name) })
 }
 
+// PermittedCatalogModels returns enabled models explicitly granted to userID by
+// model-level or group-level CatalogVisibility rules, regardless of token group.
+func PermittedCatalogModels(userID int) []string {
+	if userID <= 0 || !setting.HasCatalogRestrictions() {
+		return nil
+	}
+	byModel := enabledModelGroupsMap()
+	if len(byModel) == 0 {
+		return nil
+	}
+	modelNames := slices.Collect(maps.Keys(byModel))
+	slices.Sort(modelNames)
+	permitted := make([]string, 0)
+	for _, modelName := range modelNames {
+		if !setting.CatalogModelAllowed(userID, modelName) {
+			continue
+		}
+		modelGranted := setting.CatalogModelGranted(userID, modelName)
+		for _, group := range byModel[modelName] {
+			if setting.CatalogGroupAllowed(userID, group) && (modelGranted || setting.CatalogGroupGranted(userID, group)) {
+				permitted = append(permitted, modelName)
+				break
+			}
+		}
+	}
+	return permitted
+}
+
+// PermittedModelFallbackGroups returns enabled channel groups that userID is
+// permitted to fall back to for modelName via explicit CatalogVisibility grants.
+func PermittedModelFallbackGroups(userID int, modelName string, excludeGroups []string) []string {
+	if userID <= 0 || modelName == "" || !setting.HasCatalogRestrictions() || !setting.CatalogModelAllowed(userID, modelName) {
+		return nil
+	}
+	byModel := enabledModelGroupsMap()
+	if len(byModel) == 0 {
+		return nil
+	}
+	candidateSet := make(map[string]struct{})
+	for _, group := range byModel[modelName] {
+		candidateSet[group] = struct{}{}
+	}
+	if normalized := ratio_setting.RoutingMatchModelName(modelName); normalized != "" && normalized != modelName {
+		for _, group := range byModel[normalized] {
+			candidateSet[group] = struct{}{}
+		}
+	}
+	if len(candidateSet) == 0 {
+		return nil
+	}
+	candidates := slices.Collect(maps.Keys(candidateSet))
+	slices.Sort(candidates)
+	modelGranted := setting.CatalogModelGranted(userID, modelName)
+	fallbacks := make([]string, 0, len(candidates))
+	for _, group := range candidates {
+		if group == "" || group == "auto" || slices.Contains(excludeGroups, group) {
+			continue
+		}
+		if setting.CatalogGroupAllowed(userID, group) && (modelGranted || setting.CatalogGroupGranted(userID, group)) {
+			fallbacks = append(fallbacks, group)
+		}
+	}
+	return fallbacks
+}
+
+// PermittedCandidateGroupsForRequest returns the ordered routing groups eligible
+// to serve modelName for the current request, starting with the token's bound
+// group(s) and followed by any CatalogVisibility cross-group grants.
+func PermittedCandidateGroupsForRequest(c *gin.Context, userGroup, tokenGroup, modelName string) []string {
+	userID := c.GetInt("id")
+	var base []string
+	if tokenGroup == "auto" {
+		base = GetRequestAutoGroups(c, userGroup)
+	} else if tokenGroup != "" && setting.CatalogGroupAllowed(userID, tokenGroup) {
+		base = []string{tokenGroup}
+	}
+	for _, fallbackGroup := range PermittedModelFallbackGroups(userID, modelName, base) {
+		base = append(base, fallbackGroup)
+	}
+	return base
+}
+
+// PermittedViewerGroups returns all routing groups whose catalog/metrics entries
+// userID may view, including groups backing explicitly granted models.
+func PermittedViewerGroups(userID int, userGroup string) []string {
+	usable := GetUserUsableGroups(userID, userGroup)
+	seen := make(map[string]struct{}, len(usable))
+	for group := range usable {
+		if group != "" && group != "auto" {
+			seen[group] = struct{}{}
+		}
+	}
+	if userID > 0 && setting.HasCatalogRestrictions() {
+		byModel := enabledModelGroupsMap()
+		for modelName, groups := range byModel {
+			if !setting.CatalogModelGranted(userID, modelName) {
+				continue
+			}
+			for _, group := range groups {
+				if group != "" && group != "auto" && setting.CatalogGroupAllowed(userID, group) {
+					seen[group] = struct{}{}
+				}
+			}
+		}
+	}
+	groups := slices.Collect(maps.Keys(seen))
+	slices.Sort(groups)
+	return groups
+}
+
 func GroupInUserUsableGroups(userID int, userGroup, groupName string) bool {
 	_, ok := GetUserUsableGroups(userID, userGroup)[groupName]
 	return ok
@@ -62,7 +249,8 @@ func IsUserSelectableGroup(userID int, userGroup, groupName string) bool {
 	if groupName == "" || groupName == "auto" {
 		return false
 	}
-	return GroupInUserUsableGroups(userID, userGroup, groupName) && ratio_setting.ContainsGroupRatio(groupName)
+	return GroupInUserUsableGroups(userID, userGroup, groupName) &&
+		(ratio_setting.ContainsGroupRatio(groupName) || setting.CatalogGroupGranted(userID, groupName))
 }
 
 // GetUserAutoGroup 根据用户分组获取自动分组设置

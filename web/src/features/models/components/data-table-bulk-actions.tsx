@@ -18,7 +18,15 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
 import type { Table } from '@tanstack/react-table'
-import { Eye, EyeOff, Trash2, Copy, Building2, Unlink } from 'lucide-react'
+import {
+  Eye,
+  EyeOff,
+  Trash2,
+  Copy,
+  Building2,
+  Unlink,
+  Shield,
+} from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -31,12 +39,15 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { copyToClipboard } from '@/lib/copy-to-clipboard'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { handleBatchEnableModels, handleBatchDisableModels } from '../lib'
 import type { Model } from '../types'
 import type { VendorOperation } from '../vendor-api'
 import { ModelDeleteDialog } from './dialogs/model-delete-dialog'
 import { VendorOperationDialog } from './dialogs/vendor-operation-dialog'
+import { useModels } from './models-provider'
 
 interface DataTableBulkActionsProps<TData> {
   table: Table<TData>
@@ -47,6 +58,8 @@ export function DataTableBulkActions<TData>({
 }: DataTableBulkActionsProps<TData>) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const role = useAuthStore((state) => state.auth.user?.role)
+  const { setOpen, setPermissionTargets } = useModels()
   const [vendorOperation, setVendorOperation] =
     useState<VendorOperation | null>(null)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
@@ -217,6 +230,36 @@ export function DataTableBulkActions<TData>({
             </p>
           </TooltipContent>
         </Tooltip>
+
+        {role === ROLE.SUPER_ADMIN && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant='outline'
+                  size='icon'
+                  onClick={() => {
+                    setPermissionTargets(
+                      selectedModels.map((item) => item.model_name)
+                    )
+                    setOpen('permission-model')
+                  }}
+                  className='size-8'
+                  aria-label={t('Configure access permissions')}
+                  title={t('Configure access permissions')}
+                />
+              }
+            >
+              <Shield />
+              <span className='sr-only'>
+                {t('Configure access permissions')}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{t('Configure access permissions')}</p>
+            </TooltipContent>
+          </Tooltip>
+        )}
 
         <Tooltip>
           <TooltipTrigger

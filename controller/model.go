@@ -21,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
@@ -245,7 +246,24 @@ func visibleTokenModelNames(c *gin.Context) ([]string, []string, error) {
 			tokenModelLimit = map[string]bool{}
 		}
 	}
-	models := service.VisibleCatalogModels(c.GetInt("id"), ownerGroups)
+	userID := c.GetInt("id")
+	models := service.VisibleCatalogModels(userID, ownerGroups)
+	effectiveGroups := slices.Clone(ownerGroups)
+	if setting.CatalogGroupAllowed(userID, groups.tokenGroup) {
+		seenModels := make(map[string]struct{}, len(models))
+		for _, modelName := range models {
+			seenModels[modelName] = struct{}{}
+		}
+		for _, modelName := range service.PermittedCatalogModels(userID) {
+			if _, exists := seenModels[modelName]; !exists {
+				seenModels[modelName] = struct{}{}
+				models = append(models, modelName)
+			}
+			for _, fallbackGroup := range service.PermittedModelFallbackGroups(userID, modelName, effectiveGroups) {
+				effectiveGroups = append(effectiveGroups, fallbackGroup)
+			}
+		}
+	}
 	for _, modelName := range models {
 		if modelLimitEnable {
 			matchingName := ratio_setting.RoutingMatchModelName(modelName)
@@ -259,7 +277,7 @@ func visibleTokenModelNames(c *gin.Context) ([]string, []string, error) {
 		userModelNames = append(userModelNames, modelName)
 	}
 
-	return userModelNames, ownerGroups, nil
+	return userModelNames, effectiveGroups, nil
 }
 
 func ListModels(c *gin.Context, modelType int) {
@@ -389,10 +407,14 @@ func RetrieveModel(c *gin.Context, modelType int) {
 }
 
 func viewerCatalogNames(c *gin.Context) map[string]bool {
+	userID := c.GetInt("id")
 	group := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-	groups := service.GetUserUsableGroups(c.GetInt("id"), group)
+	groups := service.GetUserUsableGroups(userID, group)
 	visible := map[string]bool{}
-	for _, name := range service.VisibleCatalogModels(c.GetInt("id"), slices.Collect(maps.Keys(groups))) {
+	for _, name := range service.VisibleCatalogModels(userID, slices.Collect(maps.Keys(groups))) {
+		visible[name] = true
+	}
+	for _, name := range service.PermittedCatalogModels(userID) {
 		visible[name] = true
 	}
 	return visible

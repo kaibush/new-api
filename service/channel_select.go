@@ -124,6 +124,9 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 
 	if param.TokenGroup == "auto" {
 		autoGroups := GetRequestAutoGroups(param.Ctx, userGroup)
+		for _, fallbackGroup := range PermittedModelFallbackGroups(param.Ctx.GetInt("id"), param.ModelName, autoGroups) {
+			autoGroups = append(autoGroups, fallbackGroup)
+		}
 		if len(autoGroups) == 0 {
 			return nil, selectGroup, errors.New("auto groups is not enabled")
 		}
@@ -202,6 +205,24 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 		)
 		if err != nil {
 			return nil, param.TokenGroup, err
+		}
+		if channel == nil {
+			for _, fallbackGroup := range PermittedModelFallbackGroups(param.Ctx.GetInt("id"), param.ModelName, []string{param.TokenGroup}) {
+				channel, err = model.GetRandomSatisfiedChannel(
+					fallbackGroup,
+					param.ModelName,
+					param.GetRetry(),
+					filters,
+				)
+				if err != nil {
+					return nil, fallbackGroup, err
+				}
+				if channel != nil {
+					common.SetContextKey(param.Ctx, constant.ContextKeyAutoGroup, fallbackGroup)
+					selectGroup = fallbackGroup
+					break
+				}
+			}
 		}
 	}
 	return channel, selectGroup, nil
@@ -305,10 +326,7 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 			return nil, "", pinnedChannelUnavailable(pin, http.StatusForbidden, i18n.MsgDistributorChannelDisabled)
 		}
 		if setting.HasCatalogRestrictions() && modelName != "" {
-			groups := []string{retry.TokenGroup}
-			if retry.TokenGroup == "auto" {
-				groups = GetRequestAutoGroups(c, userGroup)
-			}
+			groups := PermittedCandidateGroupsForRequest(c, userGroup, retry.TokenGroup, modelName)
 			if !model.IsChannelEnabledForAnyGroupModel(groups, modelName, channel.Id) {
 				return nil, retry.TokenGroup, &ChannelSelectError{StatusCode: http.StatusServiceUnavailable, Code: types.ErrorCodeModelNotFound, MessageID: i18n.MsgDistributorNoAvailableChannel, Params: map[string]any{"Group": retry.TokenGroup, "Model": modelName}, NoAvailableChannel: true}
 			}
@@ -335,9 +353,13 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 				affinitySatisfied, _ = model.ChannelSatisfiesFilters(preferred, modelName, constraints.Filters)
 			}
 			if affinitySatisfied {
-				if usingGroup == "auto" {
-					userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-					for _, g := range GetRequestAutoGroups(c, userGroup) {
+				if usingGroup != "auto" && model.IsChannelEnabledForGroupModel(usingGroup, modelName, preferred.Id) {
+					channel = preferred
+					selectGroup = usingGroup
+					affinityUsable = true
+					MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
+				} else {
+					for _, g := range PermittedCandidateGroupsForRequest(c, userGroup, usingGroup, modelName) {
 						if model.IsChannelEnabledForGroupModel(g, modelName, preferred.Id) {
 							selectGroup = g
 							common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
@@ -347,11 +369,6 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 							break
 						}
 					}
-				} else if model.IsChannelEnabledForGroupModel(usingGroup, modelName, preferred.Id) {
-					channel = preferred
-					selectGroup = usingGroup
-					affinityUsable = true
-					MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
 				}
 			}
 			if !affinityUsable && !ShouldKeepChannelAffinityOnChannelDisabled() {

@@ -36,8 +36,18 @@ import {
 } from '@/features/model-pricing/api'
 import { modelPricingDisplay } from '@/features/model-pricing/pricing'
 import { ModelPriceCell } from '@/features/pricing/components/model-price-cell'
+import { ResourceAccessBadge } from '@/features/users/permission-groups/access-badge'
+import {
+  EMPTY_POLICY,
+  describeResourceRule,
+  getResourceRule,
+} from '@/features/users/permission-groups/lib/policy'
+import { useCatalogVisibility } from '@/features/users/permission-groups/use-catalog-visibility'
+import { toIntlLocale } from '@/i18n/languages'
 import { formatTimestampToDate } from '@/lib/format'
 import { getLobeIcon } from '@/lib/lobe-icon'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { getNameRuleConfig } from '../constants'
 import { parseModelTags, formatEndpointsDisplay } from '../lib'
@@ -55,9 +65,13 @@ export function useModelsColumns(
   pricing?: ModelPricingConfig,
   pricingState?: 'loading' | 'error'
 ): ColumnDef<Model>[] {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const canPrice = useCanEditModelPricing()
-  const { setCurrentRow, setOpen } = useModels()
+  const role = useAuthStore((state) => state.auth.user?.role)
+  const isSuperAdmin = role === ROLE.SUPER_ADMIN
+  const catalog = useCatalogVisibility({ enabled: isSuperAdmin })
+  const { setCurrentRow, setOpen, setPermissionTargets } = useModels()
   const vendorMap = useMemo(
     () => new Map(vendors.map((vendor) => [vendor.id, vendor])),
     [vendors]
@@ -69,6 +83,44 @@ export function useModelsColumns(
   )
   return useMemo<ColumnDef<Model>[]>(() => {
     const rules = getNameRuleConfig(t)
+    const permissionColumns: ColumnDef<Model>[] = isSuperAdmin
+      ? [
+          {
+            id: 'access_permission',
+            header: t('Access permission'),
+            meta: { label: t('Access permission') },
+            size: 155,
+            enableSorting: false,
+            cell: ({ row }) => {
+              const modelName = row.original.model_name
+              const rule = getResourceRule(
+                catalog.policy ?? EMPTY_POLICY,
+                'models',
+                modelName
+              )
+              const summary = describeResourceRule(rule, t, locale)
+              return (
+                <Button
+                  variant='ghost'
+                  size='sm'
+                  className='h-auto max-w-full justify-start px-0 py-0.5 font-normal hover:bg-transparent'
+                  title={summary}
+                  aria-label={t('Configure access for {{model}}', {
+                    model: modelName,
+                  })}
+                  onClick={() => {
+                    setPermissionTargets([modelName])
+                    setOpen('permission-model')
+                  }}
+                >
+                  <ResourceAccessBadge rule={rule} />
+                </Button>
+              )
+            },
+          },
+        ]
+      : []
+
     return [
       {
         id: 'select',
@@ -210,6 +262,7 @@ export function useModelsColumns(
         meta: { mobileBadge: true },
         cell: ({ row }) => <ModelSquareStatus model={row.original} />,
       },
+      ...permissionColumns,
       {
         id: 'connections',
         header: t('Channels and groups'),
@@ -379,5 +432,17 @@ export function useModelsColumns(
         meta: { mobileHidden: true },
       },
     ]
-  }, [t, canPrice, vendorMap, priceMap, pricingState, setCurrentRow, setOpen])
+  }, [
+    t,
+    locale,
+    canPrice,
+    isSuperAdmin,
+    catalog.policy,
+    vendorMap,
+    priceMap,
+    pricingState,
+    setCurrentRow,
+    setOpen,
+    setPermissionTargets,
+  ])
 }

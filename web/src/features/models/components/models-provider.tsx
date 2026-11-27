@@ -35,6 +35,7 @@ type DialogType =
   | 'create-model'
   | 'update-model'
   | 'price-model'
+  | 'permission-model'
   | 'create-vendor'
   | 'vendors'
   | 'price-sync'
@@ -50,6 +51,8 @@ type ModelsContextType = {
   setOpen: (open: DialogType) => void
   currentRow: Model | null
   setCurrentRow: (model: Model | null) => void
+  permissionTargets: string[]
+  setPermissionTargets: (targets: string[]) => void
   currentVendor: Vendor | null
   setCurrentVendor: (vendor: Vendor | null) => void
   selectedVendor: string | null
@@ -79,6 +82,7 @@ const ModelsContext = createContext<ModelsContextType | undefined>(undefined)
 export function ModelsProvider({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState<DialogType>(null)
   const [currentRow, setCurrentRow] = useState<Model | null>(null)
+  const [permissionTargets, setPermissionTargets] = useState<string[]>([])
   const [currentVendor, setCurrentVendor] = useState<Vendor | null>(null)
   const [selectedVendor, setSelectedVendor] = useState<string | null>(null)
   const [descriptionData, setDescriptionData] = useState<{
@@ -101,6 +105,8 @@ export function ModelsProvider({ children }: { children: React.ReactNode }) {
         setOpen,
         currentRow,
         setCurrentRow,
+        permissionTargets,
+        setPermissionTargets,
         currentVendor,
         setCurrentVendor,
         selectedVendor,

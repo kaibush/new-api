@@ -1,9 +1,7 @@
 package controller
 
 import (
-	"maps"
 	"net/http"
-	"slices"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
@@ -22,8 +20,8 @@ func GetPerfMetricsSummary(c *gin.Context) {
 		}
 	}
 
-	groups := service.GetUserUsableGroups(c.GetInt("id"), common.GetContextKeyString(c, constant.ContextKeyUserGroup))
-	result, err := perfmetrics.QueryVisibleSummary(hours, slices.AppendSeq([]string{}, maps.Keys(groups)), viewerCatalogNames(c))
+	allowedGroups := service.PermittedViewerGroups(c.GetInt("id"), common.GetContextKeyString(c, constant.ContextKeyUserGroup))
+	result, err := perfmetrics.QueryVisibleSummary(hours, allowedGroups, viewerCatalogNames(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
@@ -55,10 +53,9 @@ func GetPerfMetrics(c *gin.Context) {
 		}
 	}
 
-	groups := service.GetUserUsableGroups(c.GetInt("id"), common.GetContextKeyString(c, constant.ContextKeyUserGroup))
 	allowed := []string{}
 	if viewerCatalogNames(c)[modelName] {
-		allowed = slices.AppendSeq(allowed, maps.Keys(groups))
+		allowed = service.PermittedViewerGroups(c.GetInt("id"), common.GetContextKeyString(c, constant.ContextKeyUserGroup))
 	}
 	result, err := perfmetrics.Query(perfmetrics.QueryParams{
 		Model:         modelName,

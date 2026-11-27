@@ -855,3 +855,31 @@ it.each([
     }
   }
 )
+
+it('configures model access permissions inline from the models table including channel-only rows', async () => {
+  await renderList([channel, metadata])
+  let savedPolicy: unknown = null
+  const put = vi
+    .spyOn(api, 'put')
+    .mockImplementation(async (_path, payload) => {
+      savedPolicy = JSON.parse((payload as { value: string }).value)
+      return { data: { success: true } }
+    })
+  const user = userEvent.setup()
+
+  await user.click(
+    screen.getByRole('button', { name: 'Configure access for channel-only' })
+  )
+  const dialog = within(await screen.findByRole('dialog'))
+  expect(dialog.getByRole('combobox', { name: 'Access mode' })).toHaveValue(
+    'all_users'
+  )
+  await user.click(dialog.getByRole('button', { name: 'Save changes' }))
+  await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+  expect(savedPolicy).toEqual({
+    audiences: {},
+    models: {},
+    groups: {},
+    open_models: ['channel-only'],
+  })
+})

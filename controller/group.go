@@ -13,24 +13,23 @@ import (
 )
 
 func GetGroups(c *gin.Context) {
-	groupNames := make([]string, 0)
-	for groupName := range ratio_setting.GetGroupRatioCopy() {
-		groupNames = append(groupNames, groupName)
-	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    groupNames,
+		"data":    service.AllConfiguredGroups(),
 	})
 }
 
 func GetUserGroups(c *gin.Context) {
 	usableGroups := make(map[string]map[string]any)
+	userID := c.GetInt("id")
 	userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-	userUsableGroups := service.GetUserUsableGroups(c.GetInt("id"), userGroup)
-	for groupName, _ := range ratio_setting.GetGroupRatioCopy() {
-		// UserUsableGroups contains the groups that the user can use
-		if desc, ok := userUsableGroups[groupName]; ok {
+	userUsableGroups := service.GetUserUsableGroups(userID, userGroup)
+	for groupName, desc := range userUsableGroups {
+		if groupName == "" || groupName == "auto" {
+			continue
+		}
+		if ratio_setting.ContainsGroupRatio(groupName) || setting.CatalogGroupGranted(userID, groupName) {
 			usableGroups[groupName] = map[string]any{
 				"ratio": service.GetUserGroupRatio(userGroup, groupName),
 				"desc":  desc,

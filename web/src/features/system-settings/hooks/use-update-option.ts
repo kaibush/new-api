@@ -79,8 +79,15 @@ export function useUpdateOption() {
             'perf-metrics',
             'perf-metrics-summary',
             'user-models',
+            'user-models-ccswitch',
+            'playground-models',
+            'playground-groups',
+            'dashboard',
             'user-groups',
             'token-auto-groups',
+            'groups',
+            'enabled-models',
+            'models',
           ]) {
             void queryClient.invalidateQueries({ queryKey: [key] })
           }

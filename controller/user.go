@@ -655,10 +655,23 @@ func GetUserModels(c *gin.Context) {
 			groupsToQuery = []string{group}
 		}
 	}
+	visible := service.VisibleCatalogModels(id, groupsToQuery)
+	if group == "" || setting.CatalogGroupAllowed(id, group) {
+		seen := make(map[string]struct{}, len(visible))
+		for _, modelName := range visible {
+			seen[modelName] = struct{}{}
+		}
+		for _, modelName := range service.PermittedCatalogModels(id) {
+			if _, exists := seen[modelName]; !exists {
+				seen[modelName] = struct{}{}
+				visible = append(visible, modelName)
+			}
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    service.VisibleCatalogModels(id, groupsToQuery),
+		"data":    visible,
 	})
 }
 
