@@ -27,6 +27,37 @@ import { Button } from '@/components/ui/button'
 import { Dialog as DialogRoot, DialogContent, DialogTitle } from '../dialog'
 
 describe('dialog viewport layout', () => {
+  test('a keyboard-aware form follows visual viewport resize and pan', () => {
+    const viewport = Object.assign(new EventTarget(), {
+      height: 600,
+      offsetTop: 0,
+    })
+    vi.stubGlobal('visualViewport', viewport)
+    try {
+      const view = render(
+        <Dialog open fitVisualViewport title='Editor'>
+          <p>Form</p>
+        </Dialog>
+      )
+      const dialog = screen.getByRole('dialog', { name: 'Editor' })
+      viewport.height = 320
+      viewport.dispatchEvent(new Event('resize'))
+      expect(
+        dialog.style.getPropertyValue('--dialog-available-height')
+      ).toContain('320px')
+      viewport.offsetTop = 10
+      viewport.dispatchEvent(new Event('scroll'))
+      expect(
+        dialog.style.getPropertyValue('--dialog-viewport-center')
+      ).toContain('170px')
+      view.unmount()
+      expect(dialog.style.getPropertyValue('--dialog-available-height')).toBe(
+        ''
+      )
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
   test('a dialog can hide its body scrollbar while retaining overflow scrolling', () => {
     render(
       <Dialog open title='Community board' scrollAreaClassName='no-scrollbar'>

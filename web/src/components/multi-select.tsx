@@ -60,6 +60,7 @@ interface MultiSelectProps {
   onChange: (values: string[]) => void
   placeholder?: string
   className?: string
+  popupClassName?: string
   allowCreate?: boolean
   /**
    * Label shown for the "create" item in the dropdown.
@@ -416,7 +417,7 @@ export function MultiSelect(props: MultiSelectProps) {
         />
       </ComboboxChips>
 
-      <ComboboxContent anchor={chipsAnchorRef}>
+      <ComboboxContent anchor={chipsAnchorRef} className={props.popupClassName}>
         <ComboboxList>
           <ComboboxCollection>
             {(item: string) => {

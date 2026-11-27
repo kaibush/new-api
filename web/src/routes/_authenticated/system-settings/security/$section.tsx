@@ -28,6 +28,9 @@ export const Route = createFileRoute(
   '/_authenticated/system-settings/security/$section'
 )({
   beforeLoad: ({ params }) => {
+    if (params.section === 'model-visibility') {
+      throw redirect({ to: '/users/permission-groups', replace: true })
+    }
     // Sensitive words are a request processing instance now.
     if (params.section === 'sensitive-words') {
       throw redirect({ to: '/request-processing', replace: true })

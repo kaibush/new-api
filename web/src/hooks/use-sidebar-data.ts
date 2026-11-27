@@ -58,6 +58,7 @@ import { useAuthStore } from '@/stores/auth-store'
 export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
   const userID = useAuthStore((s) => s.auth.user?.id)
+  const isRoot = useAuthStore((s) => s.auth.user?.role === ROLE.SUPER_ADMIN)
   const tickets = useQuery({ ...ticketSettingsQuery, enabled: Boolean(userID) })
   const community = useQuery({
     queryKey: ['community-status'],
@@ -191,9 +192,19 @@ export function useSidebarData(): SidebarData {
             icon: Box,
           },
           {
-            title: t('Users'),
-            url: '/users',
             icon: Users,
+            ...(isRoot
+              ? {
+                  title: t('User management'),
+                  items: [
+                    { title: t('All users'), url: '/users' },
+                    {
+                      title: t('Permission groups'),
+                      url: '/users/permission-groups',
+                    },
+                  ],
+                }
+              : { title: t('Users'), url: '/users' }),
           },
           {
             title: t('User activity'),

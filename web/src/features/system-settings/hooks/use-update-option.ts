@@ -24,7 +24,11 @@ import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
 import { updatePasskeyDomains, updateSystemOption } from '../api'
-import type { UpdateOptionRequest, UpdatePasskeyDomainsRequest } from '../types'
+import type {
+  SystemOptionsResponse,
+  UpdateOptionRequest,
+  UpdatePasskeyDomainsRequest,
+} from '../types'
 
 // Configuration keys that require status refresh
 const STATUS_RELATED_KEYS = new Set([
@@ -57,6 +61,18 @@ export function useUpdateOption() {
     onSuccess: (data, variables) => {
       if (data.success) {
         if (variables.key === 'CatalogVisibility') {
+          queryClient.setQueryData<SystemOptionsResponse>(
+            ['system-options'],
+            (old) =>
+              old && {
+                ...old,
+                data: old.data.map((option) =>
+                  option.key === variables.key
+                    ? { ...option, value: String(variables.value) }
+                    : option
+                ),
+              }
+          )
           for (const key of [
             'pricing',
             'rankings',

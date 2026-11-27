@@ -36,6 +36,7 @@ type DialogProps = React.ComponentProps<typeof DialogRoot> & {
   trigger?: React.ReactElement
   footer?: React.ReactNode
   contentHeight?: React.CSSProperties['height']
+  fitVisualViewport?: boolean
   contentClassName?: string
   headerClassName?: string
   titleClassName?: string
@@ -58,6 +59,7 @@ export function Dialog({
   trigger,
   footer,
   contentHeight = 'auto',
+  fitVisualViewport,
   contentClassName,
   headerClassName,
   titleClassName,
@@ -70,10 +72,37 @@ export function Dialog({
   showCloseButton,
   ...dialogProps
 }: DialogProps) {
+  const viewportRef = React.useCallback(
+    (popup: HTMLDivElement | null) => {
+      const viewport = window.visualViewport
+      if (!popup || !fitVisualViewport || !viewport) return
+      const fit = () => {
+        popup.style.setProperty(
+          '--dialog-available-height',
+          `calc(${viewport.height}px - var(--dialog-inset-top) - var(--dialog-inset-bottom))`
+        )
+        popup.style.setProperty(
+          '--dialog-viewport-center',
+          `calc(${viewport.offsetTop + viewport.height / 2}px + (var(--dialog-inset-top) - var(--dialog-inset-bottom)) / 2)`
+        )
+      }
+      fit()
+      viewport.addEventListener('resize', fit)
+      viewport.addEventListener('scroll', fit)
+      return () => {
+        viewport.removeEventListener('resize', fit)
+        viewport.removeEventListener('scroll', fit)
+        popup.style.removeProperty('--dialog-available-height')
+        popup.style.removeProperty('--dialog-viewport-center')
+      }
+    },
+    [fitVisualViewport]
+  )
   return (
     <DialogRoot {...dialogProps}>
       {trigger ? <DialogTrigger render={trigger} /> : null}
       <DialogContent
+        ref={viewportRef}
         className={cn(
           'flex w-full flex-col gap-4 overflow-x-hidden overflow-y-auto p-4 sm:max-w-2xl sm:p-6',
           contentClassName,

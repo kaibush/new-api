@@ -21,19 +21,8 @@ import { SSRFSection } from '../request-limits/ssrf-section'
 import { TokenLimitSection } from '../request-limits/token-limit-section'
 import type { SecuritySettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
-import { CatalogVisibilityPage } from './catalog-visibility'
 
 const SECURITY_SECTIONS = [
-  {
-    id: 'model-visibility',
-    titleKey: 'Model visibility',
-    build: (settings: SecuritySettings) => (
-      <CatalogVisibilityPage
-        key={settings.CatalogVisibility}
-        saved={settings.CatalogVisibility}
-      />
-    ),
-  },
   {
     id: 'rate-limit',
     titleKey: 'Rate Limiting',

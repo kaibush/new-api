@@ -29,6 +29,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useCanEditModelPricing } from '@/features/model-pricing/api'
+import { PermissionGroupsLink } from '@/features/users/components/permission-groups-link'
 
 import { useModels } from './models-provider'
 
@@ -56,6 +57,7 @@ export function ModelsPrimaryButtons() {
 
   return (
     <div className='flex flex-wrap items-center gap-2'>
+      <PermissionGroupsLink />
       <Button onClick={handleSync} variant='outline' size='sm'>
         {t('Sync metadata')}
       </Button>

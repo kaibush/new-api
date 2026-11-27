@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
@@ -49,6 +49,28 @@ function Fixture() {
 }
 
 describe('searchable single selection', () => {
+  it('leaves native touch taps uncancelled and commits the resulting click only once', async () => {
+    const change = vi.fn()
+    render(
+      <Combobox
+        options={options}
+        onValueChange={change}
+        aria-label='Provider'
+      />
+    )
+    await userEvent.click(screen.getByRole('combobox'))
+    const option = screen.getByRole('option', { name: 'Google' })
+    const touch = new PointerEvent('pointerdown', {
+      bubbles: true,
+      cancelable: true,
+      pointerType: 'touch',
+    })
+    fireEvent(option, touch)
+    expect(touch.defaultPrevented).toBe(false)
+    fireEvent.mouseUp(option)
+    fireEvent.click(option)
+    expect(change).toHaveBeenCalledExactlyOnceWith('gemini')
+  })
   it.each(['dialog', 'sheet'] as const)(
     'keeps the options closed when a %s autofocuses the input, then opens on click',
     async (container) => {

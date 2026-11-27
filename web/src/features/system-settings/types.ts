@@ -396,7 +396,6 @@ export type OperationsSettings = {
 }
 
 export type SecuritySettings = {
-  CatalogVisibility: string
   ModelRequestRateLimitEnabled: boolean
   ModelRequestRateLimitCount: number
   ModelRequestRateLimitSuccessCount: number

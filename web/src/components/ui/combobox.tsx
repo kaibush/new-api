@@ -326,11 +326,23 @@ function ComboboxList({ className, ...props }: ComboboxPrimitive.List.Props) {
 function ComboboxItem({
   className,
   children,
+  onPointerDownCapture,
+  onMouseUp,
   ...props
 }: ComboboxPrimitive.Item.Props) {
+  const touched = React.useRef(false)
   return (
     <ComboboxPrimitive.Item
       data-slot='combobox-item'
+      onPointerDownCapture={(event) => {
+        onPointerDownCapture?.(event)
+        touched.current = event.pointerType === 'touch'
+        if (touched.current) event.preventBaseUIHandler()
+      }}
+      onMouseUp={(event) => {
+        onMouseUp?.(event)
+        if (touched.current) event.preventBaseUIHandler()
+      }}
       className={cn(
         "data-highlighted:bg-accent data-highlighted:text-accent-foreground not-data-[variant=destructive]:data-highlighted:**:text-accent-foreground relative flex w-full cursor-default items-center gap-2 rounded-md py-1 pr-8 pl-1.5 text-sm outline-hidden select-none data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className

@@ -46,7 +46,12 @@ afterEach(() => {
   useAuthStore.getState().auth.reset()
 })
 
-function sidebarFor(admin?: object, user?: object, canConfigure = true) {
+function sidebarFor(
+  admin?: object,
+  user?: object,
+  canConfigure = true,
+  role = 1
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -57,7 +62,7 @@ function sidebarFor(admin?: object, user?: object, canConfigure = true) {
   useAuthStore.getState().auth.setUser({
     id: 1,
     username: 'alice',
-    role: 1,
+    role,
     permissions: { sidebar_settings: canConfigure },
     sidebar_modules: user ? JSON.stringify(user) : '',
   })
@@ -74,6 +79,34 @@ function sidebarFor(admin?: object, user?: object, canConfigure = true) {
   )
   return result
 }
+
+describe('permission group navigation', () => {
+  it.each([
+    [100, true, true],
+    [10, true, false],
+    [1, true, false],
+    [100, false, false],
+  ] as const)(
+    'role %s and user module %s: visible %s',
+    (role, enabled, visible) => {
+      const { result } = sidebarFor(
+        { admin: { enabled: true, user: enabled } },
+        undefined,
+        true,
+        role
+      )
+      const parent = result.current
+        .find((group) => group.id === 'admin')
+        ?.items.find((item) => item.title === 'User management')
+      if (visible) {
+        expect(parent?.items).toEqual([
+          { title: 'All users', url: '/users' },
+          { title: 'Permission groups', url: '/users/permission-groups' },
+        ])
+      } else expect(parent).toBeUndefined()
+    }
+  )
+})
 
 describe('security sidebar visibility', () => {
   it('old configurations show Security & Access immediately after Profile and keep API Keys', () => {

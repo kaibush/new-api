@@ -62,6 +62,7 @@ import { Route as AuthenticatedUsageLogsIndexRouteImport } from './routes/_authe
 import { Route as AuthenticatedUsageLogsSectionRouteImport } from './routes/_authenticated/usage-logs/$section'
 import { Route as AuthenticatedUsageLogsAuditRouteImport } from './routes/_authenticated/usage-logs/audit'
 import { Route as AuthenticatedUsersIndexRouteImport } from './routes/_authenticated/users/index'
+import { Route as AuthenticatedUsersPermissionGroupsRouteImport } from './routes/_authenticated/users/permission-groups'
 import { Route as AuthenticatedWalletIndexRouteImport } from './routes/_authenticated/wallet/index'
 import { Route as PricingModelIdIndexRouteImport } from './routes/pricing/$modelId/index'
 import { Route as AuthenticatedSystemSettingsAuthIndexRouteImport } from './routes/_authenticated/system-settings/auth/index'
@@ -367,6 +368,12 @@ const AuthenticatedUsersIndexRoute = AuthenticatedUsersIndexRouteImport.update({
   path: '/users/',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedUsersPermissionGroupsRoute =
+  AuthenticatedUsersPermissionGroupsRouteImport.update({
+    id: '/users/permission-groups',
+    path: '/users/permission-groups',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedWalletIndexRoute =
   AuthenticatedWalletIndexRouteImport.update({
     id: '/wallet/',
@@ -510,6 +517,7 @@ export interface FileRoutesByFullPath {
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
+  '/users/permission-groups': typeof AuthenticatedUsersPermissionGroupsRoute
   '/channel-status/': typeof AuthenticatedChannelStatusIndexRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
   '/community/': typeof AuthenticatedCommunityIndexRoute
@@ -580,6 +588,7 @@ export interface FileRoutesByTo {
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
+  '/users/permission-groups': typeof AuthenticatedUsersPermissionGroupsRoute
   '/channel-status': typeof AuthenticatedChannelStatusIndexRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
   '/community': typeof AuthenticatedCommunityIndexRoute
@@ -654,6 +663,7 @@ export interface FileRoutesById {
   '/_authenticated/models/$section': typeof AuthenticatedModelsSectionRoute
   '/_authenticated/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/_authenticated/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
+  '/_authenticated/users/permission-groups': typeof AuthenticatedUsersPermissionGroupsRoute
   '/_authenticated/channel-status/': typeof AuthenticatedChannelStatusIndexRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
   '/_authenticated/community/': typeof AuthenticatedCommunityIndexRoute
@@ -727,6 +737,7 @@ export interface FileRouteTypes {
     | '/models/$section'
     | '/usage-logs/$section'
     | '/usage-logs/audit'
+    | '/users/permission-groups'
     | '/channel-status/'
     | '/channels/'
     | '/community/'
@@ -797,6 +808,7 @@ export interface FileRouteTypes {
     | '/models/$section'
     | '/usage-logs/$section'
     | '/usage-logs/audit'
+    | '/users/permission-groups'
     | '/channel-status'
     | '/channels'
     | '/community'
@@ -870,6 +882,7 @@ export interface FileRouteTypes {
     | '/_authenticated/models/$section'
     | '/_authenticated/usage-logs/$section'
     | '/_authenticated/usage-logs/audit'
+    | '/_authenticated/users/permission-groups'
     | '/_authenticated/channel-status/'
     | '/_authenticated/channels/'
     | '/_authenticated/community/'
@@ -1300,6 +1313,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedUsersIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/users/permission-groups': {
+      id: '/_authenticated/users/permission-groups'
+      path: '/users/permission-groups'
+      fullPath: '/users/permission-groups'
+      preLoaderRoute: typeof AuthenticatedUsersPermissionGroupsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/wallet/': {
       id: '/_authenticated/wallet/'
       path: '/wallet'
@@ -1531,6 +1551,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedModelsSectionRoute: typeof AuthenticatedModelsSectionRoute
   AuthenticatedUsageLogsSectionRoute: typeof AuthenticatedUsageLogsSectionRoute
   AuthenticatedUsageLogsAuditRoute: typeof AuthenticatedUsageLogsAuditRoute
+  AuthenticatedUsersPermissionGroupsRoute: typeof AuthenticatedUsersPermissionGroupsRoute
   AuthenticatedChannelStatusIndexRoute: typeof AuthenticatedChannelStatusIndexRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
   AuthenticatedCommunityIndexRoute: typeof AuthenticatedCommunityIndexRoute
@@ -1564,6 +1585,8 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedModelsSectionRoute: AuthenticatedModelsSectionRoute,
   AuthenticatedUsageLogsSectionRoute: AuthenticatedUsageLogsSectionRoute,
   AuthenticatedUsageLogsAuditRoute: AuthenticatedUsageLogsAuditRoute,
+  AuthenticatedUsersPermissionGroupsRoute:
+    AuthenticatedUsersPermissionGroupsRoute,
   AuthenticatedChannelStatusIndexRoute: AuthenticatedChannelStatusIndexRoute,
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
   AuthenticatedCommunityIndexRoute: AuthenticatedCommunityIndexRoute,

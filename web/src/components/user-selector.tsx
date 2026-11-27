@@ -45,6 +45,7 @@ export function UserSelector(props: {
   value?: number
   onChange: (id: number | undefined) => void
   id?: string
+  popupClassName?: string
   disabled?: boolean
   'aria-invalid'?: boolean
 }) {
@@ -114,7 +115,7 @@ export function UserSelector(props: {
         placeholder={t('Search users by name or ID')}
         showClear
       />
-      <ComboboxContent>
+      <ComboboxContent className={props.popupClassName}>
         <ComboboxEmpty>{emptyText}</ComboboxEmpty>
         <ComboboxList>
           {(option: UserOption) => (
