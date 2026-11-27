@@ -1,5 +1,16 @@
 {
   "translation": {
+    "Permission groups": "Nhóm quyền",
+    "Create a permission group and add accounts. An account may belong to several permission groups without changing its pricing group.": "Tạo nhóm quyền và thêm tài khoản. Một tài khoản có thể thuộc nhiều nhóm quyền mà không cần đổi nhóm giá.",
+    "Members of {{name}}": "Thành viên của {{name}}",
+    "Permission groups allowed to see {{name}}": "Nhóm quyền được xem {{name}}",
+    "Hidden from everyone": "Ẩn với tất cả mọi người",
+    "Model visibility": "Phạm vi hiển thị mô hình",
+    "Cannot load visibility rules": "Không thể tải quy tắc hiển thị",
+    "Restricted models": "Mô hình bị hạn chế",
+    "Restricted routing groups": "Nhóm định tuyến bị hạn chế",
+    "Visibility rules only narrow existing access. They do not change pricing or grant access to a channel.": "Quy tắc chỉ thu hẹp quyền hiện có, không thay đổi giá hay cấp quyền truy cập kênh.",
+    "Select resources to restrict. Removing a resource restores its usual visibility.": "Chọn tài nguyên cần hạn chế. Xóa khỏi danh sách sẽ khôi phục phạm vi hiển thị ban đầu.",
     "360": "360",
     "1000": "1000",
     "10000": "10000",

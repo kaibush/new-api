@@ -1,5 +1,16 @@
 {
   "translation": {
+    "Permission groups": "権限グループ",
+    "Create a permission group and add accounts. An account may belong to several permission groups without changing its pricing group.": "権限グループを作成しアカウントを追加します。料金グループを変えずに複数の権限グループに所属できます。",
+    "Members of {{name}}": "{{name}} のメンバー",
+    "Permission groups allowed to see {{name}}": "{{name}} を表示できる権限グループ",
+    "Hidden from everyone": "すべてのユーザーに非表示",
+    "Model visibility": "モデルの公開範囲",
+    "Cannot load visibility rules": "公開ルールを読み込めません",
+    "Restricted models": "制限対象のモデル",
+    "Restricted routing groups": "制限対象のルーティンググループ",
+    "Visibility rules only narrow existing access. They do not change pricing or grant access to a channel.": "公開ルールは既存のアクセス範囲を狭めるだけです。価格の変更やチャネルへのアクセス権の付与は行いません。",
+    "Select resources to restrict. Removing a resource restores its usual visibility.": "制限するリソースを選択してください。リストから削除すると元の公開範囲に戻ります。",
     "360": "360",
     "1000": "1000",
     "10000": "10000",

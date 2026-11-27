@@ -249,6 +249,11 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, 98.04, combined.Summary.SuccessRate)
 			assert.Equal(t, 99.01, combined.Models[0].SuccessRate)
+			scoped, err := QueryVisibleSummary(24, groups, map[string]bool{"second-model": true})
+			require.NoError(t, err)
+			require.Len(t, scoped.Models, 1)
+			assert.Equal(t, "second-model", scoped.Models[0].ModelName)
+			assert.Equal(t, 0.0, scoped.Summary.SuccessRate)
 		})
 	}
 }

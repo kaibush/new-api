@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -27,6 +28,94 @@ type listModelsResponse struct {
 	Success bool               `json:"success"`
 	Data    []dto.OpenAIModels `json:"data"`
 	Object  string             `json:"object"`
+}
+
+func TestCatalogVisibilityAcrossAudiences(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	withSelfUseModeEnabled(t)
+	require.NoError(t, db.AutoMigrate(&model.Option{}))
+	oldOptions := common.OptionMap
+	common.OptionMap = map[string]string{}
+	original := setting.UserUsableGroups2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(original))
+		common.OptionMap = oldOptions
+		require.NoError(t, setting.UpdateCatalogVisibility(`{"audiences":{},"models":{},"groups":{}}`))
+		model.InvalidatePricingCache()
+	})
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Public","internal":"Private route"}`))
+	rules := `{"audiences":{"staff":[22]},"models":{"preview":["staff"],"unreleased":[]},"groups":{"internal":["staff"]}}`
+	require.NoError(t, model.UpdateOption(setting.CatalogVisibilityKey, rules))
+	require.Error(t, model.UpdateOption(setting.CatalogVisibilityKey, `{"models":{},"groups":null}`))
+	var persisted model.Option
+	require.NoError(t, db.First(&persisted, "key = ?", setting.CatalogVisibilityKey).Error)
+	assert.JSONEq(t, rules, persisted.Value)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{Group: "default", Model: "shared", ChannelId: 1, Enabled: true},
+		{Group: "internal", Model: "shared", ChannelId: 2, Enabled: true},
+		{Group: "internal", Model: "group-only", ChannelId: 2, Enabled: true},
+		{Group: "default", Model: "preview", ChannelId: 1, Enabled: true},
+		{Group: "default", Model: "unreleased", ChannelId: 1, Enabled: true},
+	}).Error)
+	model.InvalidatePricingCache()
+	for _, viewer := range []int{0, 11, 22, 11} {
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Set("id", viewer)
+		if viewer != 0 {
+			common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+		}
+		GetPricing(ctx)
+		var catalog struct {
+			Data   []model.Pricing   `json:"data"`
+			Groups map[string]string `json:"usable_group"`
+		}
+		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &catalog))
+		names := map[string][]string{}
+		for _, item := range catalog.Data {
+			names[item.ModelName] = item.EnableGroup
+		}
+		if viewer == 22 {
+			assert.ElementsMatch(t, []string{"internal", "default"}, names["shared"])
+			assert.Contains(t, names, "preview")
+			assert.Contains(t, names, "group-only")
+		} else {
+			assert.Equal(t, map[string][]string{"shared": {"default"}}, names)
+			assert.NotContains(t, recorder.Body.String(), "internal")
+		}
+		assert.NotContains(t, names, "unreleased")
+	}
+	for _, viewer := range []int{11, 22} {
+		for _, name := range []string{"preview", "not-a-model"} {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Set("id", viewer)
+			common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+			common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "default")
+			ctx.Params = gin.Params{{Key: "model", Value: name}}
+			RetrieveModel(ctx, constant.ChannelTypeOpenAI)
+			if viewer == 22 && name == "preview" {
+				assert.Contains(t, recorder.Body.String(), `"id":"preview"`)
+			} else {
+				assert.Contains(t, recorder.Body.String(), `"code":"model_not_found"`)
+			}
+		}
+	}
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	_, _, denied := service.SelectChannelForRequest(ctx, "preview", &service.RetryParam{Ctx: ctx, TokenGroup: "default"})
+	require.NotNil(t, denied)
+	assert.True(t, denied.NoAvailableChannel)
+	ctx.Set("id", 22)
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "default")
+	before, _, err := visibleTokenModelNames(ctx)
+	require.NoError(t, err)
+	require.Contains(t, before, "preview")
+	require.NoError(t, model.UpdateOption(setting.CatalogVisibilityKey, strings.Replace(rules, "[22]", "[]", 1)))
+	after, _, err := visibleTokenModelNames(ctx)
+	require.NoError(t, err)
+	assert.NotContains(t, after, "preview")
+	assert.NotContains(t, service.GetUserUsableGroups(22, "default"), "internal")
 }
 
 type userModelsResponse struct {

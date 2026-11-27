@@ -2,7 +2,8 @@ package controller
 
 import (
 	"fmt"
-	"net/http"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -215,7 +216,7 @@ func getModelListGroups(c *gin.Context) (modelListGroups, error) {
 	}, nil
 }
 
-func ListModels(c *gin.Context, modelType int) {
+func visibleTokenModelNames(c *gin.Context) ([]string, []string, error) {
 	acceptUnsetRatioModel := operation_setting.SelfUseModeEnabled
 	if !acceptUnsetRatioModel {
 		userId := c.GetInt("id")
@@ -230,11 +231,7 @@ func ListModels(c *gin.Context, modelType int) {
 	userModelNames := make([]string, 0)
 	groups, err := getModelListGroups(c)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "get user group failed",
-		})
-		return
+		return nil, nil, err
 	}
 	ownerGroups := groups.ownerGroups
 	modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
@@ -248,7 +245,7 @@ func ListModels(c *gin.Context, modelType int) {
 			tokenModelLimit = map[string]bool{}
 		}
 	}
-	models := service.GetGroupsEnabledModels(ownerGroups)
+	models := service.VisibleCatalogModels(c.GetInt("id"), ownerGroups)
 	for _, modelName := range models {
 		if modelLimitEnable {
 			matchingName := ratio_setting.RoutingMatchModelName(modelName)
@@ -262,6 +259,15 @@ func ListModels(c *gin.Context, modelType int) {
 		userModelNames = append(userModelNames, modelName)
 	}
 
+	return userModelNames, ownerGroups, nil
+}
+
+func ListModels(c *gin.Context, modelType int) {
+	userModelNames, ownerGroups, err := visibleTokenModelNames(c)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	ownerByModel := map[string]string{}
 	if len(ownerGroups) > 0 {
 		ownerByModel = getPreferredModelOwners(userModelNames, ownerGroups)
@@ -332,6 +338,10 @@ func DashboardListModels(c *gin.Context) {
 			modelsByChannel[channelType] = append([]string(nil), plugin.Meta.Models...)
 		}
 	}
+	visible := viewerCatalogNames(c)
+	for channelType, names := range modelsByChannel {
+		modelsByChannel[channelType] = slices.DeleteFunc(names, func(name string) bool { return !visible[name] })
+	}
 	c.JSON(200, gin.H{
 		"success": true,
 		"data":    modelsByChannel,
@@ -347,7 +357,13 @@ func EnabledListModels(c *gin.Context) {
 
 func RetrieveModel(c *gin.Context, modelType int) {
 	modelId := c.Param("model")
-	if aiModel, ok := openAIModelsMap[modelId]; ok {
+	names, groups, err := visibleTokenModelNames(c)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if slices.Contains(names, modelId) {
+		aiModel := buildOpenAIModel(modelId, getPreferredModelOwners([]string{modelId}, groups))
 		switch modelType {
 		case constant.ChannelTypeAnthropic:
 			c.JSON(200, dto.AnthropicModel{
@@ -370,4 +386,14 @@ func RetrieveModel(c *gin.Context, modelType int) {
 			"error": openAIError,
 		})
 	}
+}
+
+func viewerCatalogNames(c *gin.Context) map[string]bool {
+	group := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+	groups := service.GetUserUsableGroups(c.GetInt("id"), group)
+	visible := map[string]bool{}
+	for _, name := range service.VisibleCatalogModels(c.GetInt("id"), slices.Collect(maps.Keys(groups))) {
+		visible[name] = true
+	}
+	return visible
 }

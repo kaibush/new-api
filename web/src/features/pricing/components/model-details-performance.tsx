@@ -37,6 +37,7 @@ import type {
   PerformanceGroup,
   PerformanceSeriesPoint,
 } from '@/features/performance-metrics/types'
+import { useCatalogQueryKey } from '@/hooks/use-catalog-query-key'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
@@ -124,7 +125,7 @@ function toGroupUptimeSeries(group: PerformanceGroup): UptimeDayPoint[] {
 export function ModelDetailsPerformance(props: { model: PricingModel }) {
   const { t } = useTranslation()
   const metricsQuery = useQuery({
-    queryKey: ['perf-metrics', props.model.model_name],
+    queryKey: useCatalogQueryKey(['perf-metrics', props.model.model_name]),
     queryFn: async () =>
       requireServerSuccess(await getPerfMetrics(props.model.model_name, 24)),
     staleTime: 60 * 1000,

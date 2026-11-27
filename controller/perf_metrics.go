@@ -1,14 +1,17 @@
 package controller
 
 import (
+	"maps"
 	"net/http"
+	"slices"
 	"strconv"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
-	"github.com/samber/lo"
 )
 
 func GetPerfMetricsSummary(c *gin.Context) {
@@ -19,8 +22,8 @@ func GetPerfMetricsSummary(c *gin.Context) {
 		}
 	}
 
-	activeGroups := append(lo.Keys(ratio_setting.GetGroupRatioCopy()), "auto")
-	result, err := perfmetrics.QuerySummaryAll(hours, activeGroups)
+	groups := service.GetUserUsableGroups(c.GetInt("id"), common.GetContextKeyString(c, constant.ContextKeyUserGroup))
+	result, err := perfmetrics.QueryVisibleSummary(hours, slices.AppendSeq([]string{}, maps.Keys(groups)), viewerCatalogNames(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
@@ -52,11 +55,16 @@ func GetPerfMetrics(c *gin.Context) {
 		}
 	}
 
+	groups := service.GetUserUsableGroups(c.GetInt("id"), common.GetContextKeyString(c, constant.ContextKeyUserGroup))
+	allowed := []string{}
+	if viewerCatalogNames(c)[modelName] {
+		allowed = slices.AppendSeq(allowed, maps.Keys(groups))
+	}
 	result, err := perfmetrics.Query(perfmetrics.QueryParams{
 		Model:         modelName,
 		Group:         c.Query("group"),
 		Hours:         hours,
-		AllowedGroups: append(lo.Keys(ratio_setting.GetGroupRatioCopy()), "auto"),
+		AllowedGroups: allowed,
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{

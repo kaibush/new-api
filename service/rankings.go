@@ -1,7 +1,10 @@
 package service
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"sort"
@@ -135,27 +138,30 @@ var (
 	rankingCache   = map[string]rankingCacheItem{}
 )
 
-func GetRankingsSnapshot(period string) (*RankingsResponse, error) {
+func GetRankingsSnapshot(period string, visible map[string]bool) (*RankingsResponse, error) {
 	config, err := rankingConfig(period)
 	if err != nil {
 		return nil, err
 	}
 
 	now := time.Now()
+	names, _ := json.Marshal(slices.Sorted(maps.Keys(visible)))
+	cacheKey := fmt.Sprintf("%s:%x", config.id, sha256.Sum256(names))
 	rankingCacheMu.Lock()
-	if item, ok := rankingCache[config.id]; ok && now.Before(item.expiresAt) {
+	if item, ok := rankingCache[cacheKey]; ok && now.Before(item.expiresAt) {
 		rankingCacheMu.Unlock()
 		return item.data, nil
 	}
 	rankingCacheMu.Unlock()
 
-	data, err := buildRankingsSnapshot(config, now)
+	data, err := buildRankingsSnapshot(config, now, visible)
 	if err != nil {
 		return nil, err
 	}
 
 	rankingCacheMu.Lock()
-	rankingCache[config.id] = rankingCacheItem{
+	maps.DeleteFunc(rankingCache, func(_ string, item rankingCacheItem) bool { return !now.Before(item.expiresAt) })
+	rankingCache[cacheKey] = rankingCacheItem{
 		expiresAt: now.Add(rankingCacheTTL),
 		data:      data,
 	}
@@ -179,7 +185,7 @@ func rankingConfig(period string) (rankingPeriodConfig, error) {
 	}
 }
 
-func buildRankingsSnapshot(config rankingPeriodConfig, now time.Time) (*RankingsResponse, error) {
+func buildRankingsSnapshot(config rankingPeriodConfig, now time.Time, visible map[string]bool) (*RankingsResponse, error) {
 	startTime, endTime := rankingTimeRange(config, now)
 	currentTotals, err := model.GetRankingQuotaTotals(startTime, endTime)
 	if err != nil {
@@ -199,6 +205,10 @@ func buildRankingsSnapshot(config rankingPeriodConfig, now time.Time) (*Rankings
 		}
 	}
 
+	hiddenTotal := func(row model.RankingQuotaTotal) bool { return !visible[row.ModelName] }
+	currentTotals = slices.DeleteFunc(currentTotals, hiddenTotal)
+	previousTotals = slices.DeleteFunc(previousTotals, hiddenTotal)
+	currentBuckets = slices.DeleteFunc(currentBuckets, func(row model.RankingQuotaBucket) bool { return !visible[row.ModelName] })
 	meta := buildRankingModelMeta()
 	totalTokens := sumRankingTokens(currentTotals)
 	previousRankByModel := rankingRankMap(previousTotals)

@@ -1,5 +1,16 @@
 {
   "translation": {
+    "Permission groups": "权限组",
+    "Create a permission group and add accounts. An account may belong to several permission groups without changing its pricing group.": "创建权限组并添加账号。一个账号可加入多个权限组，无需更改定价分组。",
+    "Members of {{name}}": "{{name}} 的成员",
+    "Permission groups allowed to see {{name}}": "允许查看 {{name}} 的权限组",
+    "Hidden from everyone": "对所有人隐藏",
+    "Model visibility": "模型可见性",
+    "Cannot load visibility rules": "无法加载可见性规则",
+    "Restricted models": "受限模型",
+    "Restricted routing groups": "受限路由分组",
+    "Visibility rules only narrow existing access. They do not change pricing or grant access to a channel.": "可见性规则只收窄已有权限，不改变价格，也不授予渠道调用权限。",
+    "Select resources to restrict. Removing a resource restores its usual visibility.": "选择需要限制的资源。移除资源后将恢复其原有的可见范围。",
     "360": "360",
     "1000": "1000",
     "10000": "10000",

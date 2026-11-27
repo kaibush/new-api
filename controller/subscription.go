@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
@@ -41,8 +42,15 @@ func GetSubscriptionPlans(c *gin.Context) {
 		return
 	}
 	result := make([]SubscriptionPlanDTO, 0, len(plans))
+	userID := c.GetInt("id")
 	for _, p := range plans {
 		p.NormalizeDefaults()
+		if !setting.CatalogGroupAllowed(userID, p.UpgradeGroup) {
+			p.UpgradeGroup = ""
+		}
+		if !setting.CatalogGroupAllowed(userID, p.DowngradeGroup) {
+			p.DowngradeGroup = ""
+		}
 		result = append(result, SubscriptionPlanDTO{
 			Plan: p,
 		})

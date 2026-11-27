@@ -2,7 +2,9 @@ package controller
 
 import (
 	"fmt"
+	"maps"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -58,11 +60,18 @@ func buildMaskedTokenResponse(token *model.Token) *tokenResponse {
 	}
 	maskedToken := *token
 	maskedToken.Key = token.GetMaskedKey()
+	if !setting.CatalogGroupAllowed(token.UserId, token.Group) {
+		maskedToken.Group = ""
+	}
+	if setting.HasCatalogRestrictions() {
+		maskedToken.ModelLimits = strings.Join(slices.DeleteFunc(token.GetModelLimits(), func(name string) bool { return !setting.CatalogModelAllowed(token.UserId, name) }), ",")
+	}
 	autoGroups, err := token.GetAutoGroups()
 	if err != nil {
 		common.SysError(fmt.Sprintf("failed to parse auto groups for token %d: %v", token.Id, err))
 		autoGroups = nil
 	}
+	autoGroups = slices.DeleteFunc(autoGroups, func(group string) bool { return !setting.CatalogGroupAllowed(token.UserId, group) })
 	if len(autoGroups) == 0 {
 		autoGroups = nil
 	}
@@ -114,7 +123,7 @@ func setTokenAutoGroups(c *gin.Context, token *model.Token, groups []string) boo
 			return false
 		}
 		seen[group] = struct{}{}
-		if !service.IsUserSelectableGroup(userGroup, group) {
+		if !service.IsUserSelectableGroup(c.GetInt("id"), userGroup, group) {
 			common.ApiErrorI18n(c, i18n.MsgTokenAutoGroupsInvalid, map[string]any{"Group": group})
 			return false
 		}
@@ -180,7 +189,7 @@ func GetTokenAutoGroups(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, gin.H{
-		"groups":    service.GetUserAutoGroup(userGroup),
+		"groups":    service.GetUserAutoGroup(c.GetInt("id"), userGroup),
 		"max_count": setting.GetMaxTokenAutoGroups(),
 	})
 }
@@ -258,6 +267,8 @@ func GetTokenUsage(c *gin.Context) {
 		expiredAt = 0
 	}
 
+	limits := token.GetModelLimitsMap()
+	maps.DeleteFunc(limits, func(name string, _ bool) bool { return !setting.CatalogModelAllowed(token.UserId, name) })
 	c.JSON(http.StatusOK, gin.H{
 		"code":    true,
 		"message": "ok",
@@ -268,7 +279,7 @@ func GetTokenUsage(c *gin.Context) {
 			"total_used":           token.UsedQuota,
 			"total_available":      token.RemainQuota,
 			"unlimited_quota":      token.UnlimitedQuota,
-			"model_limits":         token.GetModelLimitsMap(),
+			"model_limits":         limits,
 			"model_limits_enabled": token.ModelLimitsEnabled,
 			"expires_at":           expiredAt,
 		},

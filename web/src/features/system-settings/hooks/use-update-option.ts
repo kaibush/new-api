@@ -56,6 +56,19 @@ export function useUpdateOption() {
       requireServerSuccess(await updateSystemOption(request)),
     onSuccess: (data, variables) => {
       if (data.success) {
+        if (variables.key === 'CatalogVisibility') {
+          for (const key of [
+            'pricing',
+            'rankings',
+            'perf-metrics',
+            'perf-metrics-summary',
+            'user-models',
+            'user-groups',
+            'token-auto-groups',
+          ]) {
+            void queryClient.invalidateQueries({ queryKey: [key] })
+          }
+        }
         if (variables.key === 'HelpCenter') {
           queryClient.invalidateQueries({ queryKey: ['help-center'] })
         }

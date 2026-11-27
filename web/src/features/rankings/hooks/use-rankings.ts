@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 
+import { useCatalogQueryKey } from '@/hooks/use-catalog-query-key'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
 import { getRankings } from '../api'
@@ -25,7 +26,7 @@ import type { RankingPeriod } from '../types'
 
 export function useRankings(period: RankingPeriod) {
   return useQuery({
-    queryKey: ['rankings', period],
+    queryKey: useCatalogQueryKey(['rankings', period]),
     queryFn: async () => requireServerSuccess(await getRankings(period)),
     staleTime: 5 * 60 * 1000,
   })

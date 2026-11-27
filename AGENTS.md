@@ -62,6 +62,8 @@ This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI pro
 
 ### Backend Rules
 
+**Catalog visibility:** Permission groups in `CatalogVisibility` contain account IDs and are independent of billing groups. User-facing model/group catalogs and statistics must apply the viewer's visibility rules before returning or caching names. See `docs/catalog-visibility.md`.
+
 **Modern Go conventions:** Apply these conventions to new or modified Go code, including tests and `relaykit/`, when they preserve behavior and improve readability. Use the Go version declared in the relevant module's `go.mod` as the compatibility baseline.
 
 - Use `any` instead of `interface{}`, including map values, slice elements, parameters, and return types.

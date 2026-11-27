@@ -1,5 +1,16 @@
 {
   "translation": {
+    "Permission groups": "Группы доступа",
+    "Create a permission group and add accounts. An account may belong to several permission groups without changing its pricing group.": "Создайте группу доступа и добавьте аккаунты. Аккаунт может входить в несколько групп доступа без изменения тарифной группы.",
+    "Members of {{name}}": "Участники {{name}}",
+    "Permission groups allowed to see {{name}}": "Группы доступа, которым виден ресурс {{name}}",
+    "Hidden from everyone": "Скрыто от всех",
+    "Model visibility": "Видимость моделей",
+    "Cannot load visibility rules": "Не удалось загрузить правила видимости",
+    "Restricted models": "Модели с ограниченным доступом",
+    "Restricted routing groups": "Группы маршрутизации с ограниченным доступом",
+    "Visibility rules only narrow existing access. They do not change pricing or grant access to a channel.": "Правила только сужают существующий доступ. Они не меняют цены и не предоставляют доступ к каналу.",
+    "Select resources to restrict. Removing a resource restores its usual visibility.": "Выберите ресурсы для ограничения доступа. Удаление из списка восстановит исходную видимость.",
     "360": "360",
     "1000": "1000",
     "10000": "10000",

@@ -187,6 +187,10 @@ func Query(params QueryParams) (QueryResult, error) {
 }
 
 func QuerySummaryAll(hours int, groups []string) (SummaryAllResult, error) {
+	return QueryVisibleSummary(hours, groups, nil)
+}
+
+func QueryVisibleSummary(hours int, groups []string, visible map[string]bool) (SummaryAllResult, error) {
 	startTs, endTs := queryWindow(time.Now(), hours)
 	allowedGroups := allowedGroupSet(groups)
 
@@ -231,7 +235,7 @@ func QuerySummaryAll(hours int, groups []string) (SummaryAllResult, error) {
 	all := counters{}
 	models := make([]ModelSummary, 0, len(totals))
 	for name, total := range totals {
-		if total.requestCount == 0 {
+		if total.requestCount == 0 || visible != nil && !visible[name] {
 			continue
 		}
 		all.requestCount += total.requestCount

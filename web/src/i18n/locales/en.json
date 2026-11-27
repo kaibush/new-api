@@ -1,5 +1,16 @@
 {
   "translation": {
+    "Permission groups": "Permission groups",
+    "Create a permission group and add accounts. An account may belong to several permission groups without changing its pricing group.": "Create a permission group and add accounts. An account may belong to several permission groups without changing its pricing group.",
+    "Members of {{name}}": "Members of {{name}}",
+    "Permission groups allowed to see {{name}}": "Permission groups allowed to see {{name}}",
+    "Hidden from everyone": "Hidden from everyone",
+    "Model visibility": "Model visibility",
+    "Cannot load visibility rules": "Cannot load visibility rules",
+    "Restricted models": "Restricted models",
+    "Restricted routing groups": "Restricted routing groups",
+    "Visibility rules only narrow existing access. They do not change pricing or grant access to a channel.": "Visibility rules only narrow existing access. They do not change pricing or grant access to a channel.",
+    "Select resources to restrict. Removing a resource restores its usual visibility.": "Select resources to restrict. Removing a resource restores its usual visibility.",
     "360": "360",
     "1000": "1000",
     "10000": "10000",

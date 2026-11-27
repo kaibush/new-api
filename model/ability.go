@@ -40,11 +40,20 @@ func GetAllEnableAbilityWithChannels() ([]AbilityWithChannel, error) {
 	return abilities, err
 }
 
-func GetGroupEnabledModels(group string) []string {
-	var models []string
-	// Find distinct models
-	DB.Table("abilities").Where(commonGroupCol+" = ? and enabled = ?", group, true).Distinct("model").Pluck("model", &models)
-	return models
+func EnabledModelsByGroup(groups []string) map[string][]string {
+	result := make(map[string][]string)
+	if len(groups) == 0 {
+		return result
+	}
+	var rows []Ability
+	if err := DB.Model(&Ability{}).Select(commonGroupCol+", model").Distinct().Where(commonGroupCol+" IN ? AND enabled = ?", groups, true).Find(&rows).Error; err != nil {
+		common.SysError("failed to load enabled catalog models: " + err.Error())
+		return result
+	}
+	for _, row := range rows {
+		result[row.Group] = append(result[row.Group], row.Model)
+	}
+	return result
 }
 
 func GetEnabledModels() []string {

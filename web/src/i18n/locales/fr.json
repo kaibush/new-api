@@ -1,5 +1,16 @@
 {
   "translation": {
+    "Permission groups": "Groupes de permissions",
+    "Create a permission group and add accounts. An account may belong to several permission groups without changing its pricing group.": "Créez un groupe et ajoutez des comptes. Un compte peut rejoindre plusieurs groupes sans changer son groupe tarifaire.",
+    "Members of {{name}}": "Membres de {{name}}",
+    "Permission groups allowed to see {{name}}": "Groupes autorisés à voir {{name}}",
+    "Hidden from everyone": "Masqué pour tout le monde",
+    "Model visibility": "Visibilité des modèles",
+    "Cannot load visibility rules": "Impossible de charger les règles de visibilité",
+    "Restricted models": "Modèles restreints",
+    "Restricted routing groups": "Groupes de routage restreints",
+    "Visibility rules only narrow existing access. They do not change pricing or grant access to a channel.": "Ces règles limitent les accès existants, sans modifier les tarifs ni accorder l’accès à un canal.",
+    "Select resources to restrict. Removing a resource restores its usual visibility.": "Sélectionnez les ressources à restreindre. Retirer une ressource rétablit sa visibilité habituelle.",
     "360": "360",
     "1000": "1000",
     "10000": "10000",

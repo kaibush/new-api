@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { getPerfMetricsSummary } from '@/features/performance-metrics/api'
+import { useCatalogQueryKey } from '@/hooks/use-catalog-query-key'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
 import { DEFAULT_PRICING_PAGE_SIZE, DEFAULT_TOKEN_UNIT } from '../constants'
@@ -51,7 +52,7 @@ export const ModelCardGrid = memo(function ModelCardGrid(
   const currentPage = Math.min(page, totalPages)
 
   const perfQuery = useQuery({
-    queryKey: ['perf-metrics-summary', 24],
+    queryKey: useCatalogQueryKey(['perf-metrics-summary', 24]),
     queryFn: async () => requireServerSuccess(await getPerfMetricsSummary(24)),
     staleTime: 60 * 1000,
     retry: false,

@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -116,6 +117,9 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 	var err error
 	selectGroup := param.TokenGroup
 	userGroup := common.GetContextKeyString(param.Ctx, constant.ContextKeyUserGroup)
+	if !setting.CatalogModelAllowed(param.Ctx.GetInt("id"), param.ModelName) || !setting.CatalogGroupAllowed(param.Ctx.GetInt("id"), selectGroup) {
+		return nil, selectGroup, nil
+	}
 	filters := GetChannelConstraints(param.Ctx).Filters
 
 	if param.TokenGroup == "auto" {
@@ -281,6 +285,10 @@ type ChannelSelectError struct {
 // filters. The group the channel was chosen from is returned for auto-group
 // callers. The caller still applies SetupContextForSelectedChannel.
 func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam) (*model.Channel, string, *ChannelSelectError) {
+	userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+	if !setting.CatalogModelAllowed(c.GetInt("id"), modelName) || !setting.CatalogGroupAllowed(c.GetInt("id"), retry.TokenGroup) {
+		return nil, retry.TokenGroup, &ChannelSelectError{StatusCode: http.StatusServiceUnavailable, Code: types.ErrorCodeModelNotFound, MessageID: i18n.MsgDistributorNoAvailableChannel, Params: map[string]any{"Group": retry.TokenGroup, "Model": modelName}, NoAvailableChannel: true}
+	}
 	constraints := GetChannelConstraints(c)
 	if pin, found, overridden := constraints.ResolvedPin(); found {
 		for _, lost := range overridden {
@@ -295,6 +303,15 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 		}
 		if channel.Status != common.ChannelStatusEnabled {
 			return nil, "", pinnedChannelUnavailable(pin, http.StatusForbidden, i18n.MsgDistributorChannelDisabled)
+		}
+		if setting.HasCatalogRestrictions() && modelName != "" {
+			groups := []string{retry.TokenGroup}
+			if retry.TokenGroup == "auto" {
+				groups = GetRequestAutoGroups(c, userGroup)
+			}
+			if !model.IsChannelEnabledForAnyGroupModel(groups, modelName, channel.Id) {
+				return nil, retry.TokenGroup, &ChannelSelectError{StatusCode: http.StatusServiceUnavailable, Code: types.ErrorCodeModelNotFound, MessageID: i18n.MsgDistributorNoAvailableChannel, Params: map[string]any{"Group": retry.TokenGroup, "Model": modelName}, NoAvailableChannel: true}
+			}
 		}
 		if ok, kind := model.ChannelSatisfiesFilters(channel, modelName, constraints.Filters); !ok {
 			return nil, "", &ChannelSelectError{

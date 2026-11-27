@@ -32,6 +32,7 @@ import {
   getSuccessRateTextClass,
 } from '@/features/performance-metrics/lib/format'
 import type { PerfModelSummary } from '@/features/performance-metrics/types'
+import { useCatalogQueryKey } from '@/hooks/use-catalog-query-key'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
@@ -41,7 +42,10 @@ const TOP_MODEL_LIMIT = 6
 export function PerformanceOverview() {
   const { t } = useTranslation()
   const metricsQuery = useQuery({
-    queryKey: ['perf-metrics-summary', PERFORMANCE_WINDOW_HOURS],
+    queryKey: useCatalogQueryKey([
+      'perf-metrics-summary',
+      PERFORMANCE_WINDOW_HOURS,
+    ]),
     queryFn: async () =>
       requireServerSuccess(
         await getPerfMetricsSummary(PERFORMANCE_WINDOW_HOURS)
