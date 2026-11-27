@@ -123,6 +123,54 @@ type userModelsResponse struct {
 	Data    []string `json:"data"`
 }
 
+func TestCatalogExclusionsWithoutPermissionGroups(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	withSelfUseModeEnabled(t)
+	original := setting.UserUsableGroups2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(original))
+		require.NoError(t, setting.UpdateCatalogVisibility(`{"audiences":{},"models":{},"groups":{}}`))
+		model.InvalidatePricingCache()
+	})
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Public","internal":"Internal"}`))
+	require.NoError(t, db.Create(&[]model.Ability{
+		{Group: "default", Model: "shared", ChannelId: 1, Enabled: true},
+		{Group: "default", Model: "preview", ChannelId: 1, Enabled: true},
+		{Group: "internal", Model: "shared", ChannelId: 2, Enabled: true},
+		{Group: "internal", Model: "group-only", ChannelId: 2, Enabled: true},
+	}).Error)
+	model.InvalidatePricingCache()
+	require.NoError(t, setting.UpdateCatalogVisibility(`{"audiences":{},"models":{},"groups":{},"model_exclusions":{"preview":[11]},"group_exclusions":{"internal":[11]}}`))
+	require.True(t, setting.HasCatalogRestrictions())
+	for _, viewer := range []int{22, 11, 0, 44, 11} {
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Set("id", viewer)
+		common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+		common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "default")
+		GetPricing(ctx)
+		names, _, err := visibleTokenModelNames(ctx)
+		require.NoError(t, err)
+		require.Contains(t, names, "shared")
+		if viewer == 22 || viewer == 44 {
+			require.Contains(t, names, "preview")
+			for _, name := range []string{"preview", "group-only", "internal"} {
+				require.Contains(t, recorder.Body.String(), `"`+name+`"`)
+			}
+			continue
+		}
+		require.NotContains(t, names, "preview")
+		for _, name := range []string{"preview", "group-only", "internal"} {
+			require.NotContains(t, recorder.Body.String(), `"`+name+`"`)
+		}
+		for _, route := range []struct{ model, group string }{{"preview", "default"}, {"shared", "internal"}} {
+			_, _, denied := service.SelectChannelForRequest(ctx, route.model, &service.RetryParam{Ctx: ctx, TokenGroup: route.group})
+			require.NotNil(t, denied)
+			require.True(t, denied.NoAvailableChannel)
+		}
+	}
+}
+
 func setupModelListControllerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 

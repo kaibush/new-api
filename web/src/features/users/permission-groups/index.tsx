@@ -26,10 +26,13 @@ import { getGroups } from '../api'
 import { PermissionGroupForm } from './group-form'
 import {
   changeGroup,
+  changeResourceRule,
+  excludedAccounts,
   groupResources,
   nameOptions,
   parsePolicy,
   resourceKinds,
+  restrictedResources,
   type Policy,
   type ResourceKind,
 } from './lib/policy'
@@ -99,18 +102,19 @@ export function PermissionGroups() {
     (option) => option.key === 'CatalogVisibility'
   )?.value
   const policy = useMemo(() => parsePolicy(saved), [saved])
+  const restricted = useMemo(
+    () => ({
+      models: restrictedResources(policy, 'models'),
+      groups: restrictedResources(policy, 'groups'),
+    }),
+    [policy]
+  )
   const targets = useMemo(
     () => ({
-      models: nameOptions([
-        ...(models.data?.data ?? []),
-        ...Object.keys(policy?.models ?? {}),
-      ]),
-      groups: nameOptions([
-        ...(groups.data?.data ?? []),
-        ...Object.keys(policy?.groups ?? {}),
-      ]),
+      models: nameOptions([...(models.data?.data ?? []), ...restricted.models]),
+      groups: nameOptions([...(groups.data?.data ?? []), ...restricted.groups]),
     }),
-    [models.data, groups.data, policy]
+    [models.data, groups.data, restricted]
   )
   if (options.isError || groups.isError || models.isError) {
     return (
@@ -207,7 +211,7 @@ export function PermissionGroups() {
             )}
             <p className='text-muted-foreground mt-2 text-sm'>
               {t(
-                'Select resources to restrict. Removing a resource restores its usual visibility.'
+                'For each resource, allow selected groups or exclude individual accounts. Removing the rule restores normal visibility.'
               )}
             </p>
             {resourceKinds.map((kind) => (
@@ -225,7 +229,7 @@ export function PermissionGroups() {
                       size='sm'
                       disabled={
                         !targets[kind].some(
-                          ({ value }) => !Object.hasOwn(policy[kind], value)
+                          ({ value }) => !restricted[kind].has(value)
                         )
                       }
                       onClick={() => openEditor({ type: 'rule', kind })}
@@ -236,26 +240,36 @@ export function PermissionGroups() {
                   </CardAction>
                 </CardHeader>
                 <CardContent>
-                  {Object.keys(policy[kind]).length ? (
+                  {restricted[kind].size ? (
                     <ul className='divide-y'>
-                      {Object.entries(policy[kind]).map(([name, allowed]) => (
-                        <PolicyRow
-                          key={name}
-                          name={name}
-                          detail={
-                            allowed.length
-                              ? allowed.join(' · ')
-                              : t('Hidden from everyone')
-                          }
-                          removeLabel={t('Remove restriction')}
-                          onEdit={() =>
-                            openEditor({ type: 'rule', kind, name })
-                          }
-                          onRemove={() =>
-                            openEditor({ type: 'delete', kind, name })
-                          }
-                        />
-                      ))}
+                      {[...restricted[kind]].map((name) => {
+                        let scope = t('Visible by default')
+                        if (Object.hasOwn(policy[kind], name)) {
+                          const allowed = policy[kind][name]
+                          scope = allowed.length
+                            ? allowed.join(' · ')
+                            : t('Hidden from everyone')
+                        }
+                        const excluded = excludedAccounts(policy, kind, name)
+                        return (
+                          <PolicyRow
+                            key={name}
+                            name={name}
+                            detail={
+                              excluded.length
+                                ? `${scope} · ${t('Excluded accounts: {{total}}', { total: formatNumber(excluded.length) })}`
+                                : scope
+                            }
+                            removeLabel={t('Remove restriction')}
+                            onEdit={() =>
+                              openEditor({ type: 'rule', kind, name })
+                            }
+                            onRemove={() =>
+                              openEditor({ type: 'delete', kind, name })
+                            }
+                          />
+                        )
+                      })}
                     </ul>
                   ) : (
                     <p className='text-muted-foreground text-sm'>
@@ -308,9 +322,7 @@ export function PermissionGroups() {
           }
           handleConfirm={() => {
             if (!editor.kind) return save(changeGroup(policy, editor.name))
-            const rules = { ...policy[editor.kind] }
-            delete rules[editor.name]
-            save({ ...policy, [editor.kind]: rules })
+            save(changeResourceRule(policy, editor.kind, editor.name))
           }}
         />
       )}

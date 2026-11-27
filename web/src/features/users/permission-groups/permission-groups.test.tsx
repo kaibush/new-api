@@ -19,11 +19,12 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-function renderPage() {
+function renderPage(initial?: Partial<Policy>) {
   let saved: Policy = {
     audiences: { staff: [22], support: [] },
     models: { preview: ['staff', 'support'], hidden: [] },
     groups: { internal: ['staff'] },
+    ...initial,
   }
   vi.spyOn(api, 'get').mockImplementation(async (path) => {
     const data: Record<string, unknown> = {
@@ -173,4 +174,85 @@ it('keeps the draft open when saving fails and supports retry', async () => {
   expect(saved().audiences).not.toHaveProperty('retry')
   await user.click(dialog.getByRole('button', { name: 'Create' }))
   await waitFor(() => expect(saved().audiences).toHaveProperty('retry'))
+})
+
+it('adds an exclusion without changing the allowlist, and preserves it when switching to default visibility', async () => {
+  const { user, saved, put } = renderPage({
+    group_exclusions: { internal: [47] },
+  })
+  const before = saved()
+  await screen.findByRole('listitem', { name: 'preview' })
+  await user.click(row('preview').getByRole('button', { name: 'Edit' }))
+  let dialog = within(screen.getByRole('dialog'))
+  expect(
+    dialog.getByRole('combobox', { name: 'Visibility scope' })
+  ).toHaveValue('groups')
+  await user.type(
+    dialog.getByPlaceholderText('Search users by name or ID'),
+    'alice'
+  )
+  await user.click(await screen.findByRole('option', { name: 'alice (#35)' }))
+  await user.click(dialog.getByRole('button', { name: 'Save changes' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  expect(saved()).toEqual({ ...before, model_exclusions: { preview: [35] } })
+  await user.click(row('preview').getByRole('button', { name: 'Edit' }))
+  dialog = within(screen.getByRole('dialog'))
+  await user.selectOptions(
+    dialog.getByRole('combobox', { name: 'Visibility scope' }),
+    'eligible'
+  )
+  await user.click(dialog.getByRole('button', { name: 'Save changes' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  expect(saved()).toEqual({
+    ...before,
+    models: { hidden: [] },
+    model_exclusions: { preview: [35] },
+  })
+  expect(row('preview').getByText(/Visible by default/)).toBeInTheDocument()
+  await user.click(row('preview').getByRole('button', { name: 'Edit' }))
+  dialog = within(screen.getByRole('dialog'))
+  expect(
+    dialog.getByRole('combobox', { name: 'Visibility scope' })
+  ).toHaveValue('eligible')
+  await user.click(dialog.getByRole('button', { name: 'Remove user #35' }))
+  await user.click(dialog.getByRole('button', { name: 'Save changes' }))
+  expect(await dialog.findByRole('alert')).toHaveTextContent(
+    'Select at least one account to exclude'
+  )
+  await user.click(dialog.getByRole('button', { name: 'Cancel' }))
+  expect(put).toHaveBeenCalledTimes(2)
+  await user.click(
+    row('preview').getByRole('button', { name: 'Remove restriction' })
+  )
+  await user.click(
+    within(screen.getByRole('alertdialog')).getByRole('button', {
+      name: 'Remove restriction',
+    })
+  )
+  await waitFor(() =>
+    expect(saved()).toEqual({ ...before, models: { hidden: [] } })
+  )
+})
+
+it('retains account exclusions when a permission group is deleted, including for resources no longer in the picker', async () => {
+  const { user, saved } = renderPage({
+    model_exclusions: { preview: [22] },
+    group_exclusions: { archived: [35] },
+  })
+  await screen.findByRole('listitem', { name: 'archived' })
+  expect(row('archived').getByText(/Visible by default/)).toBeVisible()
+  await user.click(row('staff').getByRole('button', { name: 'Delete' }))
+  await user.click(
+    within(screen.getByRole('alertdialog')).getByRole('button', {
+      name: 'Delete',
+    })
+  )
+  await waitFor(() => expect(saved().audiences).not.toHaveProperty('staff'))
+  expect(saved().model_exclusions).toEqual({ preview: [22] })
+  expect(saved().group_exclusions).toEqual({ archived: [35] })
+  expect(saved().groups).toEqual({ internal: [] })
 })

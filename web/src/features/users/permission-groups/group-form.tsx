@@ -1,11 +1,9 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { X } from 'lucide-react'
 import { useId } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
 import { MultiSelect, type Option } from '@/components/multi-select'
-import { Button } from '@/components/ui/button'
 import {
   Field,
   FieldDescription,
@@ -13,9 +11,8 @@ import {
   FieldLabel,
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { UserIdentity } from '@/components/user-identity'
-import { UserSelector } from '@/components/user-selector'
 
+import { AccountListField } from './account-list-field'
 import { EditorDialog } from './editor-dialog'
 import {
   changeGroup,
@@ -88,47 +85,13 @@ export function PermissionGroupForm(props: {
         name='members'
         control={form.control}
         render={({ field }) => (
-          <Field>
-            <FieldLabel htmlFor={`${id}-members`}>
-              {t('Group members')}
-            </FieldLabel>
-            <UserSelector
-              popupClassName='max-sm:[&_[role=option]]:min-h-11'
-              id={`${id}-members`}
-              disabled={props.pending}
-              onChange={(userId) => {
-                if (userId && !field.value.includes(userId)) {
-                  field.onChange([...field.value, userId])
-                }
-              }}
-            />
-            {field.value.length > 0 && (
-              <ul className='divide-y rounded-md border px-2'>
-                {field.value.map((userId) => (
-                  <li
-                    key={userId}
-                    className='flex min-w-0 items-center justify-between gap-2'
-                  >
-                    <UserIdentity userId={userId} />
-                    <Button
-                      type='button'
-                      variant='ghost'
-                      size='icon'
-                      className='size-11 shrink-0'
-                      aria-label={t('Remove user #{{id}}', { id: userId })}
-                      onClick={() =>
-                        field.onChange(
-                          field.value.filter((member) => member !== userId)
-                        )
-                      }
-                    >
-                      <X />
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Field>
+          <AccountListField
+            id={`${id}-members`}
+            label={t('Group members')}
+            disabled={props.pending}
+            value={field.value}
+            onChange={field.onChange}
+          />
         )}
       />
       {resourceKinds.map((kind) => {

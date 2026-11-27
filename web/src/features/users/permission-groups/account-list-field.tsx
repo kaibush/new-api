@@ -1,0 +1,71 @@
+import { X } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+
+import { Button } from '@/components/ui/button'
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldLabel,
+} from '@/components/ui/field'
+import { UserIdentity } from '@/components/user-identity'
+import { UserSelector } from '@/components/user-selector'
+
+export function AccountListField(props: {
+  id: string
+  label: string
+  description?: string
+  error?: string
+  value: number[]
+  disabled: boolean
+  onChange: (users: number[]) => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <Field data-invalid={!!props.error}>
+      <FieldLabel htmlFor={props.id}>{props.label}</FieldLabel>
+      <UserSelector
+        id={props.id}
+        popupClassName='max-sm:[&_[role=option]]:min-h-11'
+        disabled={props.disabled}
+        aria-invalid={!!props.error}
+        onChange={(userId) => {
+          if (userId && !props.value.includes(userId)) {
+            props.onChange([...props.value, userId])
+          }
+        }}
+      />
+      {props.error && <FieldError>{props.error}</FieldError>}
+      {props.value.length > 0 && (
+        <ul className='divide-y rounded-md border px-2'>
+          {props.value.map((userId) => (
+            <li
+              key={userId}
+              className='flex min-w-0 items-center justify-between gap-2'
+            >
+              <UserIdentity userId={userId} />
+              <Button
+                type='button'
+                variant='ghost'
+                size='icon'
+                className='size-11 shrink-0'
+                disabled={props.disabled}
+                aria-label={t('Remove user #{{id}}', { id: userId })}
+                onClick={() =>
+                  props.onChange(
+                    props.value.filter((member) => member !== userId)
+                  )
+                }
+              >
+                <X />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {props.description && (
+        <FieldDescription>{props.description}</FieldDescription>
+      )}
+    </Field>
+  )
+}

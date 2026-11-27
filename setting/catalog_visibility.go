@@ -15,10 +15,33 @@ import (
 const CatalogVisibilityKey = "CatalogVisibility"
 
 type CatalogVisibility struct {
-	invalid   bool
-	Audiences map[string][]int    `json:"audiences"`
-	Models    map[string][]string `json:"models"`
-	Groups    map[string][]string `json:"groups"`
+	invalid         bool
+	Audiences       map[string][]int    `json:"audiences"`
+	Models          map[string][]string `json:"models"`
+	Groups          map[string][]string `json:"groups"`
+	ModelExclusions catalogExclusions   `json:"model_exclusions,omitempty"`
+	GroupExclusions catalogExclusions   `json:"group_exclusions,omitempty"`
+}
+
+type catalogExclusions map[string][]int
+
+func (exclusions *catalogExclusions) UnmarshalJSON(data []byte) error {
+	var entries map[string][]int
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return err
+	}
+	if entries == nil {
+		return errors.New("expected a map of catalog exclusions")
+	}
+	for name, ids := range entries {
+		if name == "" || strings.TrimSpace(name) != name || len(ids) == 0 || slices.ContainsFunc(ids, func(id int) bool { return id <= 0 }) {
+			return errors.New("invalid resource or excluded account IDs")
+		}
+		slices.Sort(ids)
+		entries[name] = slices.Compact(ids)
+	}
+	*exclusions = entries
+	return nil
 }
 
 var catalogVisibility atomic.Pointer[CatalogVisibility]
@@ -65,10 +88,18 @@ func UpdateCatalogVisibility(raw string) error {
 
 func HasCatalogRestrictions() bool {
 	rules := catalogVisibility.Load()
-	return rules != nil && (rules.invalid || len(rules.Models)+len(rules.Groups) > 0)
+	return rules != nil && (rules.invalid || len(rules.Models)+len(rules.Groups)+len(rules.ModelExclusions)+len(rules.GroupExclusions) > 0)
 }
 
-func (rules *CatalogVisibility) allows(resources map[string][]string, userID int, target string) bool {
+func (rules *CatalogVisibility) allows(resources map[string][]string, exclusions catalogExclusions, userID int, target string) bool {
+	if ids, restricted := exclusions[target]; restricted {
+		if userID <= 0 {
+			return false
+		}
+		if _, denied := slices.BinarySearch(ids, userID); denied {
+			return false
+		}
+	}
 	audiences, restricted := resources[target]
 	if !restricted {
 		return true
@@ -86,7 +117,7 @@ func CatalogGroupAllowed(userID int, target string) bool {
 	if rules == nil {
 		return true
 	}
-	return !rules.invalid && rules.allows(rules.Groups, userID, target)
+	return !rules.invalid && rules.allows(rules.Groups, rules.GroupExclusions, userID, target)
 }
 
 func CatalogModelAllowed(userID int, name string) bool {
@@ -94,11 +125,11 @@ func CatalogModelAllowed(userID int, name string) bool {
 	if rules == nil {
 		return true
 	}
-	if rules.invalid || len(rules.Models) == 0 {
+	if rules.invalid || len(rules.Models)+len(rules.ModelExclusions) == 0 {
 		return !rules.invalid
 	}
 	for _, target := range []string{name, reasoning.BaseModelName(name), ratio_setting.RoutingMatchModelName(name)} {
-		if !rules.allows(rules.Models, userID, target) {
+		if !rules.allows(rules.Models, rules.ModelExclusions, userID, target) {
 			return false
 		}
 	}
