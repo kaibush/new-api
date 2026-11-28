@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next'
 import { AnimateInView } from '@/components/animate-in-view'
 import { Button } from '@/components/ui/button'
 import { useStatus } from '@/hooks/use-status'
+import { parseHeaderNavModulesFromStatus } from '@/lib/nav-modules'
 import { cn } from '@/lib/utils'
 
 interface CTAProps {
@@ -41,11 +42,16 @@ export function CTA(props: CTAProps) {
   const { t } = useTranslation()
   const { status } = useStatus()
   const statusData = (status?.data ?? status) as
-    | { docs_link?: string }
+    | Record<string, unknown>
     | null
     | undefined
-  const docsUrl = statusData?.docs_link || 'https://docs.newapi.pro'
+  const docsUrl =
+    (typeof statusData?.docs_link === 'string' && statusData.docs_link) ||
+    'https://docs.newapi.pro'
   const isExternalDocs = docsUrl.startsWith('http')
+  const navModules = parseHeaderNavModulesFromStatus(statusData ?? null)
+  const canViewPricing =
+    Boolean(props.isAuthenticated) && navModules.pricing.enabled
 
   return (
     <section
@@ -185,14 +191,16 @@ export function CTA(props: CTAProps) {
                 </Button>
               )}
 
-              <Button
-                size='lg'
-                variant='outline'
-                className='h-11 rounded-xl border-sky-200/20 bg-white/5 px-5 text-sm font-medium text-[#f8fafc] hover:bg-white/12 hover:text-white'
-                render={<Link to='/pricing' />}
-              >
-                {t('View Pricing')}
-              </Button>
+              {canViewPricing && (
+                <Button
+                  size='lg'
+                  variant='outline'
+                  className='h-11 rounded-xl border-sky-200/20 bg-white/5 px-5 text-sm font-medium text-[#f8fafc] hover:bg-white/12 hover:text-white'
+                  render={<Link to='/pricing' />}
+                >
+                  {t('View Pricing')}
+                </Button>
+              )}
 
               <Button
                 size='lg'

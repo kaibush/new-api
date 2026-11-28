@@ -17,7 +17,7 @@ type headerNavAccess struct {
 func getHeaderNavAccess(module string) headerNavAccess {
 	fallback := headerNavAccess{
 		Enabled:     true,
-		RequireAuth: false,
+		RequireAuth: module == "pricing",
 	}
 
 	common.OptionMapRWMutex.RLock()
@@ -33,7 +33,11 @@ func getHeaderNavAccess(module string) headerNavAccess {
 		return fallback
 	}
 
-	return parseHeaderNavAccess(parsed[module], fallback)
+	access := parseHeaderNavAccess(parsed[module], fallback)
+	if module == "pricing" {
+		access.RequireAuth = true
+	}
+	return access
 }
 
 func parseHeaderNavAccess(raw any, fallback headerNavAccess) headerNavAccess {

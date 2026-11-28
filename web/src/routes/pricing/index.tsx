@@ -43,14 +43,12 @@ export const Route = createFileRoute('/pricing/')({
     if (!access.enabled) {
       throw redirect({ to: '/' })
     }
-    if (access.requireAuth) {
-      const { auth } = useAuthStore.getState()
-      if (!auth.user) {
-        throw redirect({
-          to: '/sign-in',
-          search: { redirect: location.href },
-        })
-      }
+    const { auth } = useAuthStore.getState()
+    if (!auth.user) {
+      throw redirect({
+        to: '/sign-in',
+        search: { redirect: location.href },
+      })
     }
   },
   component: Pricing,

@@ -84,9 +84,11 @@ func performHeaderNavRequest(t *testing.T, handler gin.HandlerFunc, authenticate
 func TestHeaderNavModuleAuthAllowsDefaultPublicAccess(t *testing.T) {
 	withHeaderNavModules(t, "")
 
-	recorder := performHeaderNavRequest(t, HeaderNavModuleAuth("pricing"), false)
+	recorder := performHeaderNavRequest(t, HeaderNavModuleAuth("rankings"), false)
 
 	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, http.StatusUnauthorized, performHeaderNavRequest(t, HeaderNavModuleAuth("pricing"), false).Code)
+	require.Equal(t, http.StatusOK, performHeaderNavRequest(t, HeaderNavModuleAuth("pricing"), true).Code)
 }
 
 func TestHeaderNavModuleAuthRejectsDisabledPricing(t *testing.T) {
@@ -99,12 +101,15 @@ func TestHeaderNavModuleAuthRejectsDisabledPricing(t *testing.T) {
 }
 
 func TestHeaderNavModuleAuthRequiresLoginForPricing(t *testing.T) {
-	raw := `{"pricing":{"enabled":true,"requireAuth":true}}`
-	withHeaderNavModules(t, raw)
-
-	recorder := performHeaderNavRequest(t, HeaderNavModuleAuth("pricing"), false)
-
-	require.Equal(t, http.StatusUnauthorized, recorder.Code)
+	for _, raw := range []string{
+		`{"pricing":{"enabled":true,"requireAuth":true}}`,
+		`{"pricing":{"enabled":true,"requireAuth":false}}`,
+		`{"pricing":true}`,
+	} {
+		withHeaderNavModules(t, raw)
+		require.Equal(t, http.StatusUnauthorized, performHeaderNavRequest(t, HeaderNavModuleAuth("pricing"), false).Code, raw)
+		require.Equal(t, http.StatusOK, performHeaderNavRequest(t, HeaderNavModuleAuth("pricing"), true).Code, raw)
+	}
 }
 
 func TestHeaderNavModuleAuthRequiresLoginForRankings(t *testing.T) {
@@ -128,9 +133,11 @@ func TestHeaderNavModuleAuthRejectsLegacyDisabledModule(t *testing.T) {
 func TestHeaderNavModulePublicOrUserAuthAllowsDefaultPublicAccess(t *testing.T) {
 	withHeaderNavModules(t, "")
 
-	recorder := performHeaderNavRequest(t, HeaderNavModulePublicOrUserAuth("pricing"), false)
+	recorder := performHeaderNavRequest(t, HeaderNavModulePublicOrUserAuth("rankings"), false)
 
 	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, http.StatusUnauthorized, performHeaderNavRequest(t, HeaderNavModulePublicOrUserAuth("pricing"), false).Code)
+	require.Equal(t, http.StatusOK, performHeaderNavRequest(t, HeaderNavModulePublicOrUserAuth("pricing"), true).Code)
 }
 
 func TestHeaderNavModulePublicOrUserAuthRequiresLoginWhenDisabled(t *testing.T) {
@@ -152,12 +159,14 @@ func TestHeaderNavModulePublicOrUserAuthAllowsLoggedInWhenDisabled(t *testing.T)
 }
 
 func TestHeaderNavModulePublicOrUserAuthRequiresLoginWhenRequireAuth(t *testing.T) {
-	raw := `{"pricing":{"enabled":true,"requireAuth":true}}`
-	withHeaderNavModules(t, raw)
-
-	recorder := performHeaderNavRequest(t, HeaderNavModulePublicOrUserAuth("pricing"), false)
-
-	require.Equal(t, http.StatusUnauthorized, recorder.Code)
+	for _, raw := range []string{
+		`{"pricing":{"enabled":true,"requireAuth":true}}`,
+		`{"pricing":{"enabled":true,"requireAuth":false}}`,
+	} {
+		withHeaderNavModules(t, raw)
+		require.Equal(t, http.StatusUnauthorized, performHeaderNavRequest(t, HeaderNavModulePublicOrUserAuth("pricing"), false).Code, raw)
+		require.Equal(t, http.StatusOK, performHeaderNavRequest(t, HeaderNavModulePublicOrUserAuth("pricing"), true).Code, raw)
+	}
 }
 
 func TestHeaderNavModulePublicOrUserAuthRequiresLoginForLegacyDisabledModule(t *testing.T) {
@@ -175,7 +184,7 @@ func TestHeaderNavPublicRouteRejectsExpiredInternalAccessToken(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
-	router.GET("/api/test", HeaderNavModuleAuth("pricing"), func(c *gin.Context) {
+	router.GET("/api/test", HeaderNavModuleAuth("rankings"), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"success": true})
 	})
 	request := httptest.NewRequest(http.MethodGet, "/api/test", nil)

@@ -38,7 +38,6 @@ import { modelPricingDisplay } from '@/features/model-pricing/pricing'
 import { ModelPriceCell } from '@/features/pricing/components/model-price-cell'
 import { ResourceAccessBadge } from '@/features/users/permission-groups/access-badge'
 import {
-  EMPTY_POLICY,
   describeResourceRule,
   getResourceRule,
 } from '@/features/users/permission-groups/lib/policy'
@@ -93,11 +92,34 @@ export function useModelsColumns(
             enableSorting: false,
             cell: ({ row }) => {
               const modelName = row.original.model_name
-              const rule = getResourceRule(
-                catalog.policy ?? EMPTY_POLICY,
-                'models',
-                modelName
-              )
+              if (catalog.isPending) {
+                return (
+                  <span className='text-muted-foreground text-xs'>
+                    {t('Loading...')}
+                  </span>
+                )
+              }
+              if (catalog.isError || catalog.invalid || !catalog.policy) {
+                return (
+                  <Button
+                    variant='ghost'
+                    size='sm'
+                    className='h-auto max-w-full justify-start px-0 py-0.5 font-normal hover:bg-transparent'
+                    aria-label={t('Configure access for {{model}}', {
+                      model: modelName,
+                    })}
+                    onClick={() => {
+                      setPermissionTargets([modelName])
+                      setOpen('permission-model')
+                    }}
+                  >
+                    <span className='text-destructive text-xs'>
+                      {t('Cannot load visibility rules')}
+                    </span>
+                  </Button>
+                )
+              }
+              const rule = getResourceRule(catalog.policy, 'models', modelName)
               const summary = describeResourceRule(rule, t, locale)
               return (
                 <Button
@@ -438,6 +460,9 @@ export function useModelsColumns(
     canPrice,
     isSuperAdmin,
     catalog.policy,
+    catalog.isPending,
+    catalog.isError,
+    catalog.invalid,
     vendorMap,
     priceMap,
     pricingState,

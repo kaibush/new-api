@@ -186,21 +186,25 @@ describe('module guard status freshness', () => {
       module: 'pricing',
       before: { enabled: false, requireAuth: false },
       after: { enabled: true, requireAuth: false },
+      expected: { enabled: true, requireAuth: true },
     },
     {
       module: 'rankings',
       before: { enabled: true, requireAuth: false },
       after: { enabled: false, requireAuth: false },
+      expected: { enabled: false, requireAuth: false },
     },
     {
       module: 'pricing',
       before: { enabled: true, requireAuth: false },
       after: { enabled: true, requireAuth: true },
+      expected: { enabled: true, requireAuth: true },
     },
     {
       module: 'rankings',
       before: { enabled: true, requireAuth: true },
       after: { enabled: true, requireAuth: false },
+      expected: { enabled: true, requireAuth: false },
     },
   ])('uses refreshed $module access: $before -> $after', async (scenario) => {
     const queryClient = createQueryClient()
@@ -220,7 +224,7 @@ describe('module guard status freshness', () => {
         queryClient,
         scenario.module as HeaderNavModule
       )
-    ).toEqual(scenario.after)
+    ).toEqual(scenario.expected)
   })
 
   test('reuses fresh access but refreshes explicitly invalidated access', async () => {
@@ -231,13 +235,13 @@ describe('module guard status freshness', () => {
     stubStatusEndpoint('updated')
     expect(await getModuleAccessForGuard(queryClient, 'pricing')).toEqual({
       enabled: false,
-      requireAuth: false,
+      requireAuth: true,
     })
     expect(statusRequests).toHaveLength(0)
     await queryClient.invalidateQueries({ queryKey: STATUS_QUERY_KEY })
     expect(await getModuleAccessForGuard(queryClient, 'pricing')).toEqual({
       enabled: true,
-      requireAuth: false,
+      requireAuth: true,
     })
     expect(statusRequests).toHaveLength(1)
   })

@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
@@ -219,6 +220,51 @@ func TestRestoreConnectionContextRejectsChangedAdvancedCustomRoute(t *testing.T)
 	require.NotNil(t, apiErr)
 	assert.Equal(t, http.StatusForbidden, apiErr.StatusCode)
 	assert.ErrorContains(t, apiErr, "upstream route changed")
+
+	// Restore valid route and verify CatalogVisibility revocation on pinned connection.
+	channel.SetOtherSettings(dto.ChannelOtherSettings{AdvancedCustom: &dto.AdvancedCustomConfig{Routes: []dto.AdvancedCustomRoute{{IncomingPath: "/v1/responses", UpstreamPath: "/v1/responses"}}}})
+	require.NoError(t, database.Model(channel).Update("settings", channel.OtherSettings).Error)
+	require.NoError(t, database.AutoMigrate(&model.Ability{}))
+	t.Setenv("LOG_SQL_DSN", "")
+	require.NoError(t, model.InitLogDB())
+	t.Cleanup(func() {
+		require.NoError(t, setting.UpdateCatalogVisibility(`{"audiences":{},"models":{},"groups":{}}`))
+	})
+	priority := int64(0)
+	require.NoError(t, database.Create(&model.Ability{
+		Group: "gpt不降智", Model: "ws-model", ChannelId: channel.Id, Enabled: true, Priority: &priority, Weight: 100,
+	}).Error)
+	require.NoError(t, setting.UpdateCatalogVisibility(`{"audiences":{},"models":{},"groups":{},"model_users":{"ws-model":[22]}}`))
+
+	newPinnedCtx := func(userID int) *gin.Context {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+		ctx.Set("id", userID)
+		common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+		common.SetContextKey(ctx, constant.ContextKeyUsingGroup, "default")
+		service.GetChannelConstraints(ctx).AddPin(appdto.ChannelPin{ChannelId: channel.Id, Source: appdto.PinSourceToken, Rank: appdto.PinRankToken, RetryMode: appdto.PinRetrySingleAttempt})
+		return ctx
+	}
+
+	session.lockedGroup = "gpt不降智"
+	allowedCtx := newPinnedCtx(22)
+	require.Nil(t, session.restoreConnectionContext(allowedCtx, "ws-model"))
+	assert.Equal(t, "gpt不降智", common.GetContextKeyString(allowedCtx, constant.ContextKeyAutoGroup))
+
+	require.NoError(t, setting.UpdateCatalogVisibility(`{"audiences":{},"models":{},"groups":{},"model_users":{"ws-model":[99]}}`))
+	revokedModelCtx := newPinnedCtx(22)
+	revokedErr := session.restoreConnectionContext(revokedModelCtx, "ws-model")
+	require.NotNil(t, revokedErr)
+	assert.Equal(t, http.StatusForbidden, revokedErr.StatusCode)
+	assert.ErrorContains(t, revokedErr, "no longer allowed")
+
+	// Model open to user 22, but private group "gpt不降智" restricted to user 99 only -> channel no longer allowed.
+	require.NoError(t, setting.UpdateCatalogVisibility(`{"audiences":{},"models":{},"groups":{},"group_users":{"gpt不降智":[99]}}`))
+	revokedGroupCtx := newPinnedCtx(22)
+	revokedGroupErr := session.restoreConnectionContext(revokedGroupCtx, "ws-model")
+	require.NotNil(t, revokedGroupErr)
+	assert.Equal(t, http.StatusForbidden, revokedGroupErr.StatusCode)
+	assert.ErrorContains(t, revokedGroupErr, "no longer allowed")
 }
 
 func TestResponsesWSChannelRoutingRequiresExplicitOptIn(t *testing.T) {

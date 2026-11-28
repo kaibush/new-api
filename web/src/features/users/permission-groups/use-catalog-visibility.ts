@@ -10,11 +10,15 @@ export function useCatalogVisibility(queryOptions?: { enabled?: boolean }) {
   const update = useUpdateOption()
 
   const state = useMemo(() => {
-    const list = Array.isArray(options.data?.data) ? options.data.data : null
-    if (!list) {
-      return { policy: EMPTY_POLICY, invalid: false }
+    if (options.isPending || options.isError) {
+      return { policy: null, invalid: false }
     }
-    const found = list.find((item) => item.key === 'CatalogVisibility')
+    if (!Array.isArray(options.data?.data)) {
+      return { policy: null, invalid: true }
+    }
+    const found = options.data.data.find(
+      (item) => item.key === 'CatalogVisibility'
+    )
     if (!found) {
       return { policy: EMPTY_POLICY, invalid: false }
     }
@@ -23,7 +27,7 @@ export function useCatalogVisibility(queryOptions?: { enabled?: boolean }) {
       return { policy: null, invalid: true }
     }
     return { policy: parsed, invalid: false }
-  }, [options.data])
+  }, [options.data, options.isError, options.isPending])
 
   const savePolicy = (next: Policy, onSuccess?: () => void) => {
     update.mutate(

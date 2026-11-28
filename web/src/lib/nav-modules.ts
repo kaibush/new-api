@@ -41,7 +41,7 @@ const DEFAULT_HEADER_NAV_MODULES: HeaderNavModules = {
   console: true,
   help: true,
   topup: true,
-  pricing: { enabled: true, requireAuth: false },
+  pricing: { enabled: true, requireAuth: true },
   rankings: { enabled: true, requireAuth: false },
   docs: true,
   about: true,
@@ -117,7 +117,10 @@ export function parseHeaderNavModules(raw: unknown): HeaderNavModules {
 
   Object.entries(parsed).forEach(([key, value]) => {
     if (key === 'pricing') {
-      result.pricing = parseAccess(value, result.pricing)
+      result.pricing = {
+        ...parseAccess(value, result.pricing),
+        requireAuth: true,
+      }
       return
     }
     if (key === 'rankings') {

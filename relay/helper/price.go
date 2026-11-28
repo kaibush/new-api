@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
@@ -288,11 +289,26 @@ func HasModelBillingConfig(modelName string) bool {
 	if _, ok, _ := ratio_setting.GetModelRatio(modelName); ok {
 		return true
 	}
-	if billing_setting.GetBillingMode(modelName) != billing_setting.BillingModeTieredExpr {
+	if billing_setting.GetBillingMode(modelName) == billing_setting.BillingModeTieredExpr {
+		if expr, ok := billing_setting.GetBillingExpr(modelName); ok && strings.TrimSpace(expr) != "" {
+			return true
+		}
+	}
+	pluginGeneration := jsplugin.DefaultRegistry.Generation()
+	if pluginGeneration == nil {
 		return false
 	}
-	expr, ok := billing_setting.GetBillingExpr(modelName)
-	return ok && strings.TrimSpace(expr) != ""
+	if target, resolved := model.ResolveTaskModelAlias(pluginGeneration, modelName); resolved {
+		if expr, ok := billing_setting.ResolveTaskBillingExpr(target.PluginKey, modelName, target.Declared); ok && strings.TrimSpace(expr) != "" {
+			return true
+		}
+	}
+	for _, provider := range pluginGeneration.PluginsByModel(modelName) {
+		if expr, ok := billing_setting.ResolveTaskBillingExpr(provider.Meta.Key, modelName, ""); ok && strings.TrimSpace(expr) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // HasPriceOrRatioEntry reports whether name has a configured price, ratio, or

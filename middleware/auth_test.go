@@ -13,9 +13,12 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
+	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/golang-jwt/jwt/v5"
@@ -557,4 +560,63 @@ func TestTokenAuthRejectsKeysOfDeletedUser(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTokenAuthAllowsCatalogGrantedPrivateGroupWithoutGroupRatio(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	setupDashboardAuthMiddlewareTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Token{}, &model.Channel{}, &model.Ability{}))
+	t.Setenv("LOG_SQL_DSN", "")
+	require.NoError(t, model.InitLogDB())
+
+	originalUsable := setting.UserUsableGroups2JSONString()
+	originalRatio := ratio_setting.GroupRatio2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalUsable))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalRatio))
+		require.NoError(t, setting.UpdateCatalogVisibility(`{"audiences":{},"models":{},"groups":{}}`))
+		model.InvalidatePricingCache()
+	})
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default"}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1}`))
+	priority := int64(0)
+	require.NoError(t, model.DB.Create(&model.Ability{
+		Group: "gpt不降智", Model: "gpt-6.2-sol", ChannelId: 1, Enabled: true, Priority: &priority, Weight: 100,
+	}).Error)
+	model.InvalidatePricingCache()
+
+	authorized := createMiddlewarePATUser(t, "private-group-authorized", "private-group-authorized-pat")
+	unauthorized := createMiddlewarePATUser(t, "private-group-denied", "private-group-denied-pat")
+	require.NoError(t, setting.UpdateCatalogVisibility(fmt.Sprintf(`{"audiences":{},"models":{},"groups":{},"group_users":{"gpt不降智":[%d]}}`, authorized.Id)))
+
+	authKey := "privategroupauthorized0123456789abcdefghijklmnop"
+	deniedKey := "privategroupdenied0123456789abcdefghijklmnopqrst"
+	require.NoError(t, model.DB.Create(&[]model.Token{
+		{UserId: authorized.Id, Key: authKey, Name: "auth-private", Group: "gpt不降智", Status: common.TokenStatusEnabled, ExpiredTime: -1, UnlimitedQuota: true},
+		{UserId: unauthorized.Id, Key: deniedKey, Name: "denied-private", Group: "gpt不降智", Status: common.TokenStatusEnabled, ExpiredTime: -1, UnlimitedQuota: true},
+	}).Error)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/v1/models", TokenAuth(), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"using_group": common.GetContextKeyString(c, constant.ContextKeyUsingGroup)})
+	})
+	doReq := func(key string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+		req.Header.Set("Authorization", "Bearer sk-"+key)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+
+	okRes := doReq(authKey)
+	require.Equal(t, http.StatusOK, okRes.Code, okRes.Body.String())
+	assert.Contains(t, okRes.Body.String(), `"using_group":"gpt不降智"`)
+
+	deniedRes := doReq(deniedKey)
+	require.Equal(t, http.StatusForbidden, deniedRes.Code)
+
+	require.NoError(t, setting.UpdateCatalogVisibility(`{"audiences":{},"models":{},"groups":{}}`))
+	revokedRes := doReq(authKey)
+	require.Equal(t, http.StatusForbidden, revokedRes.Code)
 }

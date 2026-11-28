@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	appdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
@@ -67,6 +68,11 @@ func TestCatalogVisibilityAcrossAudiences(t *testing.T) {
 			common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
 		}
 		GetPricing(ctx)
+		if viewer == 0 {
+			require.Equal(t, http.StatusUnauthorized, recorder.Code)
+			continue
+		}
+		require.Equal(t, http.StatusOK, recorder.Code)
 		var catalog struct {
 			Data   []model.Pricing   `json:"data"`
 			Groups map[string]string `json:"usable_group"`
@@ -150,6 +156,11 @@ func TestCatalogExclusionsWithoutPermissionGroups(t *testing.T) {
 		common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
 		common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "default")
 		GetPricing(ctx)
+		if viewer == 0 {
+			require.Equal(t, http.StatusUnauthorized, recorder.Code)
+		} else {
+			require.Equal(t, http.StatusOK, recorder.Code)
+		}
 		names, _, err := visibleTokenModelNames(ctx)
 		require.NoError(t, err)
 		require.Contains(t, names, "shared")
@@ -321,6 +332,7 @@ func decodeUserModelsResponse(t *testing.T, recorder *httptest.ResponseRecorder)
 
 func TestGetUserModelsFiltersByRequestedGroup(t *testing.T) {
 	db := setupModelListControllerTestDB(t)
+	withSelfUseModeEnabled(t)
 	require.NoError(t, db.Create(&model.User{
 		Id:       1002,
 		Username: "playground-model-user",
@@ -354,6 +366,7 @@ func TestGetUserModelsFiltersByRequestedGroup(t *testing.T) {
 }
 
 func TestGetUserModelsExpandsAutoGroupsInConfiguredOrder(t *testing.T) {
+	withSelfUseModeEnabled(t)
 	originalAutoGroups := setting.AutoGroups2JsonString()
 	originalUsableGroups := setting.UserUsableGroups2JSONString()
 	originalSpecialGroups := ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup.ReadAll()
@@ -775,23 +788,28 @@ func TestCrossGroupCatalogPermissionListingAndRouting(t *testing.T) {
 			common.SetContextKey(priceCtx, constant.ContextKeyUserGroup, "default")
 		}
 		GetPricing(priceCtx)
-		var priceBody struct {
-			Data        []model.Pricing    `json:"data"`
-			UsableGroup map[string]string  `json:"usable_group"`
-			GroupRatio  map[string]float64 `json:"group_ratio"`
-		}
-		require.NoError(t, common.Unmarshal(priceRec.Body.Bytes(), &priceBody))
-		pricingModels := map[string]bool{}
-		for _, item := range priceBody.Data {
-			pricingModels[item.ModelName] = true
-		}
-		assert.Equal(t, tc.expect61, pricingModels["gpt-6.1-sol"])
-		assert.Equal(t, tc.expect62, pricingModels["gpt-6.2-sol"])
-		if tc.expect61 || tc.expect62 {
-			assert.Contains(t, priceBody.UsableGroup, "gpt不降智")
-			assert.Equal(t, 1.0, priceBody.GroupRatio["gpt不降智"])
+		if tc.viewer == 0 {
+			require.Equal(t, http.StatusUnauthorized, priceRec.Code)
 		} else {
-			assert.NotContains(t, priceBody.UsableGroup, "gpt不降智")
+			require.Equal(t, http.StatusOK, priceRec.Code)
+			var priceBody struct {
+				Data        []model.Pricing    `json:"data"`
+				UsableGroup map[string]string  `json:"usable_group"`
+				GroupRatio  map[string]float64 `json:"group_ratio"`
+			}
+			require.NoError(t, common.Unmarshal(priceRec.Body.Bytes(), &priceBody))
+			pricingModels := map[string]bool{}
+			for _, item := range priceBody.Data {
+				pricingModels[item.ModelName] = true
+			}
+			assert.Equal(t, tc.expect61, pricingModels["gpt-6.1-sol"])
+			assert.Equal(t, tc.expect62, pricingModels["gpt-6.2-sol"])
+			if tc.expect61 || tc.expect62 {
+				assert.Contains(t, priceBody.UsableGroup, "gpt不降智")
+				assert.Equal(t, 1.0, priceBody.GroupRatio["gpt不降智"])
+			} else {
+				assert.NotContains(t, priceBody.UsableGroup, "gpt不降智")
+			}
 		}
 
 		// 3. /api/user/models (Playground)
@@ -837,7 +855,112 @@ func TestCrossGroupCatalogPermissionListingAndRouting(t *testing.T) {
 				require.NotNil(t, selectErr, "viewer=%d group=%s model=%s", tc.viewer, tc.tokenGroup, targetModel.name)
 				assert.True(t, selectErr.NoAvailableChannel)
 			}
+
+			// 5. Pinned channel cross-group routing sets ContextKeyAutoGroup to matched private group
+			pinCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			pinCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			pinCtx.Set("id", tc.viewer)
+			common.SetContextKey(pinCtx, constant.ContextKeyUserGroup, "default")
+			service.GetChannelConstraints(pinCtx).AddPin(appdto.ChannelPin{
+				ChannelId: 902,
+				Source:    appdto.PinSourceToken,
+				Rank:      appdto.PinRankToken,
+				RetryMode: appdto.PinRetrySingleAttempt,
+			})
+			pinRetry := 0
+			pinCh, pinGroup, pinErr := service.SelectChannelForRequest(pinCtx, targetModel.name, &service.RetryParam{
+				Ctx:         pinCtx,
+				TokenGroup:  tc.tokenGroup,
+				ModelName:   targetModel.name,
+				RequestPath: "/v1/chat/completions",
+				Retry:       &pinRetry,
+			})
+			if targetModel.allowed {
+				require.Nil(t, pinErr, "pinned viewer=%d group=%s model=%s", tc.viewer, tc.tokenGroup, targetModel.name)
+				require.NotNil(t, pinCh)
+				assert.Equal(t, 902, pinCh.Id)
+				assert.Equal(t, "gpt不降智", pinGroup)
+				assert.Equal(t, "gpt不降智", common.GetContextKeyString(pinCtx, constant.ContextKeyAutoGroup))
+			} else {
+				require.NotNil(t, pinErr, "pinned viewer=%d group=%s model=%s", tc.viewer, tc.tokenGroup, targetModel.name)
+				assert.True(t, pinErr.NoAvailableChannel)
+			}
 		}
+	}
+}
+
+func TestUnpricedModelsHiddenAcrossSquarePlaygroundAndV1Models(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	previousSelfUse := operation_setting.SelfUseModeEnabled
+	operation_setting.SelfUseModeEnabled = false
+	originalRatio := ratio_setting.ModelRatio2JSONString()
+	originalUsable := setting.UserUsableGroups2JSONString()
+	t.Cleanup(func() {
+		operation_setting.SelfUseModeEnabled = previousSelfUse
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(originalRatio))
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalUsable))
+		model.InvalidatePricingCache()
+	})
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default"}`))
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"zz-priced-model":1.5}`))
+
+	strictUser := model.User{Id: 2101, Username: "strict-user", Password: "pw", Group: "default", AffCode: "aff-2101", Status: common.UserStatusEnabled}
+	acceptUser := model.User{Id: 2102, Username: "accept-user", Password: "pw", Group: "default", AffCode: "aff-2102", Status: common.UserStatusEnabled}
+	acceptUser.SetSetting(dto.UserSetting{AcceptUnsetRatioModel: true})
+	require.NoError(t, db.Create(&[]model.User{strictUser, acceptUser}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{Group: "default", Model: "zz-priced-model", ChannelId: 1, Enabled: true},
+		{Group: "default", Model: "zz-unpriced-model", ChannelId: 1, Enabled: true},
+	}).Error)
+	model.InvalidatePricingCache()
+
+	for _, tc := range []struct {
+		userID         int
+		expectUnpriced bool
+	}{
+		{userID: 2101, expectUnpriced: false},
+		{userID: 2102, expectUnpriced: true},
+	} {
+		priceRec := httptest.NewRecorder()
+		priceCtx, _ := gin.CreateTestContext(priceRec)
+		priceCtx.Set("id", tc.userID)
+		common.SetContextKey(priceCtx, constant.ContextKeyUserGroup, "default")
+		GetPricing(priceCtx)
+		require.Equal(t, http.StatusOK, priceRec.Code)
+		var priceBody struct {
+			Data []model.Pricing `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(priceRec.Body.Bytes(), &priceBody))
+		squareModels := map[string]bool{}
+		for _, item := range priceBody.Data {
+			squareModels[item.ModelName] = true
+		}
+		assert.True(t, squareModels["zz-priced-model"])
+		assert.Equal(t, tc.expectUnpriced, squareModels["zz-unpriced-model"])
+
+		umRec := httptest.NewRecorder()
+		umCtx, _ := gin.CreateTestContext(umRec)
+		umCtx.Request = httptest.NewRequest(http.MethodGet, "/api/user/models?group=default", nil)
+		umCtx.Set("id", tc.userID)
+		GetUserModels(umCtx)
+		playgroundModels := decodeUserModelsResponse(t, umRec)
+		assert.Contains(t, playgroundModels, "zz-priced-model")
+		if tc.expectUnpriced {
+			assert.Contains(t, playgroundModels, "zz-unpriced-model")
+		} else {
+			assert.NotContains(t, playgroundModels, "zz-unpriced-model")
+		}
+
+		listRec := httptest.NewRecorder()
+		listCtx, _ := gin.CreateTestContext(listRec)
+		listCtx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+		listCtx.Set("id", tc.userID)
+		common.SetContextKey(listCtx, constant.ContextKeyUserGroup, "default")
+		common.SetContextKey(listCtx, constant.ContextKeyTokenGroup, "default")
+		ListModels(listCtx, constant.ChannelTypeOpenAI)
+		v1Models := decodeListModelsResponse(t, listRec)
+		assert.True(t, hasKey(v1Models, "zz-priced-model"))
+		assert.Equal(t, tc.expectUnpriced, hasKey(v1Models, "zz-unpriced-model"))
 	}
 }
 

@@ -325,10 +325,24 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 		if channel.Status != common.ChannelStatusEnabled {
 			return nil, "", pinnedChannelUnavailable(pin, http.StatusForbidden, i18n.MsgDistributorChannelDisabled)
 		}
+		selectedGroup := ""
 		if setting.HasCatalogRestrictions() && modelName != "" {
 			groups := PermittedCandidateGroupsForRequest(c, userGroup, retry.TokenGroup, modelName)
-			if !model.IsChannelEnabledForAnyGroupModel(groups, modelName, channel.Id) {
+			for _, g := range groups {
+				if model.IsChannelEnabledForGroupModel(g, modelName, channel.Id) {
+					selectedGroup = g
+					break
+				}
+			}
+			if selectedGroup == "" {
 				return nil, retry.TokenGroup, &ChannelSelectError{StatusCode: http.StatusServiceUnavailable, Code: types.ErrorCodeModelNotFound, MessageID: i18n.MsgDistributorNoAvailableChannel, Params: map[string]any{"Group": retry.TokenGroup, "Model": modelName}, NoAvailableChannel: true}
+			}
+		} else if modelName != "" && retry.TokenGroup == "auto" {
+			for _, g := range GetRequestAutoGroups(c, userGroup) {
+				if model.IsChannelEnabledForGroupModel(g, modelName, channel.Id) {
+					selectedGroup = g
+					break
+				}
 			}
 		}
 		if ok, kind := model.ChannelSatisfiesFilters(channel, modelName, constraints.Filters); !ok {
@@ -338,7 +352,10 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 				FilterKind: kind, Channel: channel,
 			}
 		}
-		return channel, "", nil
+		if selectedGroup != "" && selectedGroup != retry.TokenGroup {
+			common.SetContextKey(c, constant.ContextKeyAutoGroup, selectedGroup)
+		}
+		return channel, selectedGroup, nil
 	}
 
 	usingGroup := retry.TokenGroup

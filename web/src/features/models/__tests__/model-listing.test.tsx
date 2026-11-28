@@ -120,6 +120,10 @@ async function renderList(
   ],
   options: {
     pricing?: ModelPricingEntry[] | Promise<ModelPricingConfig>
+    systemOptions?:
+      | Array<{ key: string; value: string }>
+      | Promise<Array<{ key: string; value: string }>>
+      | Error
     waitForPricing?: boolean
     initialUrl?: string
     total?: number
@@ -137,6 +141,17 @@ async function renderList(
     }
     if (url === '/api/models/7') {
       return { data: { success: true, data: metadata } }
+    }
+    if (url === '/api/option/') {
+      if (options.systemOptions instanceof Error) {
+        throw options.systemOptions
+      }
+      return {
+        data: {
+          success: true,
+          data: options.systemOptions ? await options.systemOptions : [],
+        },
+      }
     }
     if (url === '/api/option/model_pricing') {
       return {
@@ -882,4 +897,62 @@ it('configures model access permissions inline from the models table including c
     groups: {},
     open_models: ['channel-only'],
   })
+})
+
+it('preserves existing CatalogVisibility rules when saving a single model rule', async () => {
+  const existingPolicy = {
+    audiences: { staff: [22] },
+    models: { 'other-model': ['staff'] },
+    groups: { gpt不降智: ['staff'] },
+    model_exclusions: { 'other-model': [11] },
+  }
+  await renderList([channel, metadata], {
+    systemOptions: [
+      { key: 'CatalogVisibility', value: JSON.stringify(existingPolicy) },
+    ],
+  })
+  let savedPolicy: unknown = null
+  const put = vi
+    .spyOn(api, 'put')
+    .mockImplementation(async (_path, payload) => {
+      savedPolicy = JSON.parse((payload as { value: string }).value)
+      return { data: { success: true } }
+    })
+  const user = userEvent.setup()
+
+  await user.click(
+    screen.getByRole('button', { name: 'Configure access for channel-only' })
+  )
+  const dialog = within(await screen.findByRole('dialog'))
+  await user.click(dialog.getByRole('button', { name: 'Save changes' }))
+  await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+  expect(savedPolicy).toEqual({
+    audiences: { staff: [22] },
+    models: { 'other-model': ['staff'] },
+    groups: { gpt不降智: ['staff'] },
+    model_exclusions: { 'other-model': [11] },
+    open_models: ['channel-only'],
+  })
+})
+
+it('blocks model permission saving when visibility rules fail to load', async () => {
+  await renderList([channel], {
+    systemOptions: new Error('network error'),
+  })
+  const put = vi.spyOn(api, 'put')
+  const user = userEvent.setup()
+
+  const badgeButton = screen.getByRole('button', {
+    name: 'Configure access for channel-only',
+  })
+  expect(badgeButton).toHaveTextContent('Cannot load visibility rules')
+
+  await user.click(badgeButton)
+  const dialog = within(await screen.findByRole('dialog'))
+  expect(dialog.getByText('Cannot load visibility rules')).toBeVisible()
+  expect(
+    dialog.queryByRole('button', { name: 'Save changes' })
+  ).not.toBeInTheDocument()
+  expect(dialog.getByRole('button', { name: 'Retry' })).toBeVisible()
+  expect(put).not.toHaveBeenCalled()
 })

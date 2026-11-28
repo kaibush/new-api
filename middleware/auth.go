@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
@@ -633,11 +634,9 @@ func TokenAuth() func(c *gin.Context) {
 				return
 			}
 			// check group in common.GroupRatio
-			if !ratio_setting.ContainsGroupRatio(tokenGroup) {
-				if tokenGroup != "auto" {
-					abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("分组 %s 已被弃用", tokenGroup))
-					return
-				}
+			if tokenGroup != "auto" && !ratio_setting.ContainsGroupRatio(tokenGroup) && !setting.CatalogGroupGranted(token.UserId, tokenGroup) {
+				abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("分组 %s 已被弃用", tokenGroup))
+				return
 			}
 			userGroup = tokenGroup
 		}

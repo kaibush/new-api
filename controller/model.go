@@ -217,17 +217,20 @@ func getModelListGroups(c *gin.Context) (modelListGroups, error) {
 	}, nil
 }
 
-func visibleTokenModelNames(c *gin.Context) ([]string, []string, error) {
-	acceptUnsetRatioModel := operation_setting.SelfUseModeEnabled
-	if !acceptUnsetRatioModel {
-		userId := c.GetInt("id")
-		if userId > 0 {
-			userSettings, _ := model.GetUserSetting(userId, false)
-			if userSettings.AcceptUnsetRatioModel {
-				acceptUnsetRatioModel = true
-			}
-		}
+func userAcceptsUnsetRatioModel(userID int) bool {
+	if operation_setting.SelfUseModeEnabled {
+		return true
 	}
+	if userID <= 0 {
+		return false
+	}
+	userSettings, _ := model.GetUserSetting(userID, false)
+	return userSettings.AcceptUnsetRatioModel
+}
+
+func visibleTokenModelNames(c *gin.Context) ([]string, []string, error) {
+	userID := c.GetInt("id")
+	acceptUnsetRatioModel := userAcceptsUnsetRatioModel(userID)
 
 	userModelNames := make([]string, 0)
 	groups, err := getModelListGroups(c)
@@ -246,7 +249,6 @@ func visibleTokenModelNames(c *gin.Context) ([]string, []string, error) {
 			tokenModelLimit = map[string]bool{}
 		}
 	}
-	userID := c.GetInt("id")
 	models := service.VisibleCatalogModels(userID, ownerGroups)
 	effectiveGroups := slices.Clone(ownerGroups)
 	if setting.CatalogGroupAllowed(userID, groups.tokenGroup) {

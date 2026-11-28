@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
@@ -667,6 +669,11 @@ func GetUserModels(c *gin.Context) {
 				visible = append(visible, modelName)
 			}
 		}
+	}
+	if !userAcceptsUnsetRatioModel(id) {
+		visible = slices.DeleteFunc(visible, func(modelName string) bool {
+			return !helper.HasModelBillingConfig(modelName)
+		})
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

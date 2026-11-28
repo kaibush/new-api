@@ -16,6 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useTranslation } from 'react-i18next'
+
+import { Dialog } from '@/components/dialog'
+import { ErrorState } from '@/components/error-state'
+import { LoadingState } from '@/components/loading-state'
 import { nameOptions } from '@/features/users/permission-groups/lib/policy'
 import { ResourceRuleForm } from '@/features/users/permission-groups/rule-form'
 import { useCatalogVisibility } from '@/features/users/permission-groups/use-catalog-visibility'
@@ -32,6 +37,7 @@ import { ModelMutateDrawer } from './drawers/model-mutate-drawer'
 import { useModels } from './models-provider'
 
 export function ModelsDialogs() {
+  const { t } = useTranslation()
   const {
     open,
     setOpen,
@@ -47,6 +53,65 @@ export function ModelsDialogs() {
   const catalog = useCatalogVisibility({
     enabled: isSuperAdmin && open === 'permission-model',
   })
+  const closePermissionDialog = (nextOpen: boolean) => {
+    if (!nextOpen) {
+      setOpen(null)
+      setPermissionTargets([])
+    }
+  }
+  const renderPermissionDialog = () => {
+    if (
+      open !== 'permission-model' ||
+      !isSuperAdmin ||
+      permissionTargets.length === 0
+    ) {
+      return null
+    }
+    if (catalog.isPending) {
+      return (
+        <Dialog
+          open
+          onOpenChange={closePermissionDialog}
+          title={t('Configure model access')}
+        >
+          <LoadingState />
+        </Dialog>
+      )
+    }
+    if (catalog.isError || catalog.invalid || !catalog.policy) {
+      return (
+        <Dialog
+          open
+          onOpenChange={closePermissionDialog}
+          title={t('Configure model access')}
+        >
+          <ErrorState
+            title={t('Cannot load visibility rules')}
+            onRetry={() => void catalog.refetch()}
+          />
+        </Dialog>
+      )
+    }
+    return (
+      <ResourceRuleForm
+        kind='models'
+        names={permissionTargets}
+        policy={catalog.policy}
+        targets={nameOptions(permissionTargets)}
+        pending={catalog.isSaving}
+        onClose={() => {
+          setOpen(null)
+          setPermissionTargets([])
+        }}
+        onSave={(next) =>
+          catalog.savePolicy(next, () => {
+            setOpen(null)
+            setPermissionTargets([])
+          })
+        }
+      />
+    )
+  }
 
   return (
     <>
@@ -66,28 +131,7 @@ export function ModelsDialogs() {
         currentRow={currentRow}
       />
 
-      {open === 'permission-model' &&
-        isSuperAdmin &&
-        catalog.policy &&
-        permissionTargets.length > 0 && (
-          <ResourceRuleForm
-            kind='models'
-            names={permissionTargets}
-            policy={catalog.policy}
-            targets={nameOptions(permissionTargets)}
-            pending={catalog.isSaving}
-            onClose={() => {
-              setOpen(null)
-              setPermissionTargets([])
-            }}
-            onSave={(next) =>
-              catalog.savePolicy(next, () => {
-                setOpen(null)
-                setPermissionTargets([])
-              })
-            }
-          />
-        )}
+      {renderPermissionDialog()}
 
       {/* Vendor Create/Update Dialog */}
       <VendorMutateDialog
