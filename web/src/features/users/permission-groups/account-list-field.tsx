@@ -28,7 +28,7 @@ export function AccountListField(props: {
         multiple
         value={props.value}
         id={props.id}
-        popupClassName='flex flex-col max-sm:[&_[role=option]]:min-h-11'
+        popupClassName='flex flex-col max-sm:[&_[role=option]]:min-h-9'
         aria-label={props.label}
         disabled={props.disabled}
         aria-invalid={!!props.error}
@@ -36,18 +36,18 @@ export function AccountListField(props: {
       />
       {props.error && <FieldError>{props.error}</FieldError>}
       {props.value.length > 0 && (
-        <ul className='divide-y rounded-md border px-2'>
+        <ul className='divide-y rounded-lg border px-2.5'>
           {props.value.map((userId) => (
             <li
               key={userId}
-              className='flex min-w-0 items-center justify-between gap-2'
+              className='flex min-w-0 items-center justify-between gap-2 py-1'
             >
               <UserIdentity userId={userId} />
               <Button
                 type='button'
                 variant='ghost'
-                size='icon'
-                className='size-11 shrink-0'
+                size='icon-sm'
+                className='text-muted-foreground hover:text-destructive shrink-0'
                 disabled={props.disabled}
                 aria-label={t('Remove user #{{id}}', { id: userId })}
                 onClick={() =>

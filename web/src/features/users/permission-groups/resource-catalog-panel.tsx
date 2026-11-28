@@ -1,4 +1,13 @@
-import { Box, Plus, Search, Shield, TriangleAlert } from 'lucide-react'
+import {
+  Box,
+  Plus,
+  RotateCcw,
+  Search,
+  Shield,
+  SlidersHorizontal,
+  TriangleAlert,
+  X,
+} from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -6,10 +15,16 @@ import { EmptyState } from '@/components/empty-state'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Input } from '@/components/ui/input'
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+} from '@/components/ui/input-group'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
+import { cn } from '@/lib/utils'
 
 import { ResourceAccessBadge } from './access-badge'
 import {
@@ -109,16 +124,21 @@ export function ResourceCatalogPanel(props: {
       ? t('Search models...')
       : t('Search routing groups...')
 
+  const hasActiveFilters = search.trim().length > 0 || filter !== 'all'
+
   return (
-    <div className='grid min-w-0 gap-4'>
+    <div className='grid min-w-0 gap-3'>
       {counts.disabled > 0 && (
         <Alert
           variant='destructive'
-          className='border-destructive/30 bg-destructive/5'
+          className='border-destructive/30 bg-destructive/5 items-start rounded-xl px-3.5 py-2.5 sm:items-center'
         >
-          <TriangleAlert aria-hidden='true' />
+          <TriangleAlert
+            aria-hidden='true'
+            className='mt-0.5 translate-y-0! sm:mt-0'
+          />
           <AlertDescription className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
-            <span>
+            <span className='text-xs leading-relaxed sm:text-sm'>
               {t(
                 '{{total}} resources are currently set to Hidden from everyone and cannot be seen or called by any user.',
                 { total: formatNumber(counts.disabled, locale) }
@@ -127,7 +147,7 @@ export function ResourceCatalogPanel(props: {
             <Button
               size='sm'
               variant='outline'
-              className='min-h-9 shrink-0 self-start sm:self-auto'
+              className='border-destructive/30 bg-background hover:bg-destructive/10 shrink-0 self-start sm:self-auto'
               onClick={() => setFilter('disabled')}
             >
               {t('View hidden')}
@@ -138,73 +158,83 @@ export function ResourceCatalogPanel(props: {
 
       <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
         <div className='flex flex-1 flex-col gap-2 sm:flex-row sm:items-center'>
-          <div className='relative flex-1 sm:max-w-xs'>
-            <Search
-              aria-hidden='true'
-              className='text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2'
-            />
-            <Input
+          <InputGroup className='bg-background h-9 w-full sm:max-w-xs'>
+            <InputGroupAddon align='inline-start'>
+              <Search aria-hidden='true' className='size-4' />
+            </InputGroupAddon>
+            <InputGroupInput
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder={searchPlaceholder}
               aria-label={searchPlaceholder}
-              className='min-h-11 pl-9 sm:min-h-9'
             />
-          </div>
-          <NativeSelect
-            aria-label={t('Filter by access mode')}
-            value={filter}
-            onChange={(event) => setFilter(event.target.value as FilterValue)}
-            className='w-full sm:w-56 [&_select]:min-h-11 sm:[&_select]:min-h-9'
-          >
-            <NativeSelectOption value='all'>
-              {t('All ({{total}})', {
-                total: formatNumber(items.length, locale),
-              })}
-            </NativeSelectOption>
-            <NativeSelectOption value='configured'>
-              {t('Configured rules ({{total}})', {
-                total: formatNumber(counts.configured, locale),
-              })}
-            </NativeSelectOption>
-            <NativeSelectOption value='all_users'>
-              {t('Open to logged-in users')}
-            </NativeSelectOption>
-            <NativeSelectOption value='allowlist'>
-              {t('Allowlist only')}
-            </NativeSelectOption>
-            <NativeSelectOption value='disabled'>
-              {t('Hidden from everyone')}
-            </NativeSelectOption>
-            <NativeSelectOption value='inherit'>
-              {t('Default')}
-            </NativeSelectOption>
-          </NativeSelect>
-        </div>
+            {search.length > 0 && (
+              <InputGroupAddon align='inline-end'>
+                <InputGroupButton
+                  size='icon-xs'
+                  aria-label={t('Reset')}
+                  onClick={() => setSearch('')}
+                >
+                  <X aria-hidden='true' />
+                </InputGroupButton>
+              </InputGroupAddon>
+            )}
+          </InputGroup>
 
-        <Button
-          variant='outline'
-          size='sm'
-          className='min-h-11 sm:min-h-9'
-          disabled={props.names.length === 0}
-          onClick={props.onAddRule}
-        >
-          <Plus aria-hidden='true' />
-          {t('Add rule')}
-        </Button>
+          <div className='flex items-center gap-2 sm:contents'>
+            <NativeSelect
+              aria-label={t('Filter by access mode')}
+              value={filter}
+              onChange={(event) => setFilter(event.target.value as FilterValue)}
+              className='min-w-0 flex-1 sm:w-48 sm:flex-none [&_select]:h-9'
+            >
+              <NativeSelectOption value='all'>
+                {t('All ({{total}})', {
+                  total: formatNumber(items.length, locale),
+                })}
+              </NativeSelectOption>
+              <NativeSelectOption value='configured'>
+                {t('Configured rules ({{total}})', {
+                  total: formatNumber(counts.configured, locale),
+                })}
+              </NativeSelectOption>
+              <NativeSelectOption value='all_users'>
+                {t('Open to logged-in users')}
+              </NativeSelectOption>
+              <NativeSelectOption value='allowlist'>
+                {t('Allowlist only')}
+              </NativeSelectOption>
+              <NativeSelectOption value='disabled'>
+                {t('Hidden from everyone')}
+              </NativeSelectOption>
+              <NativeSelectOption value='inherit'>
+                {t('Default')}
+              </NativeSelectOption>
+            </NativeSelect>
+
+            <Button
+              variant='outline'
+              className='h-9 shrink-0 px-3 sm:ml-auto'
+              disabled={props.names.length === 0}
+              onClick={props.onAddRule}
+            >
+              <Plus aria-hidden='true' />
+              {t('Add rule')}
+            </Button>
+          </div>
+        </div>
       </div>
 
       {activeSelected.length > 0 && (
-        <div className='bg-muted/50 flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 text-sm'>
-          <span className='font-medium'>
+        <div className='border-primary/20 bg-primary/5 flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 text-sm'>
+          <span className='text-foreground text-xs font-medium sm:text-sm'>
             {t('Selected {{total}} items', {
               total: formatNumber(activeSelected.length, locale),
             })}
           </span>
-          <div className='flex flex-wrap items-center gap-2'>
+          <div className='flex flex-wrap items-center gap-1.5'>
             <Button
               size='sm'
-              className='min-h-9'
               disabled={props.pending}
               onClick={() => props.onEdit(activeSelected)}
             >
@@ -214,7 +244,6 @@ export function ResourceCatalogPanel(props: {
             <Button
               size='sm'
               variant='outline'
-              className='min-h-9'
               disabled={props.pending}
               onClick={() => {
                 props.onRemoveRule(activeSelected)
@@ -226,7 +255,6 @@ export function ResourceCatalogPanel(props: {
             <Button
               size='sm'
               variant='ghost'
-              className='min-h-9'
               onClick={() => setSelectedSet(new Set())}
             >
               {t('Clear selection')}
@@ -236,16 +264,26 @@ export function ResourceCatalogPanel(props: {
       )}
 
       {filteredItems.length > 0 ? (
-        <div className='rounded-xl border'>
-          <div className='bg-muted/30 flex items-center gap-3 border-b px-4 py-2.5 text-xs font-medium'>
-            <Checkbox
-              checked={allVisibleSelected}
-              indeterminate={someVisibleSelected}
-              onCheckedChange={(checked) => toggleAllVisible(Boolean(checked))}
-              aria-label={t('Select all')}
-            />
-            <span>
-              {props.kind === 'models' ? t('Model') : t('Routing group')}
+        <div className='bg-card overflow-hidden rounded-xl border'>
+          <div className='bg-muted/40 text-muted-foreground flex items-center justify-between gap-3 border-b px-3.5 py-2 text-xs font-medium sm:px-4'>
+            <div className='flex items-center gap-3'>
+              <Checkbox
+                checked={allVisibleSelected}
+                indeterminate={someVisibleSelected}
+                onCheckedChange={(checked) =>
+                  toggleAllVisible(Boolean(checked))
+                }
+                aria-label={t('Select all')}
+              />
+              <span>
+                {props.kind === 'models' ? t('Model') : t('Routing group')}
+              </span>
+            </div>
+            <span className='tabular-nums'>
+              {formatNumber(filteredItems.length, locale)}
+              {hasActiveFilters
+                ? ` / ${formatNumber(items.length, locale)}`
+                : ''}
             </span>
           </div>
           <ul
@@ -254,56 +292,69 @@ export function ResourceCatalogPanel(props: {
                 ? t('Model permissions')
                 : t('Routing group permissions')
             }
-            className='divide-y px-4'
+            className='divide-y'
           >
             {filteredItems.map((item) => {
               const isConfigured = item.rule.mode !== 'inherit'
+              const isSelected = selectedSet.has(item.name)
               return (
                 <li
                   key={item.name}
                   aria-label={item.name}
-                  className='flex min-w-0 flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between'
+                  className={cn(
+                    'hover:bg-muted/30 flex min-w-0 items-start justify-between gap-3 px-3.5 py-3 transition-colors sm:items-center sm:px-4',
+                    isSelected && 'bg-primary/[0.04]'
+                  )}
                 >
-                  <div className='flex min-w-0 items-start gap-3'>
+                  <div className='flex min-w-0 flex-1 items-start gap-3'>
                     <Checkbox
-                      className='mt-1'
-                      checked={selectedSet.has(item.name)}
+                      className='mt-0.5'
+                      checked={isSelected}
                       onCheckedChange={(checked) =>
                         toggleOne(item.name, Boolean(checked))
                       }
                       aria-label={t('Select {{name}}', { name: item.name })}
                     />
-                    <div className='min-w-0 space-y-1 wrap-anywhere'>
-                      <div className='flex flex-wrap items-center gap-2'>
-                        <p className='font-mono text-sm font-medium'>
+                    <div className='min-w-0 flex-1 space-y-1'>
+                      <div className='flex flex-wrap items-center gap-x-2 gap-y-1'>
+                        <p className='text-foreground truncate font-mono text-sm font-medium'>
                           {item.name}
                         </p>
                         <ResourceAccessBadge rule={item.rule} />
                       </div>
-                      <p className='text-muted-foreground text-sm'>
+                      <p className='text-muted-foreground text-xs leading-relaxed sm:text-[13px]'>
                         {describeResourceRule(item.rule, t, locale)}
                       </p>
                     </div>
                   </div>
-                  <div className='grid shrink-0 grid-cols-2 gap-2 sm:flex'>
-                    <Button
-                      className='min-h-11 sm:min-h-9'
-                      size='sm'
-                      variant='outline'
-                      onClick={() => props.onEdit([item.name])}
-                    >
-                      {isConfigured ? t('Edit') : t('Configure')}
-                    </Button>
+                  <div className='flex shrink-0 items-center gap-1'>
                     {isConfigured && (
                       <Button
-                        className='min-h-11 sm:min-h-9'
                         size='sm'
                         variant='ghost'
+                        className='text-muted-foreground hover:text-destructive h-8 px-2'
+                        title={t('Remove restriction')}
+                        aria-label={t('Remove restriction')}
                         onClick={() => props.onRemoveRule([item.name])}
                       >
-                        {t('Remove restriction')}
+                        <RotateCcw aria-hidden='true' className='size-3.5' />
+                        <span className='hidden sm:inline'>
+                          {t('Remove restriction')}
+                        </span>
                       </Button>
                     )}
+                    <Button
+                      size='sm'
+                      variant={isConfigured ? 'secondary' : 'outline'}
+                      className='h-8 px-2.5'
+                      onClick={() => props.onEdit([item.name])}
+                    >
+                      <SlidersHorizontal
+                        aria-hidden='true'
+                        className='size-3.5 sm:hidden'
+                      />
+                      {isConfigured ? t('Edit') : t('Configure')}
+                    </Button>
                   </div>
                 </li>
               )
@@ -316,6 +367,20 @@ export function ResourceCatalogPanel(props: {
           className='min-h-32'
           icon={Box}
           title={t('No matching resources')}
+          action={
+            hasActiveFilters ? (
+              <Button
+                size='sm'
+                variant='outline'
+                onClick={() => {
+                  setSearch('')
+                  setFilter('all')
+                }}
+              >
+                {t('Clear filters')}
+              </Button>
+            ) : undefined
+          }
         />
       )}
     </div>

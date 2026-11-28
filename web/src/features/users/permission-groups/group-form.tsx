@@ -73,7 +73,7 @@ export function PermissionGroupForm(props: {
         <FieldLabel htmlFor={`${id}-name`}>{t('Group name')}</FieldLabel>
         <Input
           id={`${id}-name`}
-          className='min-h-11'
+          className='h-9'
           required
           aria-invalid={!!nameError}
           aria-describedby={nameError ? `${id}-error` : undefined}
@@ -123,10 +123,10 @@ export function PermissionGroupForm(props: {
                     <Field>
                       <FieldLabel htmlFor={`${id}-${kind}`}>{label}</FieldLabel>
                       <MultiSelect
-                        popupClassName='max-sm:[&_[role=option]]:min-h-11'
+                        popupClassName='max-sm:[&_[role=option]]:min-h-9'
                         id={`${id}-${kind}`}
                         placeholder={label}
-                        className='min-h-11'
+                        className='min-h-9'
                         maxVisibleChips={2}
                         selected={field.value}
                         options={props.targets[kind]}

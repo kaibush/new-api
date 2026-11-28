@@ -147,7 +147,7 @@ export function ResourceRuleForm(props: {
                 {props.kind === 'models' ? t('Model') : t('Routing group')}
               </FieldLabel>
               <Combobox
-                popupClassName='max-sm:[&_[role=option]]:min-h-11'
+                popupClassName='max-sm:[&_[role=option]]:min-h-9'
                 id={`${id}-target`}
                 options={props.targets}
                 value={field.value}
@@ -167,7 +167,7 @@ export function ResourceRuleForm(props: {
         <FieldLabel htmlFor={`${id}-mode`}>{t('Access mode')}</FieldLabel>
         <NativeSelect
           id={`${id}-mode`}
-          className='w-full [&_select]:min-h-11'
+          className='w-full [&_select]:h-9'
           {...form.register('mode')}
         >
           <NativeSelectOption value='all_users'>
@@ -197,9 +197,9 @@ export function ResourceRuleForm(props: {
                   {t('Allowed permission groups')}
                 </FieldLabel>
                 <MultiSelect
-                  popupClassName='max-sm:[&_[role=option]]:min-h-11'
+                  popupClassName='max-sm:[&_[role=option]]:min-h-9'
                   id={`${id}-allowed-groups`}
-                  className='min-h-11'
+                  className='min-h-9'
                   placeholder={t('Allowed permission groups')}
                   options={audienceOptions}
                   selected={field.value}
@@ -248,9 +248,9 @@ export function ResourceRuleForm(props: {
                     {t('Excluded permission groups')}
                   </FieldLabel>
                   <MultiSelect
-                    popupClassName='max-sm:[&_[role=option]]:min-h-11'
+                    popupClassName='max-sm:[&_[role=option]]:min-h-9'
                     id={`${id}-excluded-groups`}
-                    className='min-h-11'
+                    className='min-h-9'
                     placeholder={t('Excluded permission groups')}
                     options={audienceOptions}
                     selected={field.value}

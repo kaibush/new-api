@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { Plus, Users } from 'lucide-react'
+import { Pencil, Plus, Trash2, Users } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -8,8 +8,10 @@ import { EmptyState } from '@/components/empty-state'
 import { ErrorState } from '@/components/error-state'
 import { SectionPageLayout } from '@/components/layout'
 import { LoadingState } from '@/components/loading-state'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { IconBadge } from '@/components/ui/icon-badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { getEnabledModels } from '@/features/channels/api'
 import { toIntlLocale } from '@/i18n/languages'
@@ -50,28 +52,39 @@ function GroupRow(props: {
   return (
     <li
       aria-label={props.name}
-      className='flex min-w-0 flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between'
+      className='hover:bg-muted/30 flex min-w-0 items-start justify-between gap-3 px-3.5 py-3 transition-colors sm:items-center sm:px-4'
     >
-      <div className='min-w-0 space-y-1 wrap-anywhere'>
-        <p className='font-medium'>{props.name}</p>
-        <p className='text-muted-foreground text-sm'>{props.detail}</p>
+      <div className='flex min-w-0 flex-1 items-start gap-3 sm:items-center'>
+        <IconBadge tone='primary' size='sm' className='mt-0.5 sm:mt-0'>
+          <Users />
+        </IconBadge>
+        <div className='min-w-0 flex-1 space-y-0.5 wrap-anywhere'>
+          <p className='text-foreground text-sm font-medium'>{props.name}</p>
+          <p className='text-muted-foreground text-xs leading-relaxed sm:text-[13px]'>
+            {props.detail}
+          </p>
+        </div>
       </div>
-      <div className='grid shrink-0 grid-cols-2 gap-2 sm:flex'>
+      <div className='flex shrink-0 items-center gap-1'>
         <Button
-          className='min-h-11 sm:min-h-9'
+          className='h-8 px-2.5'
           size='sm'
           variant='outline'
           onClick={props.onEdit}
         >
+          <Pencil aria-hidden='true' className='size-3.5 sm:hidden' />
           {t('Edit')}
         </Button>
         <Button
-          className='min-h-11 sm:min-h-9'
+          className='text-muted-foreground hover:text-destructive h-8 px-2'
           size='sm'
           variant='ghost'
+          aria-label={t('Delete')}
+          title={t('Delete')}
           onClick={props.onRemove}
         >
-          {t('Delete')}
+          <Trash2 aria-hidden='true' className='size-3.5' />
+          <span className='hidden sm:inline'>{t('Delete')}</span>
         </Button>
       </div>
     </li>
@@ -166,8 +179,8 @@ export function PermissionGroups(props: { embedded?: boolean }) {
   const orphanedList = [...orphanedOnDelete.models, ...orphanedOnDelete.groups]
 
   const workspace = (
-    <div className='grid max-w-5xl min-w-0 gap-4'>
-      <p className='text-muted-foreground text-sm'>
+    <div className='grid max-w-5xl min-w-0 gap-3.5'>
+      <p className='text-muted-foreground text-xs leading-relaxed sm:text-sm'>
         {t(
           'Control which models and routing groups each user can view and call. Any model or routing group granted here works directly across regular API keys without rebinding token groups.'
         )}
@@ -176,26 +189,54 @@ export function PermissionGroups(props: { embedded?: boolean }) {
       <Tabs
         value={activeTab}
         onValueChange={(value) => setActiveTab(value as ActiveTab)}
+        className='gap-3'
       >
-        <div className='flex flex-wrap items-center justify-between gap-2'>
-          <TabsList className='max-w-full flex-wrap justify-start group-data-horizontal/tabs:h-auto'>
-            <TabsTrigger value='models'>
-              {t('Model permissions')} (
-              {formatNumber(allNames.models.length, locale)})
+        <div className='flex items-center justify-between gap-2 border-b'>
+          <TabsList
+            variant='line'
+            className='min-w-0 flex-1 [scrollbar-width:none] justify-start gap-2 overflow-x-auto pb-1 group-data-horizontal/tabs:h-auto [&::-webkit-scrollbar]:hidden'
+          >
+            <TabsTrigger
+              value='models'
+              className='flex-none shrink-0 px-2 py-1.5'
+            >
+              <span>{t('Model permissions')}</span>
+              <Badge
+                variant='secondary'
+                className='h-4.5 rounded-full px-1.5 text-[11px] tabular-nums'
+              >
+                {formatNumber(allNames.models.length, locale)}
+              </Badge>
             </TabsTrigger>
-            <TabsTrigger value='groups'>
-              {t('Routing group permissions')} (
-              {formatNumber(allNames.groups.length, locale)})
+            <TabsTrigger
+              value='groups'
+              className='flex-none shrink-0 px-2 py-1.5'
+            >
+              <span>{t('Routing group permissions')}</span>
+              <Badge
+                variant='secondary'
+                className='h-4.5 rounded-full px-1.5 text-[11px] tabular-nums'
+              >
+                {formatNumber(allNames.groups.length, locale)}
+              </Badge>
             </TabsTrigger>
-            <TabsTrigger value='audiences'>
-              {t('Permission groups')} (
-              {formatNumber(audienceEntries.length, locale)})
+            <TabsTrigger
+              value='audiences'
+              className='flex-none shrink-0 px-2 py-1.5'
+            >
+              <span>{t('Permission groups')}</span>
+              <Badge
+                variant='secondary'
+                className='h-4.5 rounded-full px-1.5 text-[11px] tabular-nums'
+              >
+                {formatNumber(audienceEntries.length, locale)}
+              </Badge>
             </TabsTrigger>
           </TabsList>
           {props.embedded && (
             <Button
               size='sm'
-              className='min-h-11 sm:min-h-9'
+              className='mb-1.5'
               onClick={() => {
                 setActiveTab('audiences')
                 openEditor({ type: 'group' })
@@ -207,7 +248,7 @@ export function PermissionGroups(props: { embedded?: boolean }) {
           )}
         </div>
 
-        <TabsContent value='models' className='mt-4'>
+        <TabsContent value='models'>
           <ResourceCatalogPanel
             kind='models'
             names={allNames.models}
@@ -223,7 +264,7 @@ export function PermissionGroups(props: { embedded?: boolean }) {
           />
         </TabsContent>
 
-        <TabsContent value='groups' className='mt-4'>
+        <TabsContent value='groups'>
           <ResourceCatalogPanel
             kind='groups'
             names={allNames.groups}
@@ -239,55 +280,65 @@ export function PermissionGroups(props: { embedded?: boolean }) {
           />
         </TabsContent>
 
-        <TabsContent value='audiences' className='mt-4'>
-          <div className='grid gap-4'>
-            <p className='text-muted-foreground text-sm'>
+        <TabsContent value='audiences'>
+          <div className='grid gap-3'>
+            <p className='text-muted-foreground text-xs leading-relaxed sm:text-sm'>
               {t(
                 'Create reusable account groups (for example beta testers or restricted accounts) without changing user billing groups.'
               )}
             </p>
             {audienceEntries.length > 0 ? (
-              <ul
-                aria-label={t('Permission groups')}
-                className='divide-y rounded-xl border px-4'
-              >
-                {audienceEntries.map(([name, members]) => (
-                  <GroupRow
-                    key={name}
-                    name={name}
-                    detail={t(
-                      '{{members}} members · {{models}} models · {{groups}} routing groups',
-                      {
-                        members: formatNumber(members.length, locale),
-                        models: formatNumber(
-                          groupResources(
-                            name,
-                            policy.models,
-                            policy.model_excluded_groups
-                          ).length,
-                          locale
-                        ),
-                        groups: formatNumber(
-                          groupResources(
-                            name,
-                            policy.groups,
-                            policy.group_excluded_groups
-                          ).length,
-                          locale
-                        ),
+              <div className='bg-card overflow-hidden rounded-xl border'>
+                <ul aria-label={t('Permission groups')} className='divide-y'>
+                  {audienceEntries.map(([name, members]) => (
+                    <GroupRow
+                      key={name}
+                      name={name}
+                      detail={t(
+                        '{{members}} members · {{models}} models · {{groups}} routing groups',
+                        {
+                          members: formatNumber(members.length, locale),
+                          models: formatNumber(
+                            groupResources(
+                              name,
+                              policy.models,
+                              policy.model_excluded_groups
+                            ).length,
+                            locale
+                          ),
+                          groups: formatNumber(
+                            groupResources(
+                              name,
+                              policy.groups,
+                              policy.group_excluded_groups
+                            ).length,
+                            locale
+                          ),
+                        }
+                      )}
+                      onEdit={() => openEditor({ type: 'group', name })}
+                      onRemove={() =>
+                        openEditor({ type: 'delete-group', name })
                       }
-                    )}
-                    onEdit={() => openEditor({ type: 'group', name })}
-                    onRemove={() => openEditor({ type: 'delete-group', name })}
-                  />
-                ))}
-              </ul>
+                    />
+                  ))}
+                </ul>
+              </div>
             ) : (
               <EmptyState
                 bordered
                 className='min-h-32'
                 icon={Users}
                 title={t('No permission groups yet')}
+                action={
+                  <Button
+                    size='sm'
+                    onClick={() => openEditor({ type: 'group' })}
+                  >
+                    <Plus aria-hidden='true' />
+                    {t('New permission group')}
+                  </Button>
+                }
               />
             )}
           </div>
@@ -307,7 +358,7 @@ export function PermissionGroups(props: { embedded?: boolean }) {
           </SectionPageLayout.Title>
           <SectionPageLayout.Actions>
             <Button
-              className='min-h-11'
+              size='sm'
               onClick={() => {
                 setActiveTab('audiences')
                 openEditor({ type: 'group' })

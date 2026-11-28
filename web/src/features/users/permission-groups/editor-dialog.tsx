@@ -29,7 +29,7 @@ export function EditorDialog(props: {
       footer={
         <>
           <Button
-            className='min-h-11'
+            className='min-h-9'
             variant='outline'
             disabled={props.pending}
             onClick={props.onClose}
@@ -37,7 +37,7 @@ export function EditorDialog(props: {
             {t('Cancel')}
           </Button>
           <Button
-            className='min-h-11'
+            className='min-h-9'
             type='submit'
             form={id}
             disabled={props.pending}
@@ -48,10 +48,7 @@ export function EditorDialog(props: {
       }
     >
       <form id={id} noValidate onSubmit={props.onSubmit}>
-        <fieldset
-          disabled={props.pending}
-          className='grid min-w-0 gap-5 max-sm:[&_[data-slot=input-group]]:min-h-11 max-sm:[&_input]:text-base'
-        >
+        <fieldset disabled={props.pending} className='grid min-w-0 gap-4'>
           {props.children}
         </fieldset>
       </form>

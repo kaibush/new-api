@@ -14,7 +14,6 @@ export function PermissionGroupsLink() {
     <Button
       size='sm'
       variant='outline'
-      className='max-sm:min-h-11'
       render={<Link to='/users/permission-groups' />}
     >
       <Users />
