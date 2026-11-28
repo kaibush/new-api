@@ -93,3 +93,25 @@ func TestCatalogOpenRulesDirectUsersAndExcludedGroups(t *testing.T) {
 		require.Error(t, err)
 	}
 }
+
+func TestCatalogReusableAudienceMembership(t *testing.T) {
+	previous := catalogVisibility.Load()
+	t.Cleanup(func() { catalogVisibility.Store(previous) })
+	for _, state := range []struct {
+		members string
+		member  bool
+	}{
+		{`[]`, false},
+		{`[22,35]`, true},
+		{`[35]`, false},
+	} {
+		require.NoError(t, UpdateCatalogVisibility(fmt.Sprintf(`{
+			"audiences":{"reviewers":%s},"models":{"preview":["reviewers"]},"groups":{},
+			"open_models":["stable"],"model_excluded_groups":{"stable":["reviewers"]}
+		}`, state.members)))
+		assert.Equal(t, state.member, CatalogModelGranted(22, "preview"))
+		assert.Equal(t, !state.member, CatalogModelAllowed(22, "stable"))
+		assert.False(t, CatalogModelAllowed(99, "preview"))
+		assert.True(t, CatalogModelGranted(99, "stable"))
+	}
+}

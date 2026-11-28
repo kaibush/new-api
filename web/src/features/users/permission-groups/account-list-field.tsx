@@ -25,15 +25,14 @@ export function AccountListField(props: {
     <Field data-invalid={!!props.error}>
       <FieldLabel htmlFor={props.id}>{props.label}</FieldLabel>
       <UserSelector
+        multiple
+        value={props.value}
         id={props.id}
-        popupClassName='max-sm:[&_[role=option]]:min-h-11'
+        popupClassName='flex flex-col max-sm:[&_[role=option]]:min-h-11'
+        aria-label={props.label}
         disabled={props.disabled}
         aria-invalid={!!props.error}
-        onChange={(userId) => {
-          if (userId && !props.value.includes(userId)) {
-            props.onChange([...props.value, userId])
-          }
-        }}
+        onChange={props.onChange}
       />
       {props.error && <FieldError>{props.error}</FieldError>}
       {props.value.length > 0 && (

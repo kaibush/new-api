@@ -20,7 +20,6 @@ import { EditorDialog } from './editor-dialog'
 import {
   applyResourceRule,
   getResourceRule,
-  nameOptions,
   ruleFormSchema,
   type AccessMode,
   type Policy,
@@ -66,7 +65,15 @@ export function ResourceRuleForm(props: {
   })
 
   const mode = useWatch({ control: form.control, name: 'mode' })
-  const audienceOptions = nameOptions(Object.keys(props.policy.audiences))
+  const audienceOptions = Object.keys(props.policy.audiences)
+    .sort()
+    .map((name) => ({
+      value: name,
+      label: t('{{name}} (members: {{total}})', {
+        name,
+        total: formatNumber(props.policy.audiences[name].length, locale),
+      }),
+    }))
 
   let title = t('Configure model access')
   if (props.kind === 'groups') {
@@ -193,7 +200,7 @@ export function ResourceRuleForm(props: {
                   popupClassName='max-sm:[&_[role=option]]:min-h-11'
                   id={`${id}-allowed-groups`}
                   className='min-h-11'
-                  placeholder={t('Select permission groups')}
+                  placeholder={t('Allowed permission groups')}
                   options={audienceOptions}
                   selected={field.value}
                   onChange={field.onChange}
@@ -244,7 +251,7 @@ export function ResourceRuleForm(props: {
                     popupClassName='max-sm:[&_[role=option]]:min-h-11'
                     id={`${id}-excluded-groups`}
                     className='min-h-11'
-                    placeholder={t('None')}
+                    placeholder={t('Excluded permission groups')}
                     options={audienceOptions}
                     selected={field.value}
                     onChange={field.onChange}

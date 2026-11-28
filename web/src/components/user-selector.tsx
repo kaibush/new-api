@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Button } from '@/components/ui/button'
 import {
   Combobox,
   ComboboxInput,
@@ -39,25 +40,35 @@ interface UserOption {
   username: string
 }
 
-// Shared remote picker: bounded search, with the existing batched name cache
-// resolving preselected IDs. Never download the complete user directory.
-export function UserSelector(props: {
-  value?: number
-  onChange: (id: number | undefined) => void
+type UserSelectorProps = {
   id?: string
   popupClassName?: string
   disabled?: boolean
+  'aria-label'?: string
   'aria-invalid'?: boolean
-}) {
+} & (
+  | {
+      multiple?: false
+      value?: number
+      onChange: (id: number | undefined) => void
+    }
+  | { multiple: true; value: number[]; onChange: (ids: number[]) => void }
+)
+
+// Shared remote picker: bounded search, with the existing batched name cache
+// resolving preselected IDs. Never download the complete user directory.
+export function UserSelector(props: UserSelectorProps) {
   const { t } = useTranslation()
+  const inputRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [selection, setSelection] = useState<UserOption | null>(null)
   const keyword = useDebounce(search, 250)
   const auth = useAuthStore((state) => state.auth)
+  const singleId = props.multiple ? undefined : props.value
   const username = useUserName(
-    props.value ?? 0,
-    selection?.id === props.value ? selection?.username : undefined
+    singleId ?? 0,
+    selection?.id === singleId ? selection?.username : undefined
   )
   const query = useQuery({
     queryKey: ['user-selector', auth.user?.id, auth.session?.sid, keyword],
@@ -74,46 +85,61 @@ export function UserSelector(props: {
     staleTime: 30_000,
     retry: false,
   })
-  const selected = props.value ? { id: props.value, username } : null
-  const items = query.data ?? []
+  const selected = singleId ? { id: singleId, username } : null
+  const waitingForSearch = keyword !== search
+  const items = waitingForSearch ? [] : (query.data ?? [])
   const label = (option: UserOption) =>
     option.username ? `${option.username} (#${option.id})` : `#${option.id}`
   let emptyText = t('No results found')
-  if (query.isFetching) emptyText = t('Loading...')
+  if (waitingForSearch || query.isFetching) emptyText = t('Loading...')
   else if (query.isError) emptyText = t('Failed to load users')
   let inputValue = selected ? label(selected) : ''
   if (open) inputValue = search
   return (
-    <Combobox<UserOption>
+    <Combobox<UserOption, boolean>
+      multiple={props.multiple}
       items={items}
-      value={selected}
+      value={
+        props.multiple
+          ? props.value.map((id) => ({ id, username: '' }))
+          : selected
+      }
       itemToStringLabel={label}
       isItemEqualToValue={(a, b) => a.id === b.id}
       filter={null}
       open={open}
-      onOpenChange={(value) => {
+      onOpenChange={(value, details) => {
+        if (props.multiple && !value && details.reason === 'item-press') {
+          details.cancel()
+          return
+        }
         setOpen(value)
-        if (value) setSearch('')
+        if (!value) setSearch('')
       }}
       inputValue={inputValue}
       onInputValueChange={(value, details) => {
         if (details.reason === 'input-change') setSearch(value.slice(0, 100))
       }}
       onValueChange={(option) => {
-        setSelection(option)
-        props.onChange(option?.id)
+        if (Array.isArray(option)) {
+          if (props.multiple) props.onChange(option.map((user) => user.id))
+        } else if (!props.multiple) {
+          setSelection(option)
+          props.onChange(option?.id)
+        }
       }}
       disabled={props.disabled}
     >
       <ComboboxInput
+        ref={inputRef}
         id={props.id}
         disabled={props.disabled}
-        aria-label={t('Search users by name or ID')}
+        aria-label={props['aria-label'] ?? t('Search users by name or ID')}
         triggerAriaLabel={t('Open')}
         clearAriaLabel={t('Clear')}
         aria-invalid={props['aria-invalid']}
         placeholder={t('Search users by name or ID')}
-        showClear
+        showClear={!props.multiple}
       />
       <ComboboxContent className={props.popupClassName}>
         <ComboboxEmpty>{emptyText}</ComboboxEmpty>
@@ -124,6 +150,20 @@ export function UserSelector(props: {
             </ComboboxItem>
           )}
         </ComboboxList>
+        {props.multiple && (
+          <Button
+            type='button'
+            variant='ghost'
+            className='min-h-11 w-full'
+            onClick={() => {
+              setOpen(false)
+              setSearch('')
+              inputRef.current?.focus()
+            }}
+          >
+            {t('Done')}
+          </Button>
+        )}
       </ComboboxContent>
     </Combobox>
   )

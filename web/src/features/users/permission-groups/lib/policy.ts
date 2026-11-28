@@ -320,12 +320,17 @@ export function clearResourceRules(
 }
 
 export function groupResources(
-  rules: Policy['models'],
-  name?: string
+  name: string | undefined,
+  ...ruleMaps: (Record<string, string[]> | undefined)[]
 ): string[] {
-  return Object.keys(rules).filter(
-    (target) => name !== undefined && rules[target].includes(name)
-  )
+  if (name === undefined) return []
+  const targets = new Set<string>()
+  for (const rules of ruleMaps) {
+    for (const [target, groups] of Object.entries(rules ?? {})) {
+      if (groups.includes(name)) targets.add(target)
+    }
+  }
+  return [...targets]
 }
 
 export function orphanedResourcesOnGroupDelete(

@@ -5,6 +5,12 @@ import { useTranslation } from 'react-i18next'
 
 import { MultiSelect, type Option } from '@/components/multi-select'
 import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion'
+import {
   Field,
   FieldDescription,
   FieldError,
@@ -41,8 +47,8 @@ export function PermissionGroupForm(props: {
       name: props.name ?? '',
       members:
         props.name !== undefined ? props.policy.audiences[props.name] : [],
-      models: groupResources(props.policy.models, props.name),
-      groups: groupResources(props.policy.groups, props.name),
+      models: groupResources(props.name, props.policy.models),
+      groups: groupResources(props.name, props.policy.groups),
     },
   })
   const nameError = form.formState.errors.name
@@ -88,46 +94,58 @@ export function PermissionGroupForm(props: {
           <AccountListField
             id={`${id}-members`}
             label={t('Group members')}
+            description={t(
+              'Members are optional. Reuse this group in allowlists or exclusions; membership changes apply to every rule that uses it.'
+            )}
             disabled={props.pending}
             value={field.value}
             onChange={field.onChange}
           />
         )}
       />
-      {resourceKinds.map((kind) => {
-        const label =
-          kind === 'models'
-            ? t('Restricted models')
-            : t('Restricted routing groups')
-        return (
-          <Controller
-            key={kind}
-            name={kind}
-            control={form.control}
-            render={({ field }) => (
-              <Field>
-                <FieldLabel htmlFor={`${id}-${kind}`}>{label}</FieldLabel>
-                <MultiSelect
-                  popupClassName='max-sm:[&_[role=option]]:min-h-11'
-                  id={`${id}-${kind}`}
-                  placeholder={label}
-                  className='min-h-11'
-                  maxVisibleChips={2}
-                  selected={field.value}
-                  options={props.targets[kind]}
-                  onChange={field.onChange}
-                  disabled={props.pending}
+      <Accordion>
+        <AccordionItem>
+          <AccordionTrigger>
+            {t('Assign to resource allowlists (optional)')}
+          </AccordionTrigger>
+          <AccordionContent className='grid gap-4'>
+            {resourceKinds.map((kind) => {
+              const label =
+                kind === 'models'
+                  ? t('Restricted models')
+                  : t('Restricted routing groups')
+              return (
+                <Controller
+                  key={kind}
+                  name={kind}
+                  control={form.control}
+                  render={({ field }) => (
+                    <Field>
+                      <FieldLabel htmlFor={`${id}-${kind}`}>{label}</FieldLabel>
+                      <MultiSelect
+                        popupClassName='max-sm:[&_[role=option]]:min-h-11'
+                        id={`${id}-${kind}`}
+                        placeholder={label}
+                        className='min-h-11'
+                        maxVisibleChips={2}
+                        selected={field.value}
+                        options={props.targets[kind]}
+                        onChange={field.onChange}
+                        disabled={props.pending}
+                      />
+                    </Field>
+                  )}
                 />
-              </Field>
-            )}
-          />
-        )
-      })}
-      <FieldDescription>
-        {t(
-          'Selected resources are visible only to their allowed permission groups. Removing the last group keeps the resource hidden.'
-        )}
-      </FieldDescription>
+              )
+            })}
+            <FieldDescription>
+              {t(
+                'Selected resources switch to allowlist access. To block this group instead, choose it under Excluded permission groups in the resource’s access rule.'
+              )}
+            </FieldDescription>
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
     </EditorDialog>
   )
 }

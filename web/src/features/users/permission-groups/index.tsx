@@ -260,11 +260,19 @@ export function PermissionGroups(props: { embedded?: boolean }) {
                       {
                         members: formatNumber(members.length, locale),
                         models: formatNumber(
-                          groupResources(policy.models, name).length,
+                          groupResources(
+                            name,
+                            policy.models,
+                            policy.model_excluded_groups
+                          ).length,
                           locale
                         ),
                         groups: formatNumber(
-                          groupResources(policy.groups, name).length,
+                          groupResources(
+                            name,
+                            policy.groups,
+                            policy.group_excluded_groups
+                          ).length,
                           locale
                         ),
                       }
@@ -347,7 +355,7 @@ export function PermissionGroups(props: { embedded?: boolean }) {
         desc={
           editor?.type === 'delete-group'
             ? t(
-                'Deleting "{{name}}" revokes access granted through this group.',
+                'Deleting "{{name}}" removes it from all allowlists and exclusions. Accounts blocked only by this group may regain access.',
                 { name: editor.name }
               )
             : ''

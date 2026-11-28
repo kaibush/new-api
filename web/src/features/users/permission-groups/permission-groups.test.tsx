@@ -34,10 +34,20 @@ function renderPage(initial?: Partial<Policy>) {
       '/api/group/': ['default', 'internal'],
       '/api/channel/models_enabled': ['preview', 'new-model'],
     }
+    const keyword =
+      new URL(path, 'http://localhost').searchParams.get('keyword') ?? ''
+    const items = [
+      { id: 35, username: 'alice' },
+      { id: 36, username: 'alice-b' },
+      { id: 48, username: 'bob' },
+    ].filter(
+      (account) =>
+        account.username.includes(keyword) || String(account.id) === keyword
+    )
     return {
       data: {
         success: true,
-        data: data[path] ?? { items: [{ id: 35, username: 'alice' }] },
+        data: data[path] ?? { items },
       },
     }
   })
@@ -91,6 +101,18 @@ it('creates a custom-named group in one submit, validates names and writes nothi
     'alice'
   )
   await user.click(await screen.findByRole('option', { name: 'alice (#35)' }))
+  await user.click(screen.getByRole('button', { name: 'Done' }))
+  expect(create.getByRole('combobox', { name: 'Group members' })).toHaveFocus()
+  const assign = create.getByRole('button', {
+    name: 'Assign to resource allowlists (optional)',
+  })
+  await user.click(assign)
+  await user.click(
+    create.getByRole('combobox', { name: 'Restricted routing groups' })
+  )
+  await user.click(await screen.findByRole('option', { name: 'default' }))
+  await user.keyboard('{Escape}')
+  await user.click(assign)
   await user.click(create.getByRole('button', { name: 'Create' }))
   await waitFor(() =>
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
@@ -101,6 +123,7 @@ it('creates a custom-named group in one submit, validates names and writes nothi
     expect.objectContaining({ key: 'CatalogVisibility' })
   )
   expect(saved().audiences).toEqual({ staff: [22], support: [], 内测组: [35] })
+  expect(saved().groups).toEqual({ internal: ['staff'], default: ['内测组'] })
   expect(row('内测组').getByText(/1 members/)).toBeVisible()
 })
 
@@ -152,6 +175,71 @@ it('renames a group, revokes membership, and supports keeping or clearing orphan
     models: { hidden: [] },
     groups: { internal: [] },
   })
+})
+
+it('reuses a named empty group in allowlists and exclusions and keeps both references when members change', async () => {
+  const { user, saved } = renderPage()
+  await user.click(
+    await screen.findByRole('button', { name: 'New permission group' })
+  )
+  let dialog = within(screen.getByRole('dialog'))
+  expect(
+    dialog.queryByRole('combobox', { name: 'Restricted models' })
+  ).not.toBeInTheDocument()
+  await user.type(
+    dialog.getByRole('textbox', { name: 'Group name' }),
+    'reviewers'
+  )
+  await user.click(dialog.getByRole('button', { name: 'Create' }))
+  await screen.findByRole('listitem', { name: 'reviewers' })
+  expect(saved().audiences.reviewers).toEqual([])
+  await user.click(screen.getByRole('tab', { name: /Model permissions/ }))
+
+  await user.click(row('preview').getByRole('button', { name: 'Edit' }))
+  dialog = within(screen.getByRole('dialog'))
+  await user.click(
+    dialog.getByRole('combobox', { name: 'Allowed permission groups' })
+  )
+  await user.click(
+    await screen.findByRole('option', { name: 'reviewers (members: 0)' })
+  )
+  await user.keyboard('{Escape}')
+  await user.click(dialog.getByRole('button', { name: 'Save changes' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  await user.click(row('new-model').getByRole('button', { name: 'Configure' }))
+  dialog = within(screen.getByRole('dialog'))
+  await user.click(
+    dialog.getByRole('combobox', { name: 'Excluded permission groups' })
+  )
+  await user.click(
+    await screen.findByRole('option', { name: 'reviewers (members: 0)' })
+  )
+  await user.keyboard('{Escape}')
+  await user.click(dialog.getByRole('button', { name: 'Save changes' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+
+  await user.click(screen.getByRole('tab', { name: /Permission groups/ }))
+  expect(row('reviewers').getByText(/0 members · 2 models/)).toBeVisible()
+  await user.click(row('reviewers').getByRole('button', { name: 'Edit' }))
+  dialog = within(screen.getByRole('dialog'))
+  await user.type(
+    dialog.getByRole('combobox', { name: 'Group members' }),
+    'alice'
+  )
+  await user.click(await screen.findByRole('option', { name: 'alice (#35)' }))
+  await user.click(screen.getByRole('option', { name: 'alice-b (#36)' }))
+  await user.keyboard('{Escape}')
+  await user.click(dialog.getByRole('button', { name: 'Save changes' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  )
+  expect(saved().audiences.reviewers).toEqual([35, 36])
+  expect(saved().models.preview).toEqual(['reviewers', 'staff', 'support'])
+  expect(saved().model_excluded_groups).toEqual({ 'new-model': ['reviewers'] })
 })
 
 it('warns when resources are hidden from everyone and only restores visibility after confirming', async () => {
@@ -228,17 +316,29 @@ it('configures open-to-all-users rules with zero exclusions or exclusions, and d
     'Select at least one allowed permission group or account'
   )
 
-  const searchInputs = dialog.getAllByPlaceholderText(
-    'Search users by name or ID'
-  )
-  await user.type(searchInputs[0], 'alice')
+  const allowed = dialog.getByRole('combobox', { name: 'Allowed accounts' })
+  allowed.focus()
+  await user.paste('alice')
+  expect(allowed).toHaveValue('alice')
   await user.click(await screen.findByRole('option', { name: 'alice (#35)' }))
+  expect(allowed).toHaveValue('alice')
+  await user.click(screen.getByRole('option', { name: 'alice-b (#36)' }))
+  await user.click(
+    screen.getByRole('option', { name: 'alice (#35)', selected: true })
+  )
+  expect(
+    screen.getByRole('option', { name: 'alice (#35)', selected: false })
+  ).toBeVisible()
+  await user.clear(allowed)
+  await user.type(allowed, '48')
+  await user.click(await screen.findByRole('option', { name: 'bob (#48)' }))
+  await user.keyboard('{Escape}')
   await user.click(dialog.getByRole('button', { name: 'Save changes' }))
   await waitFor(() =>
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   )
   expect(saved().open_models).toBeUndefined()
-  expect(saved().model_users).toEqual({ 'new-model': [35] })
+  expect(saved().model_users).toEqual({ 'new-model': [36, 48] })
   expect(row('new-model').getByText('Allowlist only')).toBeVisible()
 })
 
@@ -258,6 +358,8 @@ it('supports batch model access configuration and retains exclusions when a grou
     'alice'
   )
   await user.click(await screen.findByRole('option', { name: 'alice (#35)' }))
+  await user.click(screen.getByRole('option', { name: 'alice-b (#36)' }))
+  await user.keyboard('{Escape}')
   await user.click(dialog.getByRole('button', { name: 'Save changes' }))
   await waitFor(() =>
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
@@ -266,8 +368,8 @@ it('supports batch model access configuration and retains exclusions when a grou
   expect(saved().open_models).toEqual(['hidden', 'new-model'])
   expect(saved().model_exclusions).toEqual({
     preview: [22],
-    hidden: [35],
-    'new-model': [35],
+    hidden: [35, 36],
+    'new-model': [35, 36],
   })
 
   await user.click(
@@ -285,8 +387,8 @@ it('supports batch model access configuration and retains exclusions when a grou
   await waitFor(() => expect(saved().audiences).not.toHaveProperty('staff'))
   expect(saved().model_exclusions).toEqual({
     preview: [22],
-    hidden: [35],
-    'new-model': [35],
+    hidden: [35, 36],
+    'new-model': [35, 36],
   })
   expect(saved().group_exclusions).toEqual({ archived: [35] })
   expect(saved().groups).toEqual({ internal: [] })
