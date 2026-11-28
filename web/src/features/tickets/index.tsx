@@ -33,6 +33,7 @@ import {
 } from '@/components/ui/input-group'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
+import { UserIdentity } from '@/components/user-identity'
 import { useIsAdmin } from '@/hooks/use-admin'
 import { useDebounce } from '@/hooks/use-debounce'
 import { toIntlLocale } from '@/i18n/languages'
@@ -266,12 +267,14 @@ function TicketThread({
                 >
                   <MessageContent className='max-w-[85%] py-2'>
                     <div className='flex flex-wrap items-center gap-2 text-xs opacity-80'>
-                      <strong>
+                      <strong className='min-w-0'>
                         {message.author_id === userId && t('You')}
                         {message.author_id !== userId &&
-                          (message.staff
-                            ? t('Support team')
-                            : `${t('User')} #${message.author_id}`)}
+                          (message.staff ? (
+                            t('Support team')
+                          ) : (
+                            <UserIdentity userId={message.author_id} />
+                          ))}
                       </strong>
                       <time
                         dateTime={new Date(

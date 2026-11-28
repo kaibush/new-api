@@ -6,7 +6,8 @@ import { afterEach, expect, it, vi } from 'vitest'
 
 import { useSidebarData } from '@/hooks/use-sidebar-data'
 import { api } from '@/lib/api'
-import { useAuthStore } from '@/stores/auth-store'
+import { ROLE } from '@/lib/roles'
+import { type AuthUser, useAuthStore } from '@/stores/auth-store'
 
 import { TicketsPage } from '..'
 import type { TicketSettings } from '../api'
@@ -16,6 +17,25 @@ afterEach(() => {
   vi.restoreAllMocks()
   useAuthStore.getState().auth.reset()
 })
+
+function signIn(user: AuthUser) {
+  useAuthStore.getState().auth.setBundle({
+    user,
+    access_token: 'test-session-token',
+    token_type: 'Bearer',
+    access_expires_at: 9999999999,
+    session: {
+      sid: 'ticket-test-session',
+      current: true,
+      login_method: 'password',
+      ip: '',
+      user_agent: '',
+      created_at: 1,
+      last_active_at: 1,
+      expires_at: 9999999999,
+    },
+  })
+}
 
 function Inbox() {
   const [selected, onSelect] = useState<number>()
@@ -39,11 +59,9 @@ it('publishes the switch and menu name to the sidebar and page, and hides both w
   vi.spyOn(api, 'get').mockResolvedValue({
     data: { success: true, data: { items: [], total: 0, has_more: false } },
   })
-  const save = vi
-    .spyOn(api, 'put')
-    .mockImplementation(async (_url, data) => ({
-      data: { success: true, data },
-    }))
+  const save = vi.spyOn(api, 'put').mockImplementation(async (_url, data) => ({
+    data: { success: true, data },
+  }))
   const view = render(
     <QueryClientProvider client={client}>
       <TicketSettingsForm inline />
@@ -94,9 +112,7 @@ it('opens a private ticket, shows replies and prevents replies after closure', a
   })
   client.setQueryData(['community-status'], { enabled: false })
   client.setQueryData(['ticket-settings'], { enabled: true, name: '' })
-  useAuthStore
-    .getState()
-    .auth.setUser({ id: 9, username: 'requester', role: 1 })
+  signIn({ id: 9, username: 'requester', role: ROLE.USER })
   const ticket = {
     id: 21,
     title: 'Account question',
@@ -114,7 +130,7 @@ it('opens a private ticket, shows replies and prevents replies after closure', a
       created_at: 100,
     },
   ]
-  vi.spyOn(api, 'get').mockImplementation(async (url) => ({
+  const get = vi.spyOn(api, 'get').mockImplementation(async (url) => ({
     data: {
       success: true,
       data:
@@ -156,6 +172,7 @@ it('opens a private ticket, shows replies and prevents replies after closure', a
   })
   await user.click(screen.getByRole('button', { name: 'Create ticket' }))
   expect(await screen.findByText('Please send details')).toBeInTheDocument()
+  expect(screen.getByText('Support team')).toBeInTheDocument()
   expect(
     screen.queryByRole('combobox', { name: 'Ticket status' })
   ).not.toBeInTheDocument()
@@ -167,9 +184,63 @@ it('opens a private ticket, shows replies and prevents replies after closure', a
     body: 'Follow-up',
   })
   expect(await screen.findByText('This ticket is closed.')).toBeInTheDocument()
+  expect(screen.getByText('You')).toBeInTheDocument()
+  expect(get.mock.calls.some(([url]) => url === '/api/user/names')).toBe(false)
   expect(
     screen.queryByRole('textbox', { name: 'Reply' })
   ).not.toBeInTheDocument()
+  view.unmount()
+  client.clear()
+})
+
+it('shows the requester’s username and ID to staff using one shared lookup', async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  client.setQueryData(['ticket-settings'], { enabled: true, name: '' })
+  signIn({ id: 3, username: 'operator', role: ROLE.ADMIN })
+  const ticket = {
+    id: 21,
+    title: 'Account question',
+    user_id: 9,
+    status: 'awaiting_staff',
+    updated_at: 101,
+  }
+  const messages = [
+    {
+      id: 2,
+      author_id: 9,
+      staff: false,
+      body: 'More details',
+      created_at: 101,
+    },
+    { id: 1, author_id: 9, staff: false, body: 'Need help', created_at: 100 },
+  ]
+  const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/user/names') {
+      return {
+        data: { success: true, data: [{ id: 9, username: 'requester' }] },
+      }
+    }
+    return {
+      data: {
+        success: true,
+        data:
+          url === '/api/tickets/21'
+            ? { ticket, messages, has_more: false }
+            : { items: [ticket], total: 1, has_more: false },
+      },
+    }
+  })
+  const view = render(
+    <QueryClientProvider client={client}>
+      <TicketsPage selected={ticket.id} onSelect={vi.fn()} />
+    </QueryClientProvider>
+  )
+  expect(await screen.findAllByText('requester (#9)')).toHaveLength(2)
+  expect(get.mock.calls.filter(([url]) => url === '/api/user/names')).toEqual([
+    ['/api/user/names', { params: { ids: '9' } }],
+  ])
   view.unmount()
   client.clear()
 })
